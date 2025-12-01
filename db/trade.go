@@ -146,7 +146,7 @@ func (c *Client) CreateTrade(ctx context.Context, input *TradeInput) (*Trade, er
 			$side: String!
 			$price: numeric!
 			$quantity: numeric!
-			$timestamp: timestamptz!
+			$timestamp: timestamp!
 			$fee: numeric!
 			$order_id: String!
 			$trade_id: String!
@@ -220,7 +220,7 @@ func (c *Client) UpdateTrade(ctx context.Context, id string, input *TradeInput) 
 			$side: String!
 			$price: numeric!
 			$quantity: numeric!
-			$timestamp: timestamptz!
+			$timestamp: timestamp!
 			$fee: numeric!
 			$order_id: String!
 			$trade_id: String!
