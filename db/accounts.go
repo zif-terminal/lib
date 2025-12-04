@@ -205,3 +205,26 @@ func (c *Client) DeleteAccount(ctx context.Context, id string) error {
 
 	return nil
 }
+
+// ListAccountTypes retrieves all available account types
+func (c *Client) ListAccountTypes(ctx context.Context) ([]*models.AccountType, error) {
+	query := `
+		query ListAccountTypes {
+			exchange_account_types {
+				code
+			}
+		}
+	`
+
+	req := c.graphqlRequest(query)
+
+	var resp struct {
+		AccountTypes []*models.AccountType `json:"exchange_account_types"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to list account types: %w", err)
+	}
+
+	return resp.AccountTypes, nil
+}
