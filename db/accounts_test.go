@@ -351,3 +351,42 @@ func TestClient_DeleteAccount_NotFound(t *testing.T) {
 		t.Errorf("Expected 'account not found' error, got: %v", err)
 	}
 }
+
+func TestClient_ListAccountTypes(t *testing.T) {
+	ctx := context.Background()
+	expectedTypes := []*models.AccountType{
+		{Code: "main"},
+		{Code: "sub_account"},
+		{Code: "vault"},
+	}
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"exchange_account_types": expectedTypes,
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	types, err := client.ListAccountTypes(ctx)
+	if err != nil {
+		t.Fatalf("ListAccountTypes failed: %v", err)
+	}
+
+	if len(types) != len(expectedTypes) {
+		t.Fatalf("Expected %d types, got %d", len(expectedTypes), len(types))
+	}
+
+	for i, exp := range expectedTypes {
+		if types[i].Code != exp.Code {
+			t.Errorf("Type %d: Expected Code %s, got %s", i, exp.Code, types[i].Code)
+		}
+	}
+}
