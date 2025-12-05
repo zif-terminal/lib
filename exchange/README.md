@@ -15,10 +15,13 @@ The exchange interface consists of:
 
 ```
 exchange/
-├── client.go              # ExchangeClient interface
-├── errors.go              # Error types (RateLimitError, etc.)
-├── contract_test.go       # Contract test suite
+├── client.go              # GetClient function, ListAvailableExchanges
+├── client_test.go         # Tests for GetClient
 ├── README.md              # This file
+├── iface/                 # Interface and shared types package
+│   ├── client.go          # ExchangeClient interface
+│   ├── errors.go          # Error types (RateLimitError, etc.)
+│   └── contract.go        # Contract test suite
 ├── hyperliquid/
 │   ├── client.go          # Hyperliquid implementation
 │   ├── types.go           # Hyperliquid-specific types
@@ -30,9 +33,11 @@ exchange/
 
 ## Interface Contract
 
-All exchange implementations must implement the `ExchangeClient` interface:
+All exchange implementations must implement the `ExchangeClient` interface from the `iface` package:
 
 ```go
+import "github.com/zif-terminal/lib/exchange/iface"
+
 type ExchangeClient interface {
     // Name returns the exchange identifier (e.g., "hyperliquid", "lighter")
     Name() string
@@ -82,7 +87,7 @@ import (
     "net/http"
     "time"
     "github.com/google/uuid"
-    "github.com/zif-terminal/lib/exchange"
+    "github.com/zif-terminal/lib/exchange/iface"
     "github.com/zif-terminal/lib/models"
 )
 
@@ -98,10 +103,12 @@ func NewClient() *Client {
     }
 }
 
+// Name implements iface.ExchangeClient
 func (c *Client) Name() string {
     return "newexchange"
 }
 
+// FetchTrades implements iface.ExchangeClient
 func (c *Client) FetchTrades(
     ctx context.Context,
     account *models.ExchangeAccount,
@@ -131,7 +138,7 @@ func (c *Client) FetchTrades(
 
     // 6. Check for rate limit (HTTP 429)
     if resp.StatusCode == http.StatusTooManyRequests {
-        return nil, &exchange.RateLimitError{
+        return nil, &iface.RateLimitError{
             Exchange:   "newexchange",
             Message:    "rate limit exceeded",
             RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
@@ -271,8 +278,8 @@ func TestNewExchangeClient_Integration_Contract(t *testing.T) {
         t.Skip("Skipping integration test: NEWEXCHANGE_TEST_ADDRESS not set")
     }
 
-    contract := exchange.ExchangeClientContract{
-        NewClient: func() exchange.ExchangeClient {
+    contract := iface.ExchangeClientContract{
+        NewClient: func() iface.ExchangeClient {
             return NewClient()
         },
         ValidAccount: &models.ExchangeAccount{
@@ -285,7 +292,7 @@ func TestNewExchangeClient_Integration_Contract(t *testing.T) {
         },
     }
 
-    exchange.RunExchangeClientContractTests(t, contract)
+    iface.RunExchangeClientContractTests(t, contract)
 }
 ```
 
@@ -348,15 +355,15 @@ Integration tests:
 Contract tests verify your implementation satisfies the interface contract:
 
 ```go
-contract := exchange.ExchangeClientContract{
-    NewClient: func() exchange.ExchangeClient {
+contract := iface.ExchangeClientContract{
+    NewClient: func() iface.ExchangeClient {
         return NewClient()
     },
     ValidAccount:   validAccount,
     InvalidAccount: invalidAccount,
 }
 
-exchange.TestExchangeClientContract(t, contract)
+iface.RunExchangeClientContractTests(t, contract)
 ```
 
 ## Error Handling
@@ -368,7 +375,7 @@ When the exchange API returns HTTP 429, return `RateLimitError`:
 ```go
 if resp.StatusCode == http.StatusTooManyRequests {
     retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
-    return nil, &exchange.RateLimitError{
+    return nil, &iface.RateLimitError{
         Exchange:   "newexchange",
         Message:    "rate limit exceeded",
         RetryAfter: retryAfter,

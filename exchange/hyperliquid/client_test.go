@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zif-terminal/lib/exchange"
+	"github.com/zif-terminal/lib/exchange/iface"
 	"github.com/zif-terminal/lib/models"
 )
 
@@ -133,11 +133,11 @@ func TestHyperliquidClient_FetchTrades_RateLimit(t *testing.T) {
 		t.Fatal("Expected rate limit error")
 	}
 
-	if !exchange.IsRateLimitError(err) {
+	if !iface.IsRateLimitError(err) {
 		t.Errorf("Expected RateLimitError, got: %v", err)
 	}
 
-	rateLimitErr, ok := err.(*exchange.RateLimitError)
+	rateLimitErr, ok := err.(*iface.RateLimitError)
 	if !ok {
 		t.Fatalf("Expected *RateLimitError, got %T", err)
 	}

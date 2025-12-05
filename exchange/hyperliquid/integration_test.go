@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zif-terminal/lib/exchange"
+	"github.com/zif-terminal/lib/exchange/iface"
 	"github.com/zif-terminal/lib/models"
 )
 
@@ -142,8 +142,8 @@ func TestHyperliquidClient_Integration_Contract(t *testing.T) {
 		AccountIdentifier: "0xinvalid", // Malformed address that will cause API error
 	}
 
-	contract := exchange.ExchangeClientContract{
-		NewClient: func() exchange.ExchangeClient {
+	contract := iface.ExchangeClientContract{
+		NewClient: func() iface.ExchangeClient {
 			return NewClient()
 		},
 		ValidAccount:   validAccount,
@@ -151,5 +151,5 @@ func TestHyperliquidClient_Integration_Contract(t *testing.T) {
 	}
 
 	// Run contract tests
-	exchange.RunExchangeClientContractTests(t, contract)
+	iface.RunExchangeClientContractTests(t, contract)
 }
