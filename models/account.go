@@ -11,11 +11,11 @@ type AccountType struct {
 }
 
 // ExchangeAccount represents a user's account on an exchange in the database
-// Matches the 'exchange_accounts' table schema
+// Uses Hasura relationship to fetch nested Exchange object
 type ExchangeAccount struct {
 	ID                  string          `json:"id" db:"id"`
 	UserID              string          `json:"user_id" db:"user_id"`
-	ExchangeID          string          `json:"exchange_id" db:"exchange_id"`
+	Exchange            *Exchange       `json:"exchange"` // Nested via Hasura relationship
 	AccountIdentifier   string          `json:"account_identifier" db:"account_identifier"`
 	AccountType         string          `json:"account_type" db:"account_type"` // "main", "sub_account", "vault" - FK to exchange_account_types.code
 	AccountTypeMetadata json.RawMessage `json:"account_type_metadata" db:"account_type_metadata"` // JSONB
