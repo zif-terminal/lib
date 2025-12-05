@@ -20,10 +20,14 @@ func (c *Client) GetAccount(ctx context.Context, id string) (*ExchangeAccount, e
 		query GetAccount($id: uuid!) {
 			exchange_accounts_by_pk(id: $id) {
 				id
-				exchange_id
 				account_identifier
 				account_type
 				account_type_metadata
+				exchange {
+					id
+					name
+					display_name
+				}
 			}
 		}
 	`
@@ -53,10 +57,14 @@ func (c *Client) ListAccounts(ctx context.Context) ([]*ExchangeAccount, error) {
 		query ListAccounts {
 			exchange_accounts {
 				id
-				exchange_id
 				account_identifier
 				account_type
 				account_type_metadata
+				exchange {
+					id
+					name
+					display_name
+				}
 			}
 		}
 	`
@@ -85,10 +93,14 @@ func (c *Client) CreateAccount(ctx context.Context, input *ExchangeAccountInput)
 				account_type_metadata: $account_type_metadata
 			}) {
 				id
-				exchange_id
 				account_identifier
 				account_type
 				account_type_metadata
+				exchange {
+					id
+					name
+					display_name
+				}
 			}
 		}
 	`
@@ -135,10 +147,14 @@ func (c *Client) UpdateAccount(ctx context.Context, id string, input *ExchangeAc
 				account_type_metadata: $account_type_metadata
 			}) {
 				id
-				exchange_id
 				account_identifier
 				account_type
 				account_type_metadata
+				exchange {
+					id
+					name
+					display_name
+				}
 			}
 		}
 	`
