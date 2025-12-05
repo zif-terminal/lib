@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zif-terminal/lib/exchange"
+	"github.com/zif-terminal/lib/exchange/iface"
 	"github.com/zif-terminal/lib/models"
 )
 
-// Client implements exchange.ExchangeClient for Hyperliquid
+// Client implements iface.ExchangeClient for Hyperliquid
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
@@ -88,7 +88,7 @@ func (c *Client) FetchTrades(
 	// Check for rate limit (HTTP 429)
 	if resp.StatusCode == http.StatusTooManyRequests {
 		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
-		return nil, &exchange.RateLimitError{
+		return nil, &iface.RateLimitError{
 			Exchange:   "hyperliquid",
 			Message:    "rate limit exceeded",
 			RetryAfter: retryAfter,

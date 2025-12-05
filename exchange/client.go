@@ -1,23 +1,46 @@
 package exchange
 
 import (
-	"context"
-	"time"
+	"errors"
+	"fmt"
 
-	"github.com/zif-terminal/lib/models"
+	"github.com/zif-terminal/lib/exchange/hyperliquid"
+	"github.com/zif-terminal/lib/exchange/iface"
 )
 
-// ExchangeClient is the interface that all exchange implementations must satisfy
-type ExchangeClient interface {
-	// Name returns the exchange identifier (e.g., "hyperliquid", "lighter")
-	Name() string
+// ErrExchangeNotFound is returned when an exchange name is not recognized
+var ErrExchangeNotFound = errors.New("exchange not found")
 
-	// FetchTrades fetches trades for a given account since a specific timestamp
-	// Returns trades as TradeInput (ready for database insertion), sorted by timestamp (oldest first)
-	// ctx can be cancelled or have a timeout set by the caller (sync service)
-	FetchTrades(
-		ctx context.Context,
-		account *models.ExchangeAccount,
-		since time.Time,
-	) ([]*models.TradeInput, error)
+// GetClient returns an ExchangeClient for the given exchange name.
+// Returns ErrExchangeNotFound if the exchange name is not recognized.
+//
+// Example:
+//
+//	client, err := exchange.GetClient("hyperliquid")
+//	if err != nil {
+//	    return err
+//	}
+//	trades, err := client.FetchTrades(ctx, account, since)
+func GetClient(name string) (iface.ExchangeClient, error) {
+	switch name {
+	case "hyperliquid":
+		return hyperliquid.NewClient(), nil
+	// Add more exchanges here as they are implemented:
+	// case "lighter":
+	//     return lighter.NewClient(), nil
+	// case "drift":
+	//     return drift.NewClient(), nil
+	default:
+		return nil, fmt.Errorf("%w: %s", ErrExchangeNotFound, name)
+	}
+}
+
+// ListAvailableExchanges returns a list of all available exchange names.
+func ListAvailableExchanges() []string {
+	return []string{
+		"hyperliquid",
+		// Add more exchanges here as they are implemented:
+		// "lighter",
+		// "drift",
+	}
 }
