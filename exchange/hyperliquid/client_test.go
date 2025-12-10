@@ -44,6 +44,7 @@ func TestHyperliquidClient_FetchTrades_Success(t *testing.T) {
 		response := []hyperliquidFill{
 			{
 				Hash:    "0x123",
+				Tid:     111111111111111, // Unique fill ID
 				Oid:     123456789,
 				Coin:    "BTC-USDC",
 				Side:    "B",
@@ -54,6 +55,7 @@ func TestHyperliquidClient_FetchTrades_Success(t *testing.T) {
 			},
 			{
 				Hash:    "0x456",
+				Tid:     222222222222222, // Unique fill ID
 				Oid:     987654321,
 				Coin:    "ETH-USDC",
 				Side:    "S",
@@ -91,8 +93,9 @@ func TestHyperliquidClient_FetchTrades_Success(t *testing.T) {
 	}
 
 	// Verify first trade (should be oldest due to sorting)
-	if trades[0].TradeID != "0x123" {
-		t.Errorf("Expected trade ID '0x123', got '%s'", trades[0].TradeID)
+	// TradeID should now be the tid (fill ID), not the hash
+	if trades[0].TradeID != "111111111111111" {
+		t.Errorf("Expected trade ID '111111111111111' (tid), got '%s'", trades[0].TradeID)
 	}
 	if trades[0].Side != "buy" {
 		t.Errorf("Expected side 'buy', got '%s'", trades[0].Side)
@@ -188,6 +191,7 @@ func TestHyperliquidClient_FetchTrades_FiltersBySince(t *testing.T) {
 		response := []hyperliquidFill{
 			{
 				Hash:    "0xold",
+				Tid:     333333333333333, // Unique fill ID
 				Oid:     111111111,
 				Coin:    "BTC-USDC",
 				Side:    "B",
@@ -198,6 +202,7 @@ func TestHyperliquidClient_FetchTrades_FiltersBySince(t *testing.T) {
 			},
 			{
 				Hash:    "0xnew",
+				Tid:     444444444444444, // Unique fill ID
 				Oid:     222222222,
 				Coin:    "ETH-USDC",
 				Side:    "S",
@@ -235,8 +240,9 @@ func TestHyperliquidClient_FetchTrades_FiltersBySince(t *testing.T) {
 		t.Fatalf("Expected 1 trade after filtering, got %d", len(trades))
 	}
 
-	if trades[0].TradeID != "0xnew" {
-		t.Errorf("Expected trade ID '0xnew', got '%s'", trades[0].TradeID)
+	// TradeID should now be the tid (fill ID), not the hash
+	if trades[0].TradeID != "444444444444444" {
+		t.Errorf("Expected trade ID '444444444444444' (tid), got '%s'", trades[0].TradeID)
 	}
 }
 

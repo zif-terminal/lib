@@ -26,7 +26,6 @@ func TestClient_GetTrade(t *testing.T) {
 		OrderID:           "order-123",
 		TradeID:           "trade-456",
 		ExchangeAccountID: accountID,
-		CreatedAt:         time.Now(),
 	}
 
 	mockClient := &mockGraphQLClient{
@@ -108,7 +107,6 @@ func TestClient_ListTrades_NoFilter(t *testing.T) {
 			OrderID:           "order-123",
 			TradeID:           "trade-456",
 			ExchangeAccountID: accountID1,
-			CreatedAt:         time.Now(),
 		},
 		{
 			ID:                uuid.New(),
@@ -122,7 +120,6 @@ func TestClient_ListTrades_NoFilter(t *testing.T) {
 			OrderID:           "order-789",
 			TradeID:           "trade-101",
 			ExchangeAccountID: accountID2,
-			CreatedAt:         time.Now(),
 		},
 	}
 
@@ -169,7 +166,6 @@ func TestClient_ListTrades_WithFilter(t *testing.T) {
 			OrderID:           "order-123",
 			TradeID:           "trade-456",
 			ExchangeAccountID: accountID1,
-			CreatedAt:         time.Now(),
 		},
 	}
 
@@ -217,7 +213,6 @@ func TestClient_CreateTrade(t *testing.T) {
 		OrderID:           "order-123",
 		TradeID:           "trade-456",
 		ExchangeAccountID: accountID,
-		CreatedAt:         time.Now(),
 	}
 
 	mockClient := &mockGraphQLClient{
@@ -277,7 +272,6 @@ func TestClient_UpdateTrade(t *testing.T) {
 		OrderID:           "order-789",
 		TradeID:           "trade-101",
 		ExchangeAccountID: accountID,
-		CreatedAt:         time.Now(),
 	}
 
 	mockClient := &mockGraphQLClient{
@@ -367,7 +361,6 @@ func TestClient_LatestTrade(t *testing.T) {
 			OrderID:           "order-123",
 			TradeID:           "trade-456",
 			ExchangeAccountID: accountID1,
-			CreatedAt:         time.Now(),
 		},
 		{
 			ID:                uuid.New(),
@@ -381,7 +374,6 @@ func TestClient_LatestTrade(t *testing.T) {
 			OrderID:           "order-789",
 			TradeID:           "trade-101",
 			ExchangeAccountID: accountID2,
-			CreatedAt:         time.Now(),
 		},
 		{
 			ID:                uuid.New(),
@@ -395,7 +387,6 @@ func TestClient_LatestTrade(t *testing.T) {
 			OrderID:           "order-111",
 			TradeID:           "trade-222",
 			ExchangeAccountID: accountID1,
-			CreatedAt:         time.Now(),
 		},
 	}
 
