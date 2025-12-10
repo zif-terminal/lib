@@ -23,15 +23,13 @@ type Trade struct {
 	OrderID           string    `json:"order_id"`
 	TradeID           string    `json:"trade_id"`
 	ExchangeAccountID uuid.UUID `json:"exchange_account_id"`
-	CreatedAt         time.Time `json:"created_at"`
 }
 
-// UnmarshalJSON custom unmarshaler to handle TIMESTAMP without timezone and NUMERIC as numbers
+// UnmarshalJSON custom unmarshaler to handle BIGINT timestamp (Unix milliseconds) and NUMERIC as numbers
 func (t *Trade) UnmarshalJSON(data []byte) error {
 	type Alias Trade
 	aux := &struct {
-		Timestamp string      `json:"timestamp"`
-		CreatedAt string      `json:"created_at"`
+		Timestamp interface{} `json:"timestamp"` // Can be number (Unix milliseconds) or string
 		Price     interface{} `json:"price"`     // Can be string or number
 		Quantity  interface{} `json:"quantity"`  // Can be string or number
 		Fee       interface{} `json:"fee"`       // Can be string or number
@@ -44,30 +42,29 @@ func (t *Trade) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	// Parse timestamp (TIMESTAMP without timezone from PostgreSQL)
-	if aux.Timestamp != "" {
-		// Try RFC3339 first, then try without timezone
-		ts, err := time.Parse(time.RFC3339, aux.Timestamp)
-		if err != nil {
-			// Try parsing as TIMESTAMP without timezone (YYYY-MM-DDTHH:MM:SS)
-			ts, err = time.Parse("2006-01-02T15:04:05", strings.TrimSpace(aux.Timestamp))
+	// Parse timestamp (BIGINT Unix milliseconds from PostgreSQL)
+	if aux.Timestamp != nil {
+		var unixMillis int64
+		switch v := aux.Timestamp.(type) {
+		case float64:
+			// JSON numbers come as float64
+			unixMillis = int64(v)
+		case int64:
+			unixMillis = v
+		case int:
+			unixMillis = int64(v)
+		case string:
+			// Try parsing as number string first
+			var err error
+			unixMillis, err = parseInt64(v)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to parse timestamp: %w", err)
 			}
+		default:
+			return fmt.Errorf("unexpected timestamp type: %T", aux.Timestamp)
 		}
-		t.Timestamp = ts
-	}
-
-	// Parse created_at
-	if aux.CreatedAt != "" {
-		ca, err := time.Parse(time.RFC3339, aux.CreatedAt)
-		if err != nil {
-			ca, err = time.Parse("2006-01-02T15:04:05", strings.TrimSpace(aux.CreatedAt))
-			if err != nil {
-				return err
-			}
-		}
-		t.CreatedAt = ca
+		// Convert Unix milliseconds to time.Time
+		t.Timestamp = time.Unix(0, unixMillis*int64(time.Millisecond)).UTC()
 	}
 
 	// Convert NUMERIC fields (can be number or string) to string
@@ -99,6 +96,13 @@ func convertToString(v interface{}) string {
 	default:
 		return fmt.Sprintf("%v", val)
 	}
+}
+
+// parseInt64 parses a string to int64
+func parseInt64(s string) (int64, error) {
+	var result int64
+	_, err := fmt.Sscanf(s, "%d", &result)
+	return result, err
 }
 
 // TradeInput represents input for creating/updating a trade

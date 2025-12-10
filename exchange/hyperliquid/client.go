@@ -119,8 +119,9 @@ func (c *Client) FetchTrades(
 
 		tradeInput, err := transformFill(apiFill, accountUUID)
 		if err != nil {
-			// Skip fills that fail to transform
-			continue
+			// Return error instead of skipping - we're in dev phase and this should not happen
+			// Missing required fields (e.g., tid) indicate a problem that needs investigation
+			return nil, fmt.Errorf("failed to transform fill: %w | hash=%s | coin=%s | time=%v", err, apiFill.Hash, apiFill.Coin, apiFill.Time)
 		}
 		trades = append(trades, tradeInput)
 	}
@@ -152,8 +153,20 @@ func transformFill(apiFill hyperliquidFill, accountUUID uuid.UUID) (*models.Trad
 	// Convert order ID to string
 	orderID := convertToString(apiFill.Oid)
 
+	// Convert fill ID (tid) to string for trade ID - tid is unique per fill
+	// This ensures each fill has a unique trade_id, unlike Hash which can be shared across multiple fills
+	// tid is REQUIRED - we cannot fall back to hash as it's not unique per fill
+	if apiFill.Tid == nil {
+		return nil, fmt.Errorf("missing required field 'tid' (fill ID) for fill with hash %s", apiFill.Hash)
+	}
+	
+	tradeID := convertToString(apiFill.Tid)
+	if tradeID == "" || tradeID == "<nil>" {
+		return nil, fmt.Errorf("empty or invalid 'tid' (fill ID) for fill with hash %s, tid value: %v (type: %T)", apiFill.Hash, apiFill.Tid, apiFill.Tid)
+	}
+
 	return &models.TradeInput{
-		TradeID:          apiFill.Hash, // Use transaction hash as trade ID
+		TradeID:          tradeID,      // Use fill ID (tid) as trade ID - unique per fill
 		OrderID:          orderID,      // Order ID (converted to string)
 		BaseAsset:        baseAsset,
 		QuoteAsset:       quoteAsset,
@@ -186,24 +199,30 @@ func normalizeSide(side string) string {
 
 // parseTimestamp converts Hyperliquid timestamp to time.Time
 // Hyperliquid returns Unix timestamp in milliseconds
+// Returns time in UTC to ensure consistent timezone handling
 func parseTimestamp(ts interface{}) time.Time {
+	var t time.Time
 	switch v := ts.(type) {
 	case float64:
 		// Unix timestamp in milliseconds
-		return time.Unix(0, int64(v)*int64(time.Millisecond))
+		t = time.Unix(0, int64(v)*int64(time.Millisecond))
 	case int64:
-		return time.Unix(0, v*int64(time.Millisecond))
+		t = time.Unix(0, v*int64(time.Millisecond))
 	case string:
 		// Try parsing as Unix timestamp (milliseconds)
 		if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
-			return time.Unix(0, ms*int64(time.Millisecond))
+			t = time.Unix(0, ms*int64(time.Millisecond))
+		} else if parsed, err := time.Parse(time.RFC3339, v); err == nil {
+			// Try parsing as RFC3339
+			t = parsed
+		} else {
+			return time.Time{}
 		}
-		// Try parsing as RFC3339
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			return t
-		}
+	default:
+		return time.Time{}
 	}
-	return time.Time{}
+	// Convert to UTC to ensure consistent timezone handling
+	return t.UTC()
 }
 
 // parseAssetPair extracts base and quote assets from coin string
@@ -219,6 +238,9 @@ func parseAssetPair(coin string) (baseAsset, quoteAsset string) {
 
 // convertToString converts numeric values to string for precision
 func convertToString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
 	switch val := v.(type) {
 	case string:
 		return val

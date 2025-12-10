@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/zif-terminal/lib/models"
@@ -34,7 +33,6 @@ func (c *Client) GetTrade(ctx context.Context, id string) (*Trade, error) {
 				order_id
 				trade_id
 				exchange_account_id
-				created_at
 			}
 		}
 	`
@@ -87,7 +85,6 @@ func (c *Client) ListTrades(ctx context.Context, filter TradeFilter) ([]*Trade, 
 					order_id
 					trade_id
 					exchange_account_id
-					created_at
 				}
 			}
 		`
@@ -117,7 +114,6 @@ func (c *Client) ListTrades(ctx context.Context, filter TradeFilter) ([]*Trade, 
 					order_id
 					trade_id
 					exchange_account_id
-					created_at
 				}
 			}
 		`
@@ -146,7 +142,7 @@ func (c *Client) CreateTrade(ctx context.Context, input *TradeInput) (*Trade, er
 			$side: String!
 			$price: numeric!
 			$quantity: numeric!
-			$timestamp: timestamp!
+			$timestamp: bigint!
 			$fee: numeric!
 			$order_id: String!
 			$trade_id: String!
@@ -175,7 +171,6 @@ func (c *Client) CreateTrade(ctx context.Context, input *TradeInput) (*Trade, er
 				order_id
 				trade_id
 				exchange_account_id
-				created_at
 			}
 		}
 	`
@@ -186,7 +181,7 @@ func (c *Client) CreateTrade(ctx context.Context, input *TradeInput) (*Trade, er
 		"side":               input.Side,
 		"price":              input.Price,
 		"quantity":           input.Quantity,
-		"timestamp":          input.Timestamp.Format(time.RFC3339),
+		"timestamp":          input.Timestamp.UnixMilli(),
 		"fee":                input.Fee,
 		"order_id":           input.OrderID,
 		"trade_id":           input.TradeID,
@@ -220,7 +215,7 @@ func (c *Client) UpdateTrade(ctx context.Context, id string, input *TradeInput) 
 			$side: String!
 			$price: numeric!
 			$quantity: numeric!
-			$timestamp: timestamp!
+			$timestamp: bigint!
 			$fee: numeric!
 			$order_id: String!
 			$trade_id: String!
@@ -252,7 +247,6 @@ func (c *Client) UpdateTrade(ctx context.Context, id string, input *TradeInput) 
 				order_id
 				trade_id
 				exchange_account_id
-				created_at
 			}
 		}
 	`
@@ -264,7 +258,7 @@ func (c *Client) UpdateTrade(ctx context.Context, id string, input *TradeInput) 
 		"side":               input.Side,
 		"price":              input.Price,
 		"quantity":           input.Quantity,
-		"timestamp":          input.Timestamp.Format(time.RFC3339),
+		"timestamp":          input.Timestamp.UnixMilli(),
 		"fee":                input.Fee,
 		"order_id":           input.OrderID,
 		"trade_id":           input.TradeID,
@@ -347,7 +341,6 @@ func (c *Client) LatestTrade(ctx context.Context, exchangeAccountIDs []uuid.UUID
 				order_id
 				trade_id
 				exchange_account_id
-				created_at
 			}
 		}
 	`
