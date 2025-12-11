@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/zif-terminal/lib/models"
@@ -60,7 +59,6 @@ func (c *Client) GetLatestFundingPayment(ctx context.Context, exchangeAccountID 
 
 // AddFundingPayments adds one or many funding payments
 // Uses batch insert for all cases (even single payment)
-// Handles duplicate errors gracefully and continues inserting remaining payments
 func (c *Client) AddFundingPayments(ctx context.Context, inputs []*FundingPaymentInput) ([]*FundingPayment, error) {
 	if len(inputs) == 0 {
 		return []*FundingPayment{}, nil
@@ -109,49 +107,8 @@ func (c *Client) AddFundingPayments(ctx context.Context, inputs []*FundingPaymen
 	}
 
 	if err := c.execute(ctx, req, &resp); err != nil {
-		// For batch inserts, check if it's a duplicate error
-		// If so, try inserting individually to handle partial success
-		if isDuplicateError(err) {
-			return c.addFundingPaymentsIndividually(ctx, inputs)
-		}
 		return nil, fmt.Errorf("failed to add funding payments: %w", err)
 	}
 
 	return resp.InsertFundingPayments.Returning, nil
-}
-
-// addFundingPaymentsIndividually inserts funding payments one by one
-// Used when batch insert fails due to duplicates, to handle partial success
-func (c *Client) addFundingPaymentsIndividually(ctx context.Context, inputs []*FundingPaymentInput) ([]*FundingPayment, error) {
-	var results []*FundingPayment
-	var errors []string
-
-	for _, input := range inputs {
-		payments, err := c.AddFundingPayments(ctx, []*FundingPaymentInput{input})
-		if err != nil {
-			errors = append(errors, fmt.Sprintf("payment_id=%s: %v", input.PaymentID, err))
-			continue
-		}
-		if len(payments) > 0 {
-			results = append(results, payments...)
-		}
-		// If payment is duplicate, len(payments) == 0, which is fine - we continue
-	}
-
-	// Return successfully inserted payments even if some failed
-	// This allows partial success
-	return results, nil
-}
-
-// isDuplicateError checks if an error is a unique constraint violation
-func isDuplicateError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := strings.ToLower(err.Error())
-	// Common patterns for duplicate/unique constraint errors
-	return strings.Contains(errStr, "duplicate") ||
-		strings.Contains(errStr, "unique constraint") ||
-		strings.Contains(errStr, "violates unique constraint") ||
-		strings.Contains(errStr, "already exists")
 }
