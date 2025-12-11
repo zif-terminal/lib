@@ -101,7 +101,9 @@ func TestClient_AddFundingPayments_Single(t *testing.T) {
 	mockClient := &mockGraphQLClient{
 		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
 			respData := map[string]interface{}{
-				"insert_funding_payments_one": expectedPayment,
+				"insert_funding_payments": map[string]interface{}{
+					"returning": []*models.FundingPayment{expectedPayment},
+				},
 			}
 			data, _ := json.Marshal(respData)
 			return json.Unmarshal(data, resp)
@@ -244,17 +246,24 @@ func TestClient_AddFundingPayments_Duplicate(t *testing.T) {
 	ctx := context.Background()
 	accountID := uuid.New()
 
-	// First call returns duplicate error, second call succeeds
+	// First call returns duplicate error, subsequent calls succeed
 	callCount := 0
 	mockClient := &mockGraphQLClient{
 		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
 			callCount++
 			if callCount == 1 {
-				// Simulate duplicate error
+				// Simulate duplicate error on batch insert
 				return fmt.Errorf("duplicate key value violates unique constraint")
 			}
-			// Second call (individual insert) succeeds
-			expectedPayment := &models.FundingPayment{
+			// Subsequent calls (individual inserts) succeed
+			// Determine which payment based on call count
+			var expectedPayment *models.FundingPayment
+			if callCount == 2 {
+				// First individual insert (payment-123) - duplicate, return empty
+				return fmt.Errorf("duplicate key value violates unique constraint")
+			}
+			// Second individual insert (payment-456) - succeeds
+			expectedPayment = &models.FundingPayment{
 				ID:                uuid.New(),
 				ExchangeAccountID: accountID,
 				BaseAsset:         "ETH",
@@ -264,7 +273,9 @@ func TestClient_AddFundingPayments_Duplicate(t *testing.T) {
 				PaymentID:         "payment-456",
 			}
 			respData := map[string]interface{}{
-				"insert_funding_payments_one": expectedPayment,
+				"insert_funding_payments": map[string]interface{}{
+					"returning": []*models.FundingPayment{expectedPayment},
+				},
 			}
 			data, _ := json.Marshal(respData)
 			return json.Unmarshal(data, resp)
