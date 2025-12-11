@@ -16,3 +16,13 @@ type hyperliquidFill struct {
 	// Additional fields that may be present but not used:
 	// StartPosition, Dir, ClosedPnl, Crossed, FeeToken, TwapId
 }
+
+// hyperliquidFundingPayment represents a single funding payment from Hyperliquid API
+// The API returns userFunding as a direct array, not wrapped in an object
+// Fields match the actual API response structure
+type hyperliquidFundingPayment struct {
+	Coin    string      `json:"coin"`     // Asset name (e.g., "BTC", "TNSR")
+	Time    interface{} `json:"time"`    // Unix timestamp in milliseconds
+	Funding interface{} `json:"funding"` // Funding payment amount (number or string), signed: positive = received, negative = paid
+	Hash    string      `json:"hash"`     // Transaction hash (used as payment_id)
+}

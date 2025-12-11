@@ -97,6 +97,10 @@ type DBClient interface {
 	UpdateTrade(ctx context.Context, id string, input *TradeInput) (*Trade, error)
 	DeleteTrade(ctx context.Context, id string) error
 	LatestTrade(ctx context.Context, exchangeAccountIDs []uuid.UUID) (map[uuid.UUID]*Trade, error)
+
+	// Funding payment methods
+	GetLatestFundingPayment(ctx context.Context, exchangeAccountID uuid.UUID) (*FundingPayment, error)
+	AddFundingPayments(ctx context.Context, inputs []*FundingPaymentInput) ([]*FundingPayment, error)
 }
 
 // Ensure Client implements DBClient
