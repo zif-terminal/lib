@@ -21,8 +21,14 @@ type hyperliquidFill struct {
 // The API returns userFunding as a direct array, not wrapped in an object
 // Fields match the actual API response structure
 type hyperliquidFundingPayment struct {
-	Coin    string      `json:"coin"`     // Asset name (e.g., "BTC", "TNSR")
-	Time    interface{} `json:"time"`    // Unix timestamp in milliseconds
-	Funding interface{} `json:"funding"` // Funding payment amount (number or string), signed: positive = received, negative = paid
-	Hash    string      `json:"hash"`     // Transaction hash (used as payment_id)
+	Time  interface{} `json:"time"`  // Unix timestamp in milliseconds
+	Hash  string      `json:"hash"`  // Transaction hash (used as payment_id)
+	Delta struct {
+		Type        string      `json:"type"`        // "funding"
+		Coin        string      `json:"coin"`        // Asset name (e.g., "SOL", "BTC")
+		USDC        interface{} `json:"usdc"`        // Funding payment amount in USDC (number or string), signed: positive = received, negative = paid
+		SZI         interface{} `json:"szi"`         // Size (not used)
+		FundingRate interface{} `json:"fundingRate"` // Funding rate (not used)
+		NSamples    interface{} `json:"nSamples"`    // Number of samples (not used)
+	} `json:"delta"`
 }

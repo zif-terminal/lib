@@ -342,7 +342,7 @@ func (c *Client) FetchFundingPayments(
 		paymentInput, err := transformFundingPayment(apiPayment, accountUUID)
 		if err != nil {
 			// Return error instead of skipping - missing required fields indicate a problem
-			return nil, fmt.Errorf("failed to transform funding payment: %w | hash=%s | coin=%s | time=%v", err, apiPayment.Hash, apiPayment.Coin, apiPayment.Time)
+			return nil, fmt.Errorf("failed to transform funding payment: %w | hash=%s | coin=%s | time=%v", err, apiPayment.Hash, apiPayment.Delta.Coin, apiPayment.Time)
 		}
 		payments = append(payments, paymentInput)
 	}
@@ -360,11 +360,11 @@ func transformFundingPayment(apiPayment hyperliquidFundingPayment, accountUUID u
 	// Parse timestamp (Hyperliquid returns Unix timestamp in milliseconds)
 	timestamp := parseTimestamp(apiPayment.Time)
 
-	// Convert funding amount to string (handles positive/negative)
-	amount := convertToString(apiPayment.Funding)
+	// Convert funding amount (USDC) to string (handles positive/negative)
+	amount := convertToString(apiPayment.Delta.USDC)
 
-	// Extract base and quote assets from coin (e.g., "BTC" from "BTC-USDC" or just "BTC")
-	baseAsset, quoteAsset := parseAssetPair(apiPayment.Coin)
+	// Extract base and quote assets from coin (e.g., "SOL" -> base="SOL", quote="USDC")
+	baseAsset, quoteAsset := parseAssetPair(apiPayment.Delta.Coin)
 
 	// Use hash as payment ID (unique identifier from exchange)
 	if apiPayment.Hash == "" {

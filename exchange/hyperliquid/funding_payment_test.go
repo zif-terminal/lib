@@ -36,16 +36,36 @@ func TestHyperliquidClient_FetchFundingPayments_Success(t *testing.T) {
 		// Return mock response - API returns direct array, not wrapped
 		response := []hyperliquidFundingPayment{
 			{
-				Hash:    "0x123",
-				Coin:    "BTC-USDC",
-				Funding: "10.5",
-				Time:    time.Now().UnixMilli() - 10000, // 10 seconds ago
+				Hash: "0x123",
+				Time: time.Now().UnixMilli() - 10000, // 10 seconds ago
+				Delta: struct {
+					Type        string      `json:"type"`
+					Coin        string      `json:"coin"`
+					USDC        interface{} `json:"usdc"`
+					SZI         interface{} `json:"szi"`
+					FundingRate interface{} `json:"fundingRate"`
+					NSamples    interface{} `json:"nSamples"`
+				}{
+					Type: "funding",
+					Coin: "BTC",
+					USDC: "10.5",
+				},
 			},
 			{
-				Hash:    "0x456",
-				Coin:    "ETH-USDC",
-				Funding: "-5.25",
-				Time:    time.Now().UnixMilli() - 5000, // 5 seconds ago
+				Hash: "0x456",
+				Time: time.Now().UnixMilli() - 5000, // 5 seconds ago
+				Delta: struct {
+					Type        string      `json:"type"`
+					Coin        string      `json:"coin"`
+					USDC        interface{} `json:"usdc"`
+					SZI         interface{} `json:"szi"`
+					FundingRate interface{} `json:"fundingRate"`
+					NSamples    interface{} `json:"nSamples"`
+				}{
+					Type: "funding",
+					Coin: "ETH",
+					USDC: "-5.25",
+				},
 			},
 		}
 
@@ -180,16 +200,36 @@ func TestHyperliquidClient_FetchFundingPayments_FiltersBySince(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		response := []hyperliquidFundingPayment{
 			{
-				Hash:    "0xold",
-				Coin:    "BTC-USDC",
-				Funding: "10.0",
-				Time:    oldPaymentTime.UnixMilli(),
+				Hash: "0xold",
+				Time: oldPaymentTime.UnixMilli(),
+				Delta: struct {
+					Type        string      `json:"type"`
+					Coin        string      `json:"coin"`
+					USDC        interface{} `json:"usdc"`
+					SZI         interface{} `json:"szi"`
+					FundingRate interface{} `json:"fundingRate"`
+					NSamples    interface{} `json:"nSamples"`
+				}{
+					Type: "funding",
+					Coin: "BTC",
+					USDC: "10.0",
+				},
 			},
 			{
-				Hash:    "0xnew",
-				Coin:    "ETH-USDC",
-				Funding: "-5.0",
-				Time:    newPaymentTime.UnixMilli(),
+				Hash: "0xnew",
+				Time: newPaymentTime.UnixMilli(),
+				Delta: struct {
+					Type        string      `json:"type"`
+					Coin        string      `json:"coin"`
+					USDC        interface{} `json:"usdc"`
+					SZI         interface{} `json:"szi"`
+					FundingRate interface{} `json:"fundingRate"`
+					NSamples    interface{} `json:"nSamples"`
+				}{
+					Type: "funding",
+					Coin: "ETH",
+					USDC: "-5.0",
+				},
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -257,10 +297,20 @@ func TestHyperliquidClient_FetchFundingPayments_MissingHash(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		response := []hyperliquidFundingPayment{
 			{
-				Hash:    "", // Missing hash
-				Coin:    "BTC-USDC",
-				Funding: "10.0",
-				Time:    time.Now().UnixMilli(),
+				Hash: "", // Missing hash
+				Time: time.Now().UnixMilli(),
+				Delta: struct {
+					Type        string      `json:"type"`
+					Coin        string      `json:"coin"`
+					USDC        interface{} `json:"usdc"`
+					SZI         interface{} `json:"szi"`
+					FundingRate interface{} `json:"fundingRate"`
+					NSamples    interface{} `json:"nSamples"`
+				}{
+					Type: "funding",
+					Coin: "BTC",
+					USDC: "10.0",
+				},
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -289,16 +339,36 @@ func TestHyperliquidClient_FetchFundingPayments_AssetParsing(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		response := []hyperliquidFundingPayment{
 			{
-				Hash:    "0x123",
-				Coin:    "BTC", // No separator - should default to USDC quote
-				Funding: "10.0",
-				Time:    time.Now().UnixMilli(),
+				Hash: "0x123",
+				Time: time.Now().UnixMilli(),
+				Delta: struct {
+					Type        string      `json:"type"`
+					Coin        string      `json:"coin"`
+					USDC        interface{} `json:"usdc"`
+					SZI         interface{} `json:"szi"`
+					FundingRate interface{} `json:"fundingRate"`
+					NSamples    interface{} `json:"nSamples"`
+				}{
+					Type: "funding",
+					Coin: "BTC", // No separator - should default to USDC quote
+					USDC: "10.0",
+				},
 			},
 			{
-				Hash:    "0x456",
-				Coin:    "ETH-USDT", // With separator
-				Funding: "-5.0",
-				Time:    time.Now().UnixMilli(),
+				Hash: "0x456",
+				Time: time.Now().UnixMilli(),
+				Delta: struct {
+					Type        string      `json:"type"`
+					Coin        string      `json:"coin"`
+					USDC        interface{} `json:"usdc"`
+					SZI         interface{} `json:"szi"`
+					FundingRate interface{} `json:"fundingRate"`
+					NSamples    interface{} `json:"nSamples"`
+				}{
+					Type: "funding",
+					Coin: "ETH-USDT", // With separator
+					USDC: "-5.0",
+				},
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
