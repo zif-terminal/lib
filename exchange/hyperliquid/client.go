@@ -256,6 +256,132 @@ func convertToString(v interface{}) string {
 	}
 }
 
+// FetchFundingPayments fetches funding payments directly from Hyperliquid API
+// Transforms exchange response directly to []*models.FundingPaymentInput
+func (c *Client) FetchFundingPayments(
+	ctx context.Context,
+	account *models.ExchangeAccount,
+	since time.Time,
+) ([]*models.FundingPaymentInput, error) {
+	// Check if ctx is cancelled
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	// Parse account ID to UUID
+	accountUUID, err := uuid.Parse(account.ID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid account ID: %w", err)
+	}
+
+	// Extract address from account identifier
+	address := account.AccountIdentifier
+	if address == "" {
+		return nil, fmt.Errorf("account identifier (address) is required")
+	}
+
+	// Build API request body
+	// Based on Hyperliquid API: POST /info with {"type": "userFunding", "user": address}
+	requestBody := map[string]interface{}{
+		"type": "userFunding",
+		"user": address,
+	}
+
+	bodyBytes, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Create HTTP request with context
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/info", strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Make HTTP request
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch funding payments: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check for rate limit (HTTP 429)
+	if resp.StatusCode == http.StatusTooManyRequests {
+		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
+		return nil, &iface.RateLimitError{
+			Exchange:   "hyperliquid",
+			Message:    "rate limit exceeded",
+			RetryAfter: retryAfter,
+		}
+	}
+
+	// Check for other HTTP errors
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+	}
+
+	// Parse response - API returns a direct array of funding payments, not wrapped in an object
+	var apiPayments []hyperliquidFundingPayment
+	if err := json.NewDecoder(resp.Body).Decode(&apiPayments); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// Transform to FundingPaymentInput
+	payments := make([]*models.FundingPaymentInput, 0)
+	for _, apiPayment := range apiPayments {
+		// Parse timestamp first
+		paymentTimestamp := parseTimestamp(apiPayment.Time)
+
+		// Filter: only payments >= since
+		if !since.IsZero() && paymentTimestamp.Before(since) {
+			continue
+		}
+
+		paymentInput, err := transformFundingPayment(apiPayment, accountUUID)
+		if err != nil {
+			// Return error instead of skipping - missing required fields indicate a problem
+			return nil, fmt.Errorf("failed to transform funding payment: %w | hash=%s | coin=%s | time=%v", err, apiPayment.Hash, apiPayment.Delta.Coin, apiPayment.Time)
+		}
+		payments = append(payments, paymentInput)
+	}
+
+	// Sort by timestamp (oldest first) for incremental syncing
+	sort.Slice(payments, func(i, j int) bool {
+		return payments[i].Timestamp.Before(payments[j].Timestamp)
+	})
+
+	return payments, nil
+}
+
+// transformFundingPayment converts Hyperliquid funding payment format to FundingPaymentInput
+func transformFundingPayment(apiPayment hyperliquidFundingPayment, accountUUID uuid.UUID) (*models.FundingPaymentInput, error) {
+	// Parse timestamp (Hyperliquid returns Unix timestamp in milliseconds)
+	timestamp := parseTimestamp(apiPayment.Time)
+
+	// Convert funding amount (USDC) to string (handles positive/negative)
+	amount := convertToString(apiPayment.Delta.USDC)
+
+	// Extract base and quote assets from coin (e.g., "SOL" -> base="SOL", quote="USDC")
+	baseAsset, quoteAsset := parseAssetPair(apiPayment.Delta.Coin)
+
+	// Use hash as payment ID (unique identifier from exchange)
+	if apiPayment.Hash == "" {
+		return nil, fmt.Errorf("missing required field 'hash' (payment ID)")
+	}
+	paymentID := apiPayment.Hash
+
+	return &models.FundingPaymentInput{
+		ExchangeAccountID: accountUUID,
+		BaseAsset:         baseAsset,
+		QuoteAsset:        quoteAsset,
+		Amount:            amount,
+		Timestamp:         timestamp,
+		PaymentID:         paymentID,
+	}, nil
+}
+
 // parseRetryAfter parses Retry-After header (seconds)
 func parseRetryAfter(retryAfter string) time.Duration {
 	if retryAfter == "" {
