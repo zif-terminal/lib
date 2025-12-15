@@ -3,6 +3,7 @@ package hyperliquid
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -96,8 +97,10 @@ func TestHyperliquidClient_FetchFundingPayments_Success(t *testing.T) {
 	}
 
 	// Verify first payment (should be oldest due to sorting)
-	if payments[0].PaymentID != "0x123" {
-		t.Errorf("Expected payment ID '0x123', got '%s'", payments[0].PaymentID)
+	// PaymentID format: {timestamp_ms}_{coin}
+	expectedPaymentID1 := fmt.Sprintf("%d_BTC", payments[0].Timestamp.UnixMilli())
+	if payments[0].PaymentID != expectedPaymentID1 {
+		t.Errorf("Expected payment ID '%s', got '%s'", expectedPaymentID1, payments[0].PaymentID)
 	}
 	if payments[0].Amount != "10.5" {
 		t.Errorf("Expected amount '10.5', got '%s'", payments[0].Amount)
@@ -110,8 +113,9 @@ func TestHyperliquidClient_FetchFundingPayments_Success(t *testing.T) {
 	}
 
 	// Verify second payment
-	if payments[1].PaymentID != "0x456" {
-		t.Errorf("Expected payment ID '0x456', got '%s'", payments[1].PaymentID)
+	expectedPaymentID2 := fmt.Sprintf("%d_ETH", payments[1].Timestamp.UnixMilli())
+	if payments[1].PaymentID != expectedPaymentID2 {
+		t.Errorf("Expected payment ID '%s', got '%s'", expectedPaymentID2, payments[1].PaymentID)
 	}
 	if payments[1].Amount != "-5.25" {
 		t.Errorf("Expected amount '-5.25', got '%s'", payments[1].Amount)
@@ -260,8 +264,10 @@ func TestHyperliquidClient_FetchFundingPayments_FiltersBySince(t *testing.T) {
 		t.Fatalf("Expected 1 payment after filtering, got %d", len(payments))
 	}
 
-	if payments[0].PaymentID != "0xnew" {
-		t.Errorf("Expected payment ID '0xnew', got '%s'", payments[0].PaymentID)
+	// PaymentID format: {timestamp_ms}_{coin}
+	expectedPaymentID := fmt.Sprintf("%d_ETH", payments[0].Timestamp.UnixMilli())
+	if payments[0].PaymentID != expectedPaymentID {
+		t.Errorf("Expected payment ID '%s', got '%s'", expectedPaymentID, payments[0].PaymentID)
 	}
 }
 
@@ -293,11 +299,11 @@ func TestHyperliquidClient_FetchFundingPayments_EmptyAccountIdentifier(t *testin
 	}
 }
 
-func TestHyperliquidClient_FetchFundingPayments_MissingHash(t *testing.T) {
+func TestHyperliquidClient_FetchFundingPayments_MissingCoin(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		response := []hyperliquidFundingPayment{
 			{
-				Hash: "", // Missing hash
+				Hash: "0x123", // Hash is no longer required, but we include it for completeness
 				Time: time.Now().UnixMilli(),
 				Delta: struct {
 					Type        string      `json:"type"`
@@ -308,7 +314,7 @@ func TestHyperliquidClient_FetchFundingPayments_MissingHash(t *testing.T) {
 					NSamples    interface{} `json:"nSamples"`
 				}{
 					Type: "funding",
-					Coin: "BTC",
+					Coin: "", // Missing coin - should cause error
 					USDC: "10.0",
 				},
 			},
@@ -331,7 +337,7 @@ func TestHyperliquidClient_FetchFundingPayments_MissingHash(t *testing.T) {
 	ctx := context.Background()
 	_, err := client.FetchFundingPayments(ctx, account, time.Time{})
 	if err == nil {
-		t.Fatal("Expected error for missing hash")
+		t.Fatal("Expected error for missing coin (base asset)")
 	}
 }
 

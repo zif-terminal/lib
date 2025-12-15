@@ -359,18 +359,24 @@ func (c *Client) FetchFundingPayments(
 func transformFundingPayment(apiPayment hyperliquidFundingPayment, accountUUID uuid.UUID) (*models.FundingPaymentInput, error) {
 	// Parse timestamp (Hyperliquid returns Unix timestamp in milliseconds)
 	timestamp := parseTimestamp(apiPayment.Time)
+	if timestamp.IsZero() {
+		return nil, fmt.Errorf("missing or invalid timestamp")
+	}
 
 	// Convert funding amount (USDC) to string (handles positive/negative)
 	amount := convertToString(apiPayment.Delta.USDC)
 
 	// Extract base and quote assets from coin (e.g., "SOL" -> base="SOL", quote="USDC")
 	baseAsset, quoteAsset := parseAssetPair(apiPayment.Delta.Coin)
-
-	// Use hash as payment ID (unique identifier from exchange)
-	if apiPayment.Hash == "" {
-		return nil, fmt.Errorf("missing required field 'hash' (payment ID)")
+	if baseAsset == "" {
+		return nil, fmt.Errorf("missing required field 'coin' (base asset)")
 	}
-	paymentID := apiPayment.Hash
+
+	// Generate unique payment ID from timestamp + coin
+	// Note: Hyperliquid's hash field is not unique (all payments have 0x0000...)
+	// We use a composite key: timestamp_ms_coin to ensure uniqueness
+	// Format: {timestamp_ms}_{coin}
+	paymentID := fmt.Sprintf("%d_%s", timestamp.UnixMilli(), baseAsset)
 
 	return &models.FundingPaymentInput{
 		ExchangeAccountID: accountUUID,
