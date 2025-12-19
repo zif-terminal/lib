@@ -36,8 +36,13 @@ func TestHyperliquidClient_FetchTrades_Success(t *testing.T) {
 			t.Fatalf("Failed to decode request: %v", err)
 		}
 
-		if reqBody["type"] != "userFills" {
-			t.Errorf("Expected type 'userFills', got '%v'", reqBody["type"])
+		if reqBody["type"] != "userFillsByTime" {
+			t.Errorf("Expected type 'userFillsByTime', got '%v'", reqBody["type"])
+		}
+		
+		// Verify startTime parameter is present
+		if reqBody["startTime"] == nil {
+			t.Error("Expected 'startTime' parameter in request")
 		}
 
 		// Return mock response - API returns direct array, not wrapped
