@@ -36,6 +36,8 @@ func (c *Client) Name() string {
 
 // FetchTrades fetches trades directly from Hyperliquid API
 // Transforms exchange response directly to []*models.TradeInput
+// Implements pagination to fetch all historical trades (API limits to 2000 per request)
+// Uses userFillsByTime endpoint which returns trades in chronological order (oldest first)
 func (c *Client) FetchTrades(
 	ctx context.Context,
 	account *models.ExchangeAccount,
@@ -58,80 +60,140 @@ func (c *Client) FetchTrades(
 		return nil, fmt.Errorf("account identifier (address) is required")
 	}
 
-	// Build API request body
-	// Based on Hyperliquid API: POST /info with {"type": "userFills", "user": address}
-	requestBody := map[string]interface{}{
-		"type": "userFills",
-		"user": address,
+	// Hyperliquid API has a limit of 2000 trades per request
+	// We paginate forward using startTime to fetch all historical trades
+	// userFillsByTime returns trades in chronological order (oldest first)
+	const maxTradesPerRequest = 2000
+	allTrades := make([]*models.TradeInput, 0)
+	
+	// Determine initial startTime for pagination
+	// If since is zero, fetch all historical trades from the beginning
+	// Otherwise, fetch trades starting from the 'since' timestamp
+	var startTime int64
+	if since.IsZero() {
+		startTime = 0 // Fetch all historical trades
+	} else {
+		startTime = since.UnixMilli() // Fetch trades >= since
 	}
 
-	bodyBytes, err := json.Marshal(requestBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	// Create HTTP request with context
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/info", strings.NewReader(string(bodyBytes)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	// Make HTTP request
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch trades: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Check for rate limit (HTTP 429)
-	if resp.StatusCode == http.StatusTooManyRequests {
-		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
-		return nil, &iface.RateLimitError{
-			Exchange:   "hyperliquid",
-			Message:    "rate limit exceeded",
-			RetryAfter: retryAfter,
-		}
-	}
-
-	// Check for other HTTP errors
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
-	}
-
-	// Parse response - API returns a direct array of fills, not wrapped in an object
-	var apiFills []hyperliquidFill
-	if err := json.NewDecoder(resp.Body).Decode(&apiFills); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	// Transform to TradeInput
-	trades := make([]*models.TradeInput, 0)
-	for _, apiFill := range apiFills {
-		// Parse timestamp first
-		tradeTimestamp := parseTimestamp(apiFill.Time)
-		
-		// Filter: only trades >= since
-		if !since.IsZero() && tradeTimestamp.Before(since) {
-			continue
+	for {
+		// Check if ctx is cancelled before each request
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 
-		tradeInput, err := transformFill(apiFill, accountUUID)
+		// Build API request body
+		// Based on Hyperliquid API: POST /info with {"type": "userFillsByTime", "user": address, "startTime": startTime}
+		requestBody := map[string]interface{}{
+			"type":      "userFillsByTime",
+			"user":      address,
+			"startTime": startTime,
+		}
+
+		bodyBytes, err := json.Marshal(requestBody)
 		if err != nil {
-			// Return error instead of skipping - we're in dev phase and this should not happen
-			// Missing required fields (e.g., tid) indicate a problem that needs investigation
-			return nil, fmt.Errorf("failed to transform fill: %w | hash=%s | coin=%s | time=%v", err, apiFill.Hash, apiFill.Coin, apiFill.Time)
+			return nil, fmt.Errorf("failed to marshal request: %w", err)
 		}
-		trades = append(trades, tradeInput)
+
+		// Create HTTP request with context
+		req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/info", strings.NewReader(string(bodyBytes)))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+
+		// Make HTTP request
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch trades: %w", err)
+		}
+
+		// Check for rate limit (HTTP 429)
+		if resp.StatusCode == http.StatusTooManyRequests {
+			resp.Body.Close()
+			retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
+			return nil, &iface.RateLimitError{
+				Exchange:   "hyperliquid",
+				Message:    "rate limit exceeded",
+				RetryAfter: retryAfter,
+			}
+		}
+
+		// Check for other HTTP errors
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+		}
+
+		// Parse response - API returns a direct array of fills, not wrapped in an object
+		var apiFills []hyperliquidFill
+		if err := json.NewDecoder(resp.Body).Decode(&apiFills); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to decode response: %w", err)
+		}
+		resp.Body.Close()
+
+		// If no fills returned, we've reached the end
+		if len(apiFills) == 0 {
+			break
+		}
+
+		// Transform to TradeInput and collect
+		batchTrades := make([]*models.TradeInput, 0, len(apiFills))
+		var newestTimestamp *time.Time
+
+		for _, apiFill := range apiFills {
+			// Parse timestamp first
+			tradeTimestamp := parseTimestamp(apiFill.Time)
+			if tradeTimestamp.IsZero() {
+				continue // Skip invalid timestamps
+			}
+
+			// Track newest timestamp for pagination (trades are returned oldest-first)
+			if newestTimestamp == nil || tradeTimestamp.After(*newestTimestamp) {
+				newestTimestamp = &tradeTimestamp
+			}
+
+			// Filter: only trades >= since (already handled by API startTime, but double-check for safety)
+			if !since.IsZero() && tradeTimestamp.Before(since) {
+				continue
+			}
+
+			tradeInput, err := transformFill(apiFill, accountUUID)
+			if err != nil {
+				// Return error instead of skipping - we're in dev phase and this should not happen
+				// Missing required fields (e.g., tid) indicate a problem that needs investigation
+				return nil, fmt.Errorf("failed to transform fill: %w | hash=%s | coin=%s | time=%v", err, apiFill.Hash, apiFill.Coin, apiFill.Time)
+			}
+			batchTrades = append(batchTrades, tradeInput)
+		}
+
+		// Add batch trades to all trades
+		allTrades = append(allTrades, batchTrades...)
+
+		// If we got fewer than maxTradesPerRequest, we've reached the end
+		if len(apiFills) < maxTradesPerRequest {
+			break
+		}
+
+		// If we didn't find any valid timestamps, break to avoid infinite loop
+		if newestTimestamp == nil {
+			break
+		}
+
+		// Set startTime to the newest timestamp + 1ms for next pagination request
+		// This ensures we don't fetch the same trade again and continue forward
+		startTime = newestTimestamp.UnixMilli() + 1
 	}
 
-	// Sort by timestamp (oldest first) for incremental syncing
-	sort.Slice(trades, func(i, j int) bool {
-		return trades[i].Timestamp.Before(trades[j].Timestamp)
+	// Trades are already sorted chronologically (oldest first) from userFillsByTime
+	// No need to sort again, but we verify for safety
+	sort.Slice(allTrades, func(i, j int) bool {
+		return allTrades[i].Timestamp.Before(allTrades[j].Timestamp)
 	})
 
-	return trades, nil
+	return allTrades, nil
 }
 
 // transformFill converts Hyperliquid fill format to TradeInput
