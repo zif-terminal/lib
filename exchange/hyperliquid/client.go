@@ -221,10 +221,17 @@ func transformFill(apiFill hyperliquidFill, accountUUID uuid.UUID) (*models.Trad
 	if apiFill.Tid == nil {
 		return nil, fmt.Errorf("missing required field 'tid' (fill ID) for fill with hash %s", apiFill.Hash)
 	}
-	
+
 	tradeID := convertToString(apiFill.Tid)
 	if tradeID == "" || tradeID == "<nil>" {
 		return nil, fmt.Errorf("empty or invalid 'tid' (fill ID) for fill with hash %s, tid value: %v (type: %T)", apiFill.Hash, apiFill.Tid, apiFill.Tid)
+	}
+
+	// Handle tid=0 case: Hyperliquid returns tid=0 for certain trades (e.g., funding, liquidations)
+	// Generate a composite trade ID to ensure uniqueness: timestamp_oid_coin_price_size
+	if tradeID == "0" {
+		ts := convertToString(apiFill.Time)
+		tradeID = fmt.Sprintf("%s_%s_%s_%s_%s", ts, orderID, apiFill.Coin, price, quantity)
 	}
 
 	return &models.TradeInput{
