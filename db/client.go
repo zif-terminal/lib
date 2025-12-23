@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/machinebox/graphql"
@@ -101,6 +102,13 @@ type DBClient interface {
 	// Funding payment methods
 	GetLatestFundingPayment(ctx context.Context, exchangeAccountID uuid.UUID) (*FundingPayment, error)
 	AddFundingPayments(ctx context.Context, inputs []*FundingPaymentInput) ([]*FundingPayment, error)
+
+	// Position methods
+	GetLastProcessedTradeTimestamp(ctx context.Context, exchangeAccountID uuid.UUID, baseAsset string, quoteAsset string) (*time.Time, error)
+	CreatePosition(ctx context.Context, input *PositionInput) (*Position, error)
+	CreatePositionTrades(ctx context.Context, inputs []*PositionTradeInput) ([]*PositionTrade, error)
+	GetPositions(ctx context.Context, filter PositionFilter) ([]*Position, error)
+	GetPositionByID(ctx context.Context, positionID string) (*Position, []*PositionTrade, error)
 }
 
 // Ensure Client implements DBClient
