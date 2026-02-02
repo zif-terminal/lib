@@ -29,3 +29,12 @@ type ExchangeAccountInput struct {
 	AccountType         string          `json:"account_type"` // Uses code string ('main', 'sub_account', 'vault')
 	AccountTypeMetadata json.RawMessage `json:"account_type_metadata,omitempty"`
 }
+
+// DiscoverableAccount represents an account discovered from an exchange
+// Used by the DiscoverAccounts interface method
+type DiscoverableAccount struct {
+	AccountIdentifier string                 `json:"account_identifier"` // The ID to use for syncing (subaccount address/pubkey)
+	AccountType       string                 `json:"account_type"`       // "main", "sub_account", "vault"
+	Name              string                 `json:"name"`               // Display name (e.g., "Main Account", "Trading Sub")
+	Metadata          map[string]interface{} `json:"metadata,omitempty"` // Exchange-specific extra data
+}
