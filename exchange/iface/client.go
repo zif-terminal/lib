@@ -9,7 +9,7 @@ import (
 
 // ExchangeClient is the interface that all exchange implementations must satisfy
 type ExchangeClient interface {
-	// Name returns the exchange identifier (e.g., "hyperliquid", "lighter")
+	// Name returns the exchange identifier (e.g., "hyperliquid", "drift")
 	Name() string
 
 	// FetchTrades fetches trades for a given account since a specific timestamp
@@ -30,4 +30,13 @@ type ExchangeClient interface {
 		account *models.ExchangeAccount,
 		since time.Time,
 	) ([]*models.FundingPaymentInput, error)
+
+	// DiscoverAccounts discovers all syncable accounts (main, subaccounts, vaults) for a given user identifier
+	// For Hyperliquid: userIdentifier is the wallet address (0x...)
+	// For Drift: userIdentifier is the Solana wallet address (authority)
+	// Returns a list of discoverable accounts that can be added for syncing
+	DiscoverAccounts(
+		ctx context.Context,
+		userIdentifier string,
+	) ([]*models.DiscoverableAccount, error)
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/zif-terminal/lib/exchange/drift"
 	"github.com/zif-terminal/lib/exchange/hyperliquid"
 	"github.com/zif-terminal/lib/exchange/iface"
 )
@@ -25,11 +26,11 @@ func GetClient(name string) (iface.ExchangeClient, error) {
 	switch name {
 	case "hyperliquid":
 		return hyperliquid.NewClient(), nil
+	case "drift":
+		return drift.NewClient(), nil
 	// Add more exchanges here as they are implemented:
 	// case "lighter":
 	//     return lighter.NewClient(), nil
-	// case "drift":
-	//     return drift.NewClient(), nil
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrExchangeNotFound, name)
 	}
@@ -39,8 +40,8 @@ func GetClient(name string) (iface.ExchangeClient, error) {
 func ListAvailableExchanges() []string {
 	return []string{
 		"hyperliquid",
+		"drift",
 		// Add more exchanges here as they are implemented:
 		// "lighter",
-		// "drift",
 	}
 }
