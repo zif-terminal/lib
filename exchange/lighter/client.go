@@ -33,6 +33,7 @@ type marketInfo struct {
 	symbol     string
 	baseAsset  string
 	quoteAsset string
+	marketType string // "perp" or "spot"
 }
 
 // marketCache provides thread-safe caching of market information
@@ -491,6 +492,7 @@ func (c *Client) loadMarketCache(ctx context.Context, authToken string) error {
 			symbol:     m.Symbol,
 			baseAsset:  m.Symbol,
 			quoteAsset: "USDC",
+			marketType: "perp",
 		}
 	}
 
@@ -507,6 +509,7 @@ func (c *Client) loadMarketCache(ctx context.Context, authToken string) error {
 			symbol:     m.Symbol,
 			baseAsset:  baseAsset,
 			quoteAsset: quoteAsset,
+			marketType: "spot",
 		}
 	}
 
@@ -527,10 +530,11 @@ func (c *Client) getMarketInfo(marketIndex int) (marketInfo, bool) {
 func (c *Client) tradeToTradeInput(trade lighterTrade, accountIndex string, accountUUID uuid.UUID) (*models.TradeInput, error) {
 	market, ok := c.getMarketInfo(trade.MarketID)
 	if !ok {
-		// Fallback: use generic naming
+		// Fallback: use generic naming and default to perp
 		market = marketInfo{
 			baseAsset:  fmt.Sprintf("MARKET%d", trade.MarketID),
 			quoteAsset: "USDC",
+			marketType: "perp",
 		}
 	}
 
@@ -575,6 +579,7 @@ func (c *Client) tradeToTradeInput(trade lighterTrade, accountIndex string, acco
 		Fee:               fee,
 		OrderID:           orderID,
 		TradeID:           fmt.Sprintf("%d", trade.TradeID),
+		MarketType:        market.marketType,
 	}, nil
 }
 
@@ -583,10 +588,11 @@ func (c *Client) tradeToTradeInput(trade lighterTrade, accountIndex string, acco
 func (c *Client) orderToTrade(order lighterOrder, accountUUID uuid.UUID) (*models.TradeInput, error) {
 	market, ok := c.getMarketInfo(order.MarketIndex)
 	if !ok {
-		// Fallback: use generic naming
+		// Fallback: use generic naming and default to perp
 		market = marketInfo{
 			baseAsset:  fmt.Sprintf("MARKET%d", order.MarketIndex),
 			quoteAsset: "USDC",
+			marketType: "perp",
 		}
 	}
 
@@ -616,6 +622,7 @@ func (c *Client) orderToTrade(order lighterOrder, accountUUID uuid.UUID) (*model
 		Fee:               "0", // Lighter doesn't return fee in order response
 		OrderID:           order.OrderID,
 		TradeID:           order.OrderID, // Order ID serves as trade ID for filled orders
+		MarketType:        market.marketType,
 	}, nil
 }
 

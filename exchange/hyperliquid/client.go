@@ -235,16 +235,17 @@ func transformFill(apiFill hyperliquidFill, accountUUID uuid.UUID) (*models.Trad
 	}
 
 	return &models.TradeInput{
-		TradeID:          tradeID,      // Use fill ID (tid) as trade ID - unique per fill
-		OrderID:          orderID,      // Order ID (converted to string)
-		BaseAsset:        baseAsset,
-		QuoteAsset:       quoteAsset,
-		Side:             side,
-		Price:            price,
-		Quantity:         quantity,
-		Fee:              fee,
-		Timestamp:        timestamp,
+		TradeID:           tradeID,   // Use fill ID (tid) as trade ID - unique per fill
+		OrderID:           orderID,   // Order ID (converted to string)
+		BaseAsset:         baseAsset,
+		QuoteAsset:        quoteAsset,
+		Side:              side,
+		Price:             price,
+		Quantity:          quantity,
+		Fee:               fee,
+		Timestamp:         timestamp,
 		ExchangeAccountID: accountUUID,
+		MarketType:        detectMarketType(apiFill.Coin),
 	}, nil
 }
 
@@ -303,6 +304,22 @@ func parseAssetPair(coin string) (baseAsset, quoteAsset string) {
 	}
 	// If no separator, assume USDC as quote (common for Hyperliquid)
 	return parts[0], "USDC"
+}
+
+// detectMarketType detects whether a Hyperliquid trade is spot or perp based on coin format
+// Spot trades use "@{index}" format (e.g., "@107") or "TOKEN/USDC" format (e.g., "PURR/USDC")
+// Perp trades use simple names (e.g., "BTC", "ETH") or HIP-3 prefix format (e.g., "xyz:XYZ100")
+func detectMarketType(coin string) string {
+	// Spot: "@{index}" format
+	if strings.HasPrefix(coin, "@") {
+		return "spot"
+	}
+	// Spot: "TOKEN/USDC" pair format
+	if strings.Contains(coin, "/") {
+		return "spot"
+	}
+	// Everything else is perp (including HIP-3 "xyz:" prefix)
+	return "perp"
 }
 
 // convertToString converts numeric values to string for precision

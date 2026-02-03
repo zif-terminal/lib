@@ -314,6 +314,12 @@ func (c *Client) transformTrade(ctx context.Context, record driftTradeRecord, ac
 	// Convert timestamp (Drift uses seconds, not milliseconds)
 	timestamp := time.Unix(record.Ts, 0).UTC()
 
+	// Extract market type from API response, default to "perp" if empty
+	marketType := strings.ToLower(record.MarketType)
+	if marketType == "" {
+		marketType = "perp"
+	}
+
 	return &models.TradeInput{
 		TradeID:           record.FillRecordID,
 		OrderID:           orderID,
@@ -325,6 +331,7 @@ func (c *Client) transformTrade(ctx context.Context, record driftTradeRecord, ac
 		Fee:               fee,
 		Timestamp:         timestamp,
 		ExchangeAccountID: accountUUID,
+		MarketType:        marketType,
 	}, nil
 }
 
