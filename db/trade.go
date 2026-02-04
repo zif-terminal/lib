@@ -33,6 +33,7 @@ func (c *Client) GetTrade(ctx context.Context, id string) (*Trade, error) {
 				order_id
 				trade_id
 				exchange_account_id
+				market_type
 			}
 		}
 	`
@@ -61,16 +62,18 @@ func (c *Client) ListTrades(ctx context.Context, filter TradeFilter) ([]*Trade, 
 	var query string
 	var vars map[string]interface{}
 
-	// Build query based on whether we're filtering by account IDs
-	if len(filter.ExchangeAccountIDs) > 0 {
-		// Filter by specific account IDs
+	// Build query based on filter options
+	hasAccountFilter := len(filter.ExchangeAccountIDs) > 0
+	hasMarketTypeFilter := len(filter.MarketTypes) > 0
+
+	if hasAccountFilter && hasMarketTypeFilter {
+		// Filter by both account IDs and market types
 		query = `
-			query ListTrades($exchange_account_ids: [uuid!]!) {
+			query ListTrades($exchange_account_ids: [uuid!]!, $market_types: [String!]!) {
 				trades(
 					where: {
-						exchange_account_id: {
-							_in: $exchange_account_ids
-						}
+						exchange_account_id: { _in: $exchange_account_ids }
+						market_type: { _in: $market_types }
 					}
 					order_by: { timestamp: desc }
 				) {
@@ -85,16 +88,77 @@ func (c *Client) ListTrades(ctx context.Context, filter TradeFilter) ([]*Trade, 
 					order_id
 					trade_id
 					exchange_account_id
+					market_type
 				}
 			}
 		`
-		// Convert UUIDs to strings for GraphQL
 		accountIDs := make([]string, len(filter.ExchangeAccountIDs))
 		for i, id := range filter.ExchangeAccountIDs {
 			accountIDs[i] = id.String()
 		}
 		vars = map[string]interface{}{
 			"exchange_account_ids": accountIDs,
+			"market_types":         filter.MarketTypes,
+		}
+	} else if hasAccountFilter {
+		// Filter by account IDs only
+		query = `
+			query ListTrades($exchange_account_ids: [uuid!]!) {
+				trades(
+					where: {
+						exchange_account_id: { _in: $exchange_account_ids }
+					}
+					order_by: { timestamp: desc }
+				) {
+					id
+					base_asset
+					quote_asset
+					side
+					price
+					quantity
+					timestamp
+					fee
+					order_id
+					trade_id
+					exchange_account_id
+					market_type
+				}
+			}
+		`
+		accountIDs := make([]string, len(filter.ExchangeAccountIDs))
+		for i, id := range filter.ExchangeAccountIDs {
+			accountIDs[i] = id.String()
+		}
+		vars = map[string]interface{}{
+			"exchange_account_ids": accountIDs,
+		}
+	} else if hasMarketTypeFilter {
+		// Filter by market types only
+		query = `
+			query ListTrades($market_types: [String!]!) {
+				trades(
+					where: {
+						market_type: { _in: $market_types }
+					}
+					order_by: { timestamp: desc }
+				) {
+					id
+					base_asset
+					quote_asset
+					side
+					price
+					quantity
+					timestamp
+					fee
+					order_id
+					trade_id
+					exchange_account_id
+					market_type
+				}
+			}
+		`
+		vars = map[string]interface{}{
+			"market_types": filter.MarketTypes,
 		}
 	} else {
 		// No filter - get all trades
@@ -114,6 +178,7 @@ func (c *Client) ListTrades(ctx context.Context, filter TradeFilter) ([]*Trade, 
 					order_id
 					trade_id
 					exchange_account_id
+					market_type
 				}
 			}
 		`
@@ -147,6 +212,7 @@ func (c *Client) CreateTrade(ctx context.Context, input *TradeInput) (*Trade, er
 			$order_id: String!
 			$trade_id: String!
 			$exchange_account_id: uuid!
+			$market_type: String!
 		) {
 			insert_trades_one(object: {
 				base_asset: $base_asset
@@ -159,6 +225,7 @@ func (c *Client) CreateTrade(ctx context.Context, input *TradeInput) (*Trade, er
 				order_id: $order_id
 				trade_id: $trade_id
 				exchange_account_id: $exchange_account_id
+				market_type: $market_type
 			}) {
 				id
 				base_asset
@@ -171,21 +238,29 @@ func (c *Client) CreateTrade(ctx context.Context, input *TradeInput) (*Trade, er
 				order_id
 				trade_id
 				exchange_account_id
+				market_type
 			}
 		}
 	`
 
+	// Default to "perp" if market_type is not specified
+	marketType := input.MarketType
+	if marketType == "" {
+		marketType = "perp"
+	}
+
 	vars := map[string]interface{}{
-		"base_asset":         input.BaseAsset,
-		"quote_asset":        input.QuoteAsset,
-		"side":               input.Side,
-		"price":              input.Price,
-		"quantity":           input.Quantity,
-		"timestamp":          input.Timestamp.UnixMilli(),
-		"fee":                input.Fee,
-		"order_id":           input.OrderID,
-		"trade_id":           input.TradeID,
+		"base_asset":          input.BaseAsset,
+		"quote_asset":         input.QuoteAsset,
+		"side":                input.Side,
+		"price":               input.Price,
+		"quantity":            input.Quantity,
+		"timestamp":           input.Timestamp.UnixMilli(),
+		"fee":                 input.Fee,
+		"order_id":            input.OrderID,
+		"trade_id":            input.TradeID,
 		"exchange_account_id": input.ExchangeAccountID.String(),
+		"market_type":         marketType,
 	}
 
 	req := c.graphqlRequestWithVars(query, vars)
@@ -220,6 +295,7 @@ func (c *Client) UpdateTrade(ctx context.Context, id string, input *TradeInput) 
 			$order_id: String!
 			$trade_id: String!
 			$exchange_account_id: uuid!
+			$market_type: String!
 		) {
 			update_trades_by_pk(
 				pk_columns: { id: $id }
@@ -234,6 +310,7 @@ func (c *Client) UpdateTrade(ctx context.Context, id string, input *TradeInput) 
 					order_id: $order_id
 					trade_id: $trade_id
 					exchange_account_id: $exchange_account_id
+					market_type: $market_type
 				}
 			) {
 				id
@@ -247,22 +324,30 @@ func (c *Client) UpdateTrade(ctx context.Context, id string, input *TradeInput) 
 				order_id
 				trade_id
 				exchange_account_id
+				market_type
 			}
 		}
 	`
 
+	// Default to "perp" if market_type is not specified
+	marketType := input.MarketType
+	if marketType == "" {
+		marketType = "perp"
+	}
+
 	vars := map[string]interface{}{
-		"id":                 id,
-		"base_asset":         input.BaseAsset,
-		"quote_asset":        input.QuoteAsset,
-		"side":               input.Side,
-		"price":              input.Price,
-		"quantity":           input.Quantity,
-		"timestamp":          input.Timestamp.UnixMilli(),
-		"fee":                input.Fee,
-		"order_id":           input.OrderID,
-		"trade_id":           input.TradeID,
+		"id":                  id,
+		"base_asset":          input.BaseAsset,
+		"quote_asset":         input.QuoteAsset,
+		"side":                input.Side,
+		"price":               input.Price,
+		"quantity":            input.Quantity,
+		"timestamp":           input.Timestamp.UnixMilli(),
+		"fee":                 input.Fee,
+		"order_id":            input.OrderID,
+		"trade_id":            input.TradeID,
 		"exchange_account_id": input.ExchangeAccountID.String(),
+		"market_type":         marketType,
 	}
 
 	req := c.graphqlRequestWithVars(query, vars)
@@ -341,6 +426,7 @@ func (c *Client) LatestTrade(ctx context.Context, exchangeAccountIDs []uuid.UUID
 				order_id
 				trade_id
 				exchange_account_id
+				market_type
 			}
 		}
 	`

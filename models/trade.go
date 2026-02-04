@@ -23,6 +23,7 @@ type Trade struct {
 	OrderID           string    `json:"order_id"`
 	TradeID           string    `json:"trade_id"`
 	ExchangeAccountID uuid.UUID `json:"exchange_account_id"`
+	MarketType        string    `json:"market_type"` // "perp" or "spot"
 }
 
 // UnmarshalJSON custom unmarshaler to handle BIGINT timestamp (Unix milliseconds) and NUMERIC as numbers
@@ -118,9 +119,11 @@ type TradeInput struct {
 	OrderID           string    `json:"order_id"`
 	TradeID           string    `json:"trade_id"`
 	ExchangeAccountID uuid.UUID `json:"exchange_account_id"`
+	MarketType        string    `json:"market_type"` // "perp" or "spot"
 }
 
 // TradeFilter represents filtering options for listing trades
 type TradeFilter struct {
 	ExchangeAccountIDs []uuid.UUID // Empty slice = all accounts, non-empty = filter by these IDs
+	MarketTypes        []string    // Optional: ["perp"], ["spot"], or both. Empty = all market types
 }
