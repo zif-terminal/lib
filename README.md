@@ -1,5 +1,9 @@
 # zif-lib
 
+[![CI](https://github.com/zif-terminal/lib/actions/workflows/ci.yml/badge.svg)](https://github.com/zif-terminal/lib/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-69.5%25-yellow)](https://github.com/zif-terminal/lib)
+[![Go Version](https://img.shields.io/badge/go-1.21+-blue)](https://go.dev/)
+
 Shared Go library for the Zif platform. Provides database models, GraphQL client, and exchange integrations.
 
 ## Prerequisites
@@ -139,7 +143,6 @@ git commit -m "docs: update API examples in README"
 │ Main Branch                                               │
 ├───────────────────────────────────────────────────────────┤
 │ ✓ test             - Runs tests + checks coverage        │
-│ ✓ update-baseline  - Updates coverage baseline if higher │
 │ ✓ release          - Creates version tag from commits    │
 └───────────────────────────────────────────────────────────┘
 ```
@@ -268,20 +271,31 @@ This repo uses **coverage ratcheting** - coverage can only go up, never down.
 
 - Baseline is stored in `.coverage-baseline`
 - PRs that reduce coverage are blocked
-- When coverage improves, the baseline is automatically updated on merge
+- When you improve coverage, update the baseline in your PR
 
 ```
 PR reduces coverage:   60.5% → 58%   ❌ Blocked
 PR maintains coverage: 60.5% → 60.5% ✓ Allowed
-PR improves coverage:  60.5% → 65%   ✓ Baseline updated to 65%
+PR improves coverage:  60.5% → 65%   ✓ Update baseline in PR
 ```
 
-Check coverage locally before pushing:
+Check and update coverage:
 
 ```bash
+# Check current coverage
 go test -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out | grep total
+
+# If coverage improved, update the baseline
+echo "70.0" > .coverage-baseline
 ```
+
+When updating the baseline, also update the coverage badge in this README:
+```markdown
+[![Coverage](https://img.shields.io/badge/coverage-70.0%25-yellow)]
+```
+
+Badge colors: `red` (<50%), `yellow` (50-80%), `green` (>80%)
 
 ## Using This Library
 
