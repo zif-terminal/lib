@@ -1,0 +1,156 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Run tests
+        run: go test -v ./...
+
+  validate-commits:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate conventional commits
+        run: |
+          # Get commits in this PR
+          commits=$(git log --format="%s" origin/${{ github.base_ref }}..${{ github.sha }})
+
+          pattern="^(feat|fix|docs|style|refactor|perf|test|chore|ci|build)(\([a-zA-Z0-9_-]+\))?\!?: .+"
+
+          has_error=false
+          while IFS= read -r msg; do
+            # Skip empty lines and merge commits
+            [ -z "$msg" ] && continue
+            echo "$msg" | grep -qE "^Merge " && continue
+
+            if ! echo "$msg" | grep -qE "$pattern"; then
+              echo "❌ Invalid: $msg"
+              has_error=true
+            else
+              echo "✓ Valid: $msg"
+            fi
+          done <<< "$commits"
+
+          if [ "$has_error" = true ]; then
+            echo ""
+            echo "Some commits don't follow conventional commit format."
+            echo "Expected: <type>[scope][!]: <description>"
+            echo "Types: feat, fix, docs, style, refactor, perf, test, chore, ci, build"
+            exit 1
+          fi
+
+  release:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version bump
+        id: version
+        run: |
+          # Get the latest tag
+          LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Latest tag: $LATEST"
+
+          # Get commits since last tag
+          if [ "$LATEST" = "v0.0.0" ]; then
+            COMMITS=$(git log --format="%s" HEAD)
+          else
+            COMMITS=$(git log --format="%s" ${LATEST}..HEAD)
+          fi
+
+          echo "Commits since $LATEST:"
+          echo "$COMMITS"
+          echo ""
+
+          # Determine bump type from conventional commits
+          BUMP="none"
+
+          # Check for breaking changes (MAJOR)
+          if echo "$COMMITS" | grep -qE "^(feat|fix|docs|style|refactor|perf|test|chore|ci|build)(\([^)]+\))?\!:"; then
+            BUMP="major"
+            echo "Found breaking change (!) - MAJOR bump"
+          elif echo "$COMMITS" | grep -qE "BREAKING CHANGE:"; then
+            BUMP="major"
+            echo "Found BREAKING CHANGE footer - MAJOR bump"
+          # Check for features (MINOR)
+          elif echo "$COMMITS" | grep -qE "^feat(\([^)]+\))?:"; then
+            BUMP="minor"
+            echo "Found feat commit - MINOR bump"
+          # Check for fixes (PATCH)
+          elif echo "$COMMITS" | grep -qE "^fix(\([^)]+\))?:"; then
+            BUMP="patch"
+            echo "Found fix commit - PATCH bump"
+          # Check for other conventional commits (PATCH)
+          elif echo "$COMMITS" | grep -qE "^(docs|style|refactor|perf|test|chore|ci|build)(\([^)]+\))?:"; then
+            BUMP="patch"
+            echo "Found other conventional commit - PATCH bump"
+          fi
+
+          echo "bump=$BUMP" >> $GITHUB_OUTPUT
+          echo "latest=$LATEST" >> $GITHUB_OUTPUT
+
+      - name: Create version tag
+        if: steps.version.outputs.bump != 'none'
+        run: |
+          LATEST="${{ steps.version.outputs.latest }}"
+          BUMP="${{ steps.version.outputs.bump }}"
+
+          # Parse current version
+          VERSION="${LATEST#v}"
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          PATCH=$(echo "$VERSION" | cut -d. -f3)
+
+          # Calculate new version
+          case "$BUMP" in
+            major)
+              NEW_MAJOR=$((MAJOR + 1))
+              NEW_TAG="v${NEW_MAJOR}.0.0"
+              ;;
+            minor)
+              NEW_MINOR=$((MINOR + 1))
+              NEW_TAG="v${MAJOR}.${NEW_MINOR}.0"
+              ;;
+            patch)
+              NEW_PATCH=$((PATCH + 1))
+              NEW_TAG="v${MAJOR}.${MINOR}.${NEW_PATCH}"
+              ;;
+          esac
+
+          echo "Creating tag: $NEW_TAG (was $LATEST, bump: $BUMP)"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
+          git push origin "$NEW_TAG"
+
+          echo "✓ Created and pushed $NEW_TAG"
+
+      - name: Skip release
+        if: steps.version.outputs.bump == 'none'
+        run: |
+          echo "No conventional commits found since last tag."
+          echo "Skipping release."
