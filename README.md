@@ -127,21 +127,21 @@ git commit -m "docs: update API examples in README"
 ## CI/CD Pipeline
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ Pull Request                                            │
-├─────────────────────────────────────────────────────────┤
-│ ✓ test           - Runs go test ./...                  │
-│ ✓ validate-commits - Checks conventional commit format │
-└─────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│ Pull Request                                              │
+├───────────────────────────────────────────────────────────┤
+│ ✓ test             - Runs tests + checks coverage        │
+│ ✓ validate-commits - Checks conventional commit format   │
+└───────────────────────────────────────────────────────────┘
                            │
                            ▼ merge
-┌─────────────────────────────────────────────────────────┐
-│ Main Branch                                             │
-├─────────────────────────────────────────────────────────┤
-│ ✓ test           - Runs go test ./...                  │
-│ ✓ release        - Creates version tag based on commits│
-│                    feat: → MINOR, fix: → PATCH         │
-└─────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│ Main Branch                                               │
+├───────────────────────────────────────────────────────────┤
+│ ✓ test             - Runs tests + checks coverage        │
+│ ✓ update-baseline  - Updates coverage baseline if higher │
+│ ✓ release          - Creates version tag from commits    │
+└───────────────────────────────────────────────────────────┘
 ```
 
 ## Package Structure
@@ -235,6 +235,7 @@ lib/
 │   ├── position.go
 │   └── funding_payment.go
 ├── logger/                   # Structured logging
+├── .coverage-baseline        # Coverage ratchet baseline
 ├── go.mod
 └── README.md
 ```
@@ -254,6 +255,32 @@ go test -v ./exchange/hyperliquid/...
 
 # With coverage
 go test -cover ./...
+
+# Detailed coverage report
+go test -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out        # Summary
+go tool cover -html=coverage.out        # HTML report in browser
+```
+
+## Test Coverage
+
+This repo uses **coverage ratcheting** - coverage can only go up, never down.
+
+- Baseline is stored in `.coverage-baseline`
+- PRs that reduce coverage are blocked
+- When coverage improves, the baseline is automatically updated on merge
+
+```
+PR reduces coverage:   60.5% → 58%   ❌ Blocked
+PR maintains coverage: 60.5% → 60.5% ✓ Allowed
+PR improves coverage:  60.5% → 65%   ✓ Baseline updated to 65%
+```
+
+Check coverage locally before pushing:
+
+```bash
+go test -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out | grep total
 ```
 
 ## Using This Library

@@ -16,8 +16,47 @@ jobs:
         with:
           go-version: "1.21"
 
-      - name: Run tests
-        run: go test -v ./...
+      - name: Run tests with coverage
+        run: |
+          go test -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out
+
+      - name: Check coverage
+        id: coverage
+        run: |
+          # Get current coverage
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Current coverage: ${COVERAGE}%"
+          echo "coverage=$COVERAGE" >> $GITHUB_OUTPUT
+
+          # Get baseline
+          BASELINE=$(cat .coverage-baseline)
+          echo "Baseline coverage: ${BASELINE}%"
+          echo "baseline=$BASELINE" >> $GITHUB_OUTPUT
+
+          # Compare (using bc for float comparison)
+          if echo "$COVERAGE < $BASELINE" | bc -l | grep -q 1; then
+            echo ""
+            echo "❌ Coverage dropped from ${BASELINE}% to ${COVERAGE}%"
+            echo "Add tests to maintain or improve coverage."
+            exit 1
+          else
+            echo "✓ Coverage OK: ${COVERAGE}% (baseline: ${BASELINE}%)"
+          fi
+
+      - name: Coverage summary
+        run: |
+          echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Current | ${{ steps.coverage.outputs.coverage }}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Baseline | ${{ steps.coverage.outputs.baseline }}% |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Per-package coverage" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          go tool cover -func=coverage.out | grep -E "^github|^total" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
   validate-commits:
     runs-on: ubuntu-latest
@@ -54,6 +93,44 @@ jobs:
             echo "Expected: <type>[scope][!]: <description>"
             echo "Types: feat, fix, docs, style, refactor, perf, test, chore, ci, build"
             exit 1
+          fi
+
+  update-baseline:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Update coverage baseline
+        run: |
+          # Get current coverage
+          go test -coverprofile=coverage.out ./... > /dev/null 2>&1
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          BASELINE=$(cat .coverage-baseline)
+
+          echo "Current: ${COVERAGE}%"
+          echo "Baseline: ${BASELINE}%"
+
+          # Update baseline if coverage improved
+          if echo "$COVERAGE > $BASELINE" | bc -l | grep -q 1; then
+            echo "$COVERAGE" > .coverage-baseline
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add .coverage-baseline
+            git commit -m "chore: update coverage baseline to ${COVERAGE}%"
+            git push
+            echo "✓ Updated baseline from ${BASELINE}% to ${COVERAGE}%"
+          else
+            echo "Coverage unchanged, no update needed"
           fi
 
   release:
