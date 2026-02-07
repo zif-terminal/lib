@@ -1,0 +1,73 @@
+#!/bin/bash
+#
+# Git hook to validate conventional commit messages
+#
+# Format: <type>[optional scope][!]: <description>
+#
+# Types:
+#   feat     - New feature (MINOR version bump)
+#   fix      - Bug fix (PATCH version bump)
+#   docs     - Documentation only
+#   style    - Code style (formatting, semicolons, etc)
+#   refactor - Code refactoring (no feature/fix)
+#   perf     - Performance improvement
+#   test     - Adding/updating tests
+#   chore    - Maintenance tasks
+#   ci       - CI/CD changes
+#   build    - Build system changes
+#
+# Breaking changes:
+#   Add ! after type:     feat!: redesign API
+#   Or in footer:         BREAKING CHANGE: description
+#
+# Examples:
+#   feat: add hyperliquid exchange support
+#   fix: correct funding payment calculation
+#   feat(db)!: change client interface
+#   docs: update README with examples
+#
+
+commit_msg_file="$1"
+commit_msg=$(cat "$commit_msg_file")
+
+# Skip merge commits
+if echo "$commit_msg" | grep -qE "^Merge "; then
+    exit 0
+fi
+
+# Conventional commit pattern
+# type(optional-scope)!: description
+pattern="^(feat|fix|docs|style|refactor|perf|test|chore|ci|build)(\([a-zA-Z0-9_-]+\))?\!?: .{1,}"
+
+if ! echo "$commit_msg" | head -1 | grep -qE "$pattern"; then
+    echo ""
+    echo "❌ Invalid commit message format!"
+    echo ""
+    echo "Expected: <type>[scope][!]: <description>"
+    echo ""
+    echo "Types: feat, fix, docs, style, refactor, perf, test, chore, ci, build"
+    echo ""
+    echo "Examples:"
+    echo "  feat: add new exchange client"
+    echo "  fix: correct calculation error"
+    echo "  feat!: breaking API change"
+    echo "  feat(db): add new query method"
+    echo ""
+    echo "Your message:"
+    echo "  $(head -1 "$commit_msg_file")"
+    echo ""
+    exit 1
+fi
+
+# Check description length (first line should be <= 72 chars)
+first_line=$(head -1 "$commit_msg_file")
+if [ ${#first_line} -gt 72 ]; then
+    echo ""
+    echo "❌ Commit message too long!"
+    echo ""
+    echo "First line should be <= 72 characters (yours: ${#first_line})"
+    echo ""
+    exit 1
+fi
+
+exit 0

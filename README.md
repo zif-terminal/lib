@@ -1,60 +1,164 @@
-# `zif-lib` - Shared Go Library
+# zif-lib
 
-## Purpose
+Shared Go library for the Zif platform. Provides database models, GraphQL client, and exchange integrations.
 
-Shared Go module providing:
-1. **Database models** - Go structs matching the database schema
-2. **Database client** - GraphQL client for Hasura with CRUD methods
-3. **Exchange abstractions** - Interfaces and implementations (future)
-4. **Common utilities** - Rate limiting, retry logic, error handling (future)
+## Prerequisites
 
-**This is a pure library** - no services, no main functions. It's imported by other services.
+- Go 1.21+
+- Git
 
----
-
-## Getting Started
-
-### Clone and Setup
+## Quick Start
 
 ```bash
-git clone <repo-url>
+# Clone the repository
+git clone git@github.com:zif-terminal/lib.git
 cd lib
 
-# Configure Git hooks (one-time setup)
-./scripts/setup-hooks.sh
-```
+# Setup git hooks (enforces conventional commits)
+./.githooks/setup.sh
 
-### Run Tests
-
-```bash
-# Run all unit tests
-./scripts/run_tests.sh
-
-# Or directly with Go
+# Run tests
 go test ./...
 ```
 
----
+## Development Workflow
+
+### 1. Setup Git Hooks
+
+Run this once after cloning:
+
+```bash
+./.githooks/setup.sh
+```
+
+This installs two hooks:
+- **commit-msg** - Validates [conventional commit](#commit-message-format) format
+- **pre-push** - Runs tests and blocks direct pushes to `main`
+
+### 2. Make Changes
+
+Create a branch and make your changes:
+
+```bash
+git checkout -b feat/my-feature
+# ... make changes ...
+go test ./...
+```
+
+### 3. Commit with Conventional Format
+
+```bash
+git commit -m "feat: add new exchange client"
+```
+
+If your commit message doesn't follow the format, the hook will reject it:
+
+```
+❌ Invalid commit message format!
+
+Expected: <type>[scope][!]: <description>
+Types: feat, fix, docs, style, refactor, perf, test, chore, ci, build
+```
+
+### 4. Push and Create PR
+
+```bash
+git push origin feat/my-feature
+# Create PR on GitHub
+```
+
+The CI will validate your commits and run tests.
+
+### 5. Merge and Auto-Release
+
+When your PR is merged to `main`, the CI automatically:
+1. Determines version bump from commit messages
+2. Creates and pushes a new version tag
+
+## Commit Message Format
+
+This repo uses [Conventional Commits](https://www.conventionalcommits.org/) for automatic semantic versioning.
+
+### Format
+
+```
+<type>[optional scope][!]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+### Types and Version Bumps
+
+| Type | Description | Version Bump |
+|------|-------------|--------------|
+| `feat` | New feature | MINOR (1.0.0 → 1.1.0) |
+| `fix` | Bug fix | PATCH (1.0.0 → 1.0.1) |
+| `feat!` or `fix!` | Breaking change | MAJOR (1.0.0 → 2.0.0) |
+| `docs` | Documentation | PATCH |
+| `style` | Code style (formatting) | PATCH |
+| `refactor` | Code refactoring | PATCH |
+| `perf` | Performance improvement | PATCH |
+| `test` | Adding/updating tests | PATCH |
+| `chore` | Maintenance | PATCH |
+| `ci` | CI/CD changes | PATCH |
+| `build` | Build system changes | PATCH |
+
+### Examples
+
+```bash
+# New feature (MINOR bump: v1.5.0 → v1.6.0)
+git commit -m "feat: add drift exchange client"
+
+# Bug fix (PATCH bump: v1.5.0 → v1.5.1)
+git commit -m "fix: correct funding payment calculation"
+
+# Feature with scope
+git commit -m "feat(db): add batch insert for trades"
+
+# Breaking change (MAJOR bump: v1.5.0 → v2.0.0)
+git commit -m "feat!: redesign exchange client interface"
+
+# Documentation (PATCH bump)
+git commit -m "docs: update API examples in README"
+```
+
+## CI/CD Pipeline
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Pull Request                                            │
+├─────────────────────────────────────────────────────────┤
+│ ✓ test           - Runs go test ./...                  │
+│ ✓ validate-commits - Checks conventional commit format │
+└─────────────────────────────────────────────────────────┘
+                           │
+                           ▼ merge
+┌─────────────────────────────────────────────────────────┐
+│ Main Branch                                             │
+├─────────────────────────────────────────────────────────┤
+│ ✓ test           - Runs go test ./...                  │
+│ ✓ release        - Creates version tag based on commits│
+│                    feat: → MINOR, fix: → PATCH         │
+└─────────────────────────────────────────────────────────┘
+```
 
 ## Package Structure
 
 ### `models/` - Data Structures
 
-Pure data structures matching the database schema:
+Go structs matching the database schema:
 
-- **`models/exchange.go`**
-  - `Exchange` - Exchange entity struct
-  - `ExchangeInput` - Input struct for mutations
-
-- **`models/account.go`**
-  - `ExchangeAccount` - Exchange account entity struct
-  - `ExchangeAccountInput` - Input struct for mutations
+- `Exchange` - Exchange entity
+- `ExchangeAccount` - User's exchange account
+- `Trade` - Individual trade record
+- `Position` - Aggregated position
+- `FundingPayment` - Funding payment record
 
 ### `db/` - Database Client
 
-GraphQL client for interacting with Hasura. Provides CRUD operations for exchanges and accounts.
-
-#### Client Creation
+GraphQL client for Hasura with CRUD operations:
 
 ```go
 import "github.com/zif-terminal/lib/db"
@@ -63,92 +167,111 @@ client := db.NewClient(db.ClientConfig{
     URL:         "http://localhost:8080/v1/graphql",
     AdminSecret: "your-admin-secret",
 })
-```
-
-#### Exchange Methods
-
-- **`GetExchange(ctx, id)`** - Get single exchange by ID
-- **`ListExchanges(ctx)`** - List all exchanges
-- **`CreateExchange(ctx, input)`** - Create new exchange
-- **`UpdateExchange(ctx, id, input)`** - Update existing exchange
-
-#### Account Methods
-
-- **`GetAccount(ctx, id)`** - Get single account by ID
-- **`ListAccounts(ctx)`** - List all accounts
-- **`CreateAccount(ctx, input)`** - Create new account
-- **`UpdateAccount(ctx, id, input)`** - Update existing account
-- **`DeleteAccount(ctx, id)`** - Delete account
-
-#### Example Usage
-
-```go
-ctx := context.Background()
-
-// Create an exchange
-exchange, err := client.CreateExchange(ctx, &db.ExchangeInput{
-    Name:        "hyperliquid",
-    DisplayName: "Hyperliquid",
-})
 
 // Create an account
 account, err := client.CreateAccount(ctx, &db.ExchangeAccountInput{
-    ExchangeID:        exchange.ID,
+    ExchangeID:        exchangeID,
     AccountIdentifier: "0x123...",
     AccountType:       "main",
 })
 ```
 
----
+### `exchange/` - Exchange Clients
 
-## Testing
+Unified interface for fetching data from exchanges:
 
-### Unit Tests
+```go
+import (
+    "github.com/zif-terminal/lib/exchange"
+    "github.com/zif-terminal/lib/exchange/iface"
+)
 
-All database methods have unit tests with mocked GraphQL responses:
+// Get a client for an exchange
+client, err := exchange.GetClient("hyperliquid")
 
-```bash
-go test ./db/... -v
+// Fetch trades
+trades, err := client.FetchTrades(ctx, account, &iface.FetchOptions{
+    Since: time.Now().Add(-24 * time.Hour),
+})
 ```
 
-**Test Coverage:**
-- 5 exchange tests (Get, List, Create, Update, Update NotFound)
-- 10 account tests (Get, List, Create, Update, Delete, and NotFound variants)
+**Supported Exchanges:**
+- Hyperliquid
+- Drift
+- Lighter
 
-### Git Pre-Push Hook
+### `logger/` - Structured Logging
 
-Unit tests run automatically before every `git push`:
-
-- **Setup:** Run `./scripts/setup-hooks.sh` once (already done)
-- **Automatic:** Tests run on every push
-- **Bypass:** Use `git push --no-verify` (not recommended)
-
----
+Simple structured logger for consistent output across services.
 
 ## Repository Structure
 
 ```
 lib/
-├── models/           # Data structures
+├── .github/
+│   └── workflows/
+│       └── ci.yml            # CI pipeline + auto-release
+├── .githooks/
+│   ├── commit-msg            # Conventional commit validation
+│   ├── pre-push              # Runs tests, blocks push to main
+│   └── setup.sh              # Hook installation script
+├── db/                       # Database client
+│   ├── client.go
+│   ├── accounts.go
+│   ├── exchanges.go
+│   ├── trades.go
+│   ├── funding_payment.go
+│   └── *_test.go
+├── exchange/                 # Exchange integrations
+│   ├── client.go             # Factory for exchange clients
+│   ├── iface/                # Interfaces
+│   ├── hyperliquid/
+│   ├── drift/
+│   └── lighter/
+├── models/                   # Data structures
+│   ├── account.go
 │   ├── exchange.go
-│   └── account.go
-├── db/               # Database client
-│   ├── client.go     # GraphQL client wrapper
-│   ├── exchanges.go  # Exchange CRUD methods
-│   ├── accounts.go   # Account CRUD methods
-│   ├── exchanges_test.go
-│   └── accounts_test.go
-├── scripts/
-│   ├── run_tests.sh      # Test runner script
-│   └── setup-hooks.sh    # Git hooks setup
-├── hooks/
-│   └── pre-push          # Pre-push hook (runs tests)
+│   ├── trade.go
+│   ├── position.go
+│   └── funding_payment.go
+├── logger/                   # Structured logging
 ├── go.mod
 └── README.md
 ```
 
----
+## Running Tests
+
+```bash
+# All tests
+go test ./...
+
+# Verbose output
+go test -v ./...
+
+# Specific package
+go test -v ./db/...
+go test -v ./exchange/hyperliquid/...
+
+# With coverage
+go test -cover ./...
+```
+
+## Using This Library
+
+Add to your Go module:
+
+```bash
+go get github.com/zif-terminal/lib@latest
+```
+
+Or pin to a specific version:
+
+```bash
+go get github.com/zif-terminal/lib@v1.5.0
+```
 
 ## Dependencies
 
-- `github.com/machinebox/graphql` - GraphQL client library
+- `github.com/machinebox/graphql` - GraphQL client
+- `github.com/google/uuid` - UUID generation
+- `github.com/stretchr/testify` - Test assertions
