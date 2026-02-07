@@ -3,6 +3,7 @@
 # Setup git hooks for this repository
 #
 # Hooks installed:
+#   - pre-commit: Auto-updates coverage badge when baseline changes
 #   - commit-msg: Validates conventional commit format
 #   - pre-push: Runs tests, blocks direct pushes to main
 #
@@ -18,6 +19,7 @@ echo "Setting up git hooks..."
 git -C "$REPO_ROOT" config core.hooksPath .githooks
 
 # Make hooks executable
+chmod +x "$SCRIPT_DIR/pre-commit"
 chmod +x "$SCRIPT_DIR/commit-msg"
 chmod +x "$SCRIPT_DIR/pre-push"
 
@@ -25,5 +27,6 @@ echo ""
 echo "✓ Git hooks installed!"
 echo ""
 echo "Hooks enabled:"
+echo "  pre-commit  - Auto-updates coverage badge"
 echo "  commit-msg  - Enforces conventional commit format"
 echo "  pre-push    - Runs tests, blocks direct pushes to main"

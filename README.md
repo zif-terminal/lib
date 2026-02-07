@@ -35,7 +35,8 @@ Run this once after cloning:
 ./.githooks/setup.sh
 ```
 
-This installs two hooks:
+This installs three hooks:
+- **pre-commit** - Auto-updates coverage badge when baseline changes
 - **commit-msg** - Validates [conventional commit](#commit-message-format) format
 - **pre-push** - Runs tests and blocks direct pushes to `main`
 
@@ -290,12 +291,7 @@ go tool cover -func=coverage.out | grep total
 echo "70.0" > .coverage-baseline
 ```
 
-When updating the baseline, also update the coverage badge in this README:
-```markdown
-[![Coverage](https://img.shields.io/badge/coverage-70.0%25-yellow)]
-```
-
-Badge colors: `red` (<50%), `yellow` (50-80%), `green` (>80%)
+The coverage badge in this README is automatically updated by a pre-commit hook when you commit changes to `.coverage-baseline`.
 
 ## Using This Library
 

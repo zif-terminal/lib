@@ -1,0 +1,42 @@
+#!/bin/bash
+#
+# Git pre-commit hook
+# - Auto-updates coverage badge in README when .coverage-baseline changes
+#
+
+# Check if .coverage-baseline is staged for commit
+if git diff --cached --name-only | grep -q "^\.coverage-baseline$"; then
+    # Get the new coverage value from the staged file
+    COVERAGE=$(git show :".coverage-baseline" | tr -d '[:space:]')
+
+    if [ -z "$COVERAGE" ]; then
+        echo "Warning: .coverage-baseline is empty, skipping badge update"
+        exit 0
+    fi
+
+    # Determine badge color based on coverage
+    COLOR="red"
+    if echo "$COVERAGE >= 80" | bc -l | grep -q 1; then
+        COLOR="green"
+    elif echo "$COVERAGE >= 50" | bc -l | grep -q 1; then
+        COLOR="yellow"
+    fi
+
+    # Update the badge in README.md
+    # Escape the % sign for the URL (use %25)
+    BADGE_URL="https://img.shields.io/badge/coverage-${COVERAGE}%25-${COLOR}"
+
+    # Use sed to update the coverage badge line
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS sed
+        sed -i '' "s|https://img.shields.io/badge/coverage-[0-9.]*%25-[a-z]*|${BADGE_URL}|g" README.md
+    else
+        # Linux sed
+        sed -i "s|https://img.shields.io/badge/coverage-[0-9.]*%25-[a-z]*|${BADGE_URL}|g" README.md
+    fi
+
+    # Stage the updated README
+    git add README.md
+
+    echo "✓ Updated coverage badge to ${COVERAGE}% (${COLOR})"
+fi
