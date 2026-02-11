@@ -109,6 +109,14 @@ type DBClient interface {
 	CreatePositionTrades(ctx context.Context, inputs []*PositionTradeInput) ([]*PositionTrade, error)
 	GetPositions(ctx context.Context, filter PositionFilter) ([]*Position, error)
 	GetPositionByID(ctx context.Context, positionID string) (*Position, []*PositionTrade, error)
+
+	// Wallet methods
+	GetWallet(ctx context.Context, id string) (*Wallet, error)
+	GetWalletByAddress(ctx context.Context, address string, chain string) (*Wallet, error)
+	ListWallets(ctx context.Context) ([]*Wallet, error)
+	ListWalletsByChain(ctx context.Context, chain string) ([]*Wallet, error)
+	CreateWallet(ctx context.Context, input *WalletInput) (*Wallet, error)
+	DeleteWallet(ctx context.Context, id string) error
 }
 
 // Ensure Client implements DBClient

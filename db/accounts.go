@@ -85,17 +85,21 @@ func (c *Client) ListAccounts(ctx context.Context) ([]*ExchangeAccount, error) {
 // CreateAccount creates a new exchange account
 func (c *Client) CreateAccount(ctx context.Context, input *ExchangeAccountInput) (*ExchangeAccount, error) {
 	query := `
-		mutation CreateAccount($exchange_id: uuid!, $account_identifier: String!, $account_type: String!, $account_type_metadata: jsonb) {
+		mutation CreateAccount($exchange_id: uuid!, $account_identifier: String!, $account_type: String!, $account_type_metadata: jsonb, $wallet_id: uuid, $status: String) {
 			insert_exchange_accounts_one(object: {
 				exchange_id: $exchange_id
 				account_identifier: $account_identifier
 				account_type: $account_type
 				account_type_metadata: $account_type_metadata
+				wallet_id: $wallet_id
+				status: $status
 			}) {
 				id
 				account_identifier
 				account_type
 				account_type_metadata
+				wallet_id
+				status
 				exchange {
 					id
 					name
@@ -106,7 +110,7 @@ func (c *Client) CreateAccount(ctx context.Context, input *ExchangeAccountInput)
 	`
 
 	vars := map[string]interface{}{
-		"exchange_id":       input.ExchangeID,
+		"exchange_id":        input.ExchangeID,
 		"account_identifier": input.AccountIdentifier,
 		"account_type":       input.AccountType,
 	}
@@ -117,6 +121,16 @@ func (c *Client) CreateAccount(ctx context.Context, input *ExchangeAccountInput)
 		if err := json.Unmarshal(input.AccountTypeMetadata, &metadata); err == nil {
 			vars["account_type_metadata"] = metadata
 		}
+	}
+
+	// Include wallet_id if provided
+	if input.WalletID != nil {
+		vars["wallet_id"] = *input.WalletID
+	}
+
+	// Include status if provided
+	if input.Status != "" {
+		vars["status"] = input.Status
 	}
 
 	req := c.graphqlRequestWithVars(query, vars)
