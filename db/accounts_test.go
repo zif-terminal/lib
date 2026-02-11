@@ -225,6 +225,125 @@ func TestClient_CreateAccount(t *testing.T) {
 	}
 }
 
+func TestClient_CreateAccount_WithWalletAndStatus(t *testing.T) {
+	ctx := context.Background()
+	walletID := "test-wallet-id"
+	input := &models.ExchangeAccountInput{
+		ExchangeID:        "test-exchange-id",
+		AccountIdentifier: "0x123",
+		AccountType:       "main",
+		WalletID:          &walletID,
+		Status:            "active",
+	}
+	expectedAccount := &models.ExchangeAccount{
+		ID:                "new-account-id",
+		Exchange:          &models.Exchange{ID: input.ExchangeID, Name: "hyperliquid", DisplayName: "Hyperliquid"},
+		AccountIdentifier: input.AccountIdentifier,
+		AccountType:       input.AccountType,
+		WalletID:          &walletID,
+		Status:            "active",
+	}
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"insert_exchange_accounts_one": map[string]interface{}{
+					"id":                 expectedAccount.ID,
+					"account_identifier": expectedAccount.AccountIdentifier,
+					"account_type":       expectedAccount.AccountType,
+					"wallet_id":          walletID,
+					"status":             "active",
+					"exchange": map[string]interface{}{
+						"id":           expectedAccount.Exchange.ID,
+						"name":         expectedAccount.Exchange.Name,
+						"display_name": expectedAccount.Exchange.DisplayName,
+					},
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	account, err := client.CreateAccount(ctx, input)
+	if err != nil {
+		t.Fatalf("CreateAccount failed: %v", err)
+	}
+
+	if account.ID != expectedAccount.ID {
+		t.Errorf("Expected ID %s, got %s", expectedAccount.ID, account.ID)
+	}
+	if account.WalletID == nil {
+		t.Fatal("Expected WalletID to be set")
+	}
+	if *account.WalletID != walletID {
+		t.Errorf("Expected WalletID %s, got %s", walletID, *account.WalletID)
+	}
+	if account.Status != "active" {
+		t.Errorf("Expected Status active, got %s", account.Status)
+	}
+}
+
+func TestClient_CreateAccount_WithNeedsTokenStatus(t *testing.T) {
+	ctx := context.Background()
+	walletID := "test-wallet-id"
+	input := &models.ExchangeAccountInput{
+		ExchangeID:        "lighter-exchange-id",
+		AccountIdentifier: "0x456",
+		AccountType:       "main",
+		WalletID:          &walletID,
+		Status:            "needs_token",
+	}
+	expectedAccount := &models.ExchangeAccount{
+		ID:                "new-account-id",
+		Exchange:          &models.Exchange{ID: input.ExchangeID, Name: "lighter", DisplayName: "Lighter"},
+		AccountIdentifier: input.AccountIdentifier,
+		AccountType:       input.AccountType,
+		WalletID:          &walletID,
+		Status:            "needs_token",
+	}
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"insert_exchange_accounts_one": map[string]interface{}{
+					"id":                 expectedAccount.ID,
+					"account_identifier": expectedAccount.AccountIdentifier,
+					"account_type":       expectedAccount.AccountType,
+					"wallet_id":          walletID,
+					"status":             "needs_token",
+					"exchange": map[string]interface{}{
+						"id":           expectedAccount.Exchange.ID,
+						"name":         expectedAccount.Exchange.Name,
+						"display_name": expectedAccount.Exchange.DisplayName,
+					},
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	account, err := client.CreateAccount(ctx, input)
+	if err != nil {
+		t.Fatalf("CreateAccount failed: %v", err)
+	}
+
+	if account.Status != "needs_token" {
+		t.Errorf("Expected Status needs_token, got %s", account.Status)
+	}
+}
+
 func TestClient_CreateAccount_WithoutMetadata(t *testing.T) {
 	ctx := context.Background()
 	input := &models.ExchangeAccountInput{

@@ -19,6 +19,9 @@ type ExchangeAccount struct {
 	AccountIdentifier   string          `json:"account_identifier" db:"account_identifier"`
 	AccountType         string          `json:"account_type" db:"account_type"` // "main", "sub_account", "vault" - FK to exchange_account_types.code
 	AccountTypeMetadata json.RawMessage `json:"account_type_metadata" db:"account_type_metadata"` // JSONB
+	WalletID            *string         `json:"wallet_id,omitempty" db:"wallet_id"`               // FK to wallets.id
+	Status              string          `json:"status" db:"status"`                               // "active", "needs_token", "disabled"
+	DetectedAt          *string         `json:"detected_at,omitempty" db:"detected_at"`           // When account was detected
 }
 
 // ExchangeAccountInput is used for GraphQL mutations
@@ -28,6 +31,8 @@ type ExchangeAccountInput struct {
 	AccountIdentifier   string          `json:"account_identifier"`
 	AccountType         string          `json:"account_type"` // Uses code string ('main', 'sub_account', 'vault')
 	AccountTypeMetadata json.RawMessage `json:"account_type_metadata,omitempty"`
+	WalletID            *string         `json:"wallet_id,omitempty"`
+	Status              string          `json:"status,omitempty"` // "active", "needs_token", "disabled"
 }
 
 // DiscoverableAccount represents an account discovered from an exchange
