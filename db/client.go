@@ -117,6 +117,10 @@ type DBClient interface {
 	ListWalletsByChain(ctx context.Context, chain string) ([]*Wallet, error)
 	CreateWallet(ctx context.Context, input *WalletInput) (*Wallet, error)
 	DeleteWallet(ctx context.Context, id string) error
+	UpdateWalletLastDetected(ctx context.Context, walletID string) error
+
+	// Sync timestamp methods
+	UpdateAccountLastSynced(ctx context.Context, accountID string) error
 }
 
 // Ensure Client implements DBClient

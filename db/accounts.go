@@ -258,3 +258,34 @@ func (c *Client) ListAccountTypes(ctx context.Context) ([]*models.AccountType, e
 
 	return resp.AccountTypes, nil
 }
+
+// UpdateAccountLastSynced updates the last_synced_at timestamp for an account
+func (c *Client) UpdateAccountLastSynced(ctx context.Context, accountID string) error {
+	query := `
+		mutation UpdateAccountLastSynced($id: uuid!, $last_synced_at: timestamptz!) {
+			update_exchange_accounts_by_pk(pk_columns: {id: $id}, _set: {last_synced_at: $last_synced_at}) {
+				id
+				last_synced_at
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id":             accountID,
+		"last_synced_at": "now()",
+	})
+
+	var resp struct {
+		UpdateExchangeAccountsByPk *ExchangeAccount `json:"update_exchange_accounts_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to update account last_synced_at: %w", err)
+	}
+
+	if resp.UpdateExchangeAccountsByPk == nil {
+		return fmt.Errorf("account not found: %s", accountID)
+	}
+
+	return nil
+}

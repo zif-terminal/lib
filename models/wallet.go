@@ -6,10 +6,11 @@ import (
 
 // Wallet represents a blockchain wallet in the database
 type Wallet struct {
-	ID        string    `json:"id" db:"id"`
-	Address   string    `json:"address" db:"address"`
-	Chain     string    `json:"chain" db:"chain"` // "solana", "ethereum"
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	ID             string     `json:"id" db:"id"`
+	Address        string     `json:"address" db:"address"`
+	Chain          string     `json:"chain" db:"chain"` // "solana", "ethereum"
+	CreatedAt      time.Time  `json:"created_at" db:"created_at"`
+	LastDetectedAt *time.Time `json:"last_detected_at,omitempty" db:"last_detected_at"`
 }
 
 // WalletInput is used for creating wallets via GraphQL mutations
