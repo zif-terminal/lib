@@ -418,3 +418,59 @@ func TestClient_DeleteWallet_NotFound(t *testing.T) {
 		t.Errorf("Expected 'wallet not found' error, got: %v", err)
 	}
 }
+
+func TestClient_UpdateWalletLastDetected(t *testing.T) {
+	ctx := context.Background()
+	id := "test-wallet-id"
+	now := time.Now()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"update_wallets_by_pk": map[string]interface{}{
+					"id":               id,
+					"last_detected_at": now.Format(time.RFC3339),
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	err := client.UpdateWalletLastDetected(ctx, id)
+	if err != nil {
+		t.Fatalf("UpdateWalletLastDetected failed: %v", err)
+	}
+}
+
+func TestClient_UpdateWalletLastDetected_NotFound(t *testing.T) {
+	ctx := context.Background()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"update_wallets_by_pk": nil,
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	err := client.UpdateWalletLastDetected(ctx, "non-existent-id")
+	if err == nil {
+		t.Fatal("Expected error for non-existent wallet")
+	}
+	if err.Error() != "wallet not found: non-existent-id" {
+		t.Errorf("Expected 'wallet not found' error, got: %v", err)
+	}
+}
