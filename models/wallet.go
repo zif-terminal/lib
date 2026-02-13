@@ -11,6 +11,7 @@ type Wallet struct {
 	Chain          string     `json:"chain" db:"chain"` // "solana", "ethereum"
 	CreatedAt      time.Time  `json:"created_at" db:"created_at"`
 	LastDetectedAt *time.Time `json:"last_detected_at,omitempty" db:"last_detected_at"`
+	Tags           []string   `json:"tags" db:"tags"`
 }
 
 // WalletInput is used for creating wallets via GraphQL mutations

@@ -23,6 +23,7 @@ type ExchangeAccount struct {
 	Status              string          `json:"status" db:"status"`                               // "active", "needs_token", "disabled"
 	DetectedAt          *string         `json:"detected_at,omitempty" db:"detected_at"`           // When account was detected
 	LastSyncedAt        *string         `json:"last_synced_at,omitempty" db:"last_synced_at"`     // When account was last synced
+	Tags                []string        `json:"tags" db:"tags"`
 }
 
 // ExchangeAccountInput is used for GraphQL mutations

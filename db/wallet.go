@@ -198,6 +198,37 @@ func (c *Client) DeleteWallet(ctx context.Context, id string) error {
 	return nil
 }
 
+// UpdateWalletTags updates the tags for a wallet
+func (c *Client) UpdateWalletTags(ctx context.Context, walletID string, tags []string) error {
+	query := `
+		mutation UpdateWalletTags($id: uuid!, $tags: jsonb!) {
+			update_wallets_by_pk(pk_columns: {id: $id}, _set: {tags: $tags}) {
+				id
+				tags
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id":   walletID,
+		"tags": tags,
+	})
+
+	var resp struct {
+		UpdateWalletsByPk *Wallet `json:"update_wallets_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to update wallet tags: %w", err)
+	}
+
+	if resp.UpdateWalletsByPk == nil {
+		return fmt.Errorf("wallet not found: %s", walletID)
+	}
+
+	return nil
+}
+
 // UpdateWalletLastDetected updates the last_detected_at timestamp for a wallet
 func (c *Client) UpdateWalletLastDetected(ctx context.Context, walletID string) error {
 	query := `

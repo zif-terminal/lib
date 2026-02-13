@@ -259,6 +259,37 @@ func (c *Client) ListAccountTypes(ctx context.Context) ([]*models.AccountType, e
 	return resp.AccountTypes, nil
 }
 
+// UpdateAccountTags updates the tags for an account
+func (c *Client) UpdateAccountTags(ctx context.Context, accountID string, tags []string) error {
+	query := `
+		mutation UpdateAccountTags($id: uuid!, $tags: jsonb!) {
+			update_exchange_accounts_by_pk(pk_columns: {id: $id}, _set: {tags: $tags}) {
+				id
+				tags
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id":   accountID,
+		"tags": tags,
+	})
+
+	var resp struct {
+		UpdateExchangeAccountsByPk *ExchangeAccount `json:"update_exchange_accounts_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to update account tags: %w", err)
+	}
+
+	if resp.UpdateExchangeAccountsByPk == nil {
+		return fmt.Errorf("account not found: %s", accountID)
+	}
+
+	return nil
+}
+
 // UpdateAccountLastSynced updates the last_synced_at timestamp for an account
 func (c *Client) UpdateAccountLastSynced(ctx context.Context, accountID string) error {
 	query := `
