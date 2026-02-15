@@ -188,8 +188,9 @@ func (c *Client) FetchTrades(
 		allTrades = filtered
 	}
 
-	// Deduplicate by TradeID
-	allTrades = deduplicateTrades(allTrades)
+	// No deduplication needed - historical fetch filters out records that overlap
+	// with the recent API window (records >= thirtyOneDaysAgo are excluded from
+	// historical months, so only recent API returns those)
 
 	// Sort by timestamp (oldest first)
 	sort.Slice(allTrades, func(i, j int) bool {
@@ -232,12 +233,15 @@ func (c *Client) fetchRecentTrades(ctx context.Context, accountID string, accoun
 }
 
 // fetchHistoricalTrades fetches trades from historical months
-func (c *Client) fetchHistoricalTrades(ctx context.Context, accountID string, accountUUID uuid.UUID, since, until time.Time) ([]*models.TradeInput, error) {
+// The recentWindowStart parameter marks the beginning of the "recent" API window.
+// Records on or after this time will be excluded to avoid overlap with the recent API.
+func (c *Client) fetchHistoricalTrades(ctx context.Context, accountID string, accountUUID uuid.UUID, since, recentWindowStart time.Time) ([]*models.TradeInput, error) {
 	var allTrades []*models.TradeInput
 
-	// Iterate through months from since to until
+	// Iterate through months from since to (but potentially filtering) the month containing recentWindowStart
 	current := time.Date(since.Year(), since.Month(), 1, 0, 0, 0, 0, time.UTC)
-	end := time.Date(until.Year(), until.Month(), 1, 0, 0, 0, 0, time.UTC)
+	// Include the month that contains recentWindowStart, but we'll filter its records
+	end := time.Date(recentWindowStart.Year(), recentWindowStart.Month(), 1, 0, 0, 0, 0, time.UTC)
 
 	for !current.After(end) {
 		if ctx.Err() != nil {
@@ -249,6 +253,18 @@ func (c *Client) fetchHistoricalTrades(ctx context.Context, accountID string, ac
 			// Log but continue - some months may not have data
 			current = current.AddDate(0, 1, 0)
 			continue
+		}
+
+		// For the month that overlaps with the recent window, filter out records
+		// that would be covered by the recent API (timestamp >= recentWindowStart)
+		if current.Year() == recentWindowStart.Year() && current.Month() == recentWindowStart.Month() {
+			filtered := make([]*models.TradeInput, 0)
+			for _, trade := range monthTrades {
+				if trade.Timestamp.Before(recentWindowStart) {
+					filtered = append(filtered, trade)
+				}
+			}
+			monthTrades = filtered
 		}
 
 		allTrades = append(allTrades, monthTrades...)
@@ -368,11 +384,13 @@ func (c *Client) fetchRecentSwaps(ctx context.Context, accountID string, account
 }
 
 // fetchHistoricalSwaps fetches swaps from historical months
-func (c *Client) fetchHistoricalSwaps(ctx context.Context, accountID string, accountUUID uuid.UUID, since, until time.Time) ([]*models.TradeInput, error) {
+// The recentWindowStart parameter marks the beginning of the "recent" API window.
+// Records on or after this time will be excluded to avoid overlap with the recent API.
+func (c *Client) fetchHistoricalSwaps(ctx context.Context, accountID string, accountUUID uuid.UUID, since, recentWindowStart time.Time) ([]*models.TradeInput, error) {
 	var allSwaps []*models.TradeInput
 
 	current := time.Date(since.Year(), since.Month(), 1, 0, 0, 0, 0, time.UTC)
-	end := time.Date(until.Year(), until.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(recentWindowStart.Year(), recentWindowStart.Month(), 1, 0, 0, 0, 0, time.UTC)
 
 	for !current.After(end) {
 		if ctx.Err() != nil {
@@ -384,6 +402,18 @@ func (c *Client) fetchHistoricalSwaps(ctx context.Context, accountID string, acc
 			// Log but continue - some months may not have data
 			current = current.AddDate(0, 1, 0)
 			continue
+		}
+
+		// For the month that overlaps with the recent window, filter out records
+		// that would be covered by the recent API (timestamp >= recentWindowStart)
+		if current.Year() == recentWindowStart.Year() && current.Month() == recentWindowStart.Month() {
+			filtered := make([]*models.TradeInput, 0)
+			for _, swap := range monthSwaps {
+				if swap.Timestamp.Before(recentWindowStart) {
+					filtered = append(filtered, swap)
+				}
+			}
+			monthSwaps = filtered
 		}
 
 		allSwaps = append(allSwaps, monthSwaps...)
@@ -670,8 +700,8 @@ func (c *Client) FetchFundingPayments(
 		allPayments = filtered
 	}
 
-	// Deduplicate by PaymentID
-	allPayments = deduplicateFunding(allPayments)
+	// No deduplication needed - historical fetch filters out records that overlap
+	// with the recent API window
 
 	// Sort by timestamp (oldest first)
 	sort.Slice(allPayments, func(i, j int) bool {
@@ -714,11 +744,13 @@ func (c *Client) fetchRecentFunding(ctx context.Context, accountID string, accou
 }
 
 // fetchHistoricalFunding fetches funding payments from historical months
-func (c *Client) fetchHistoricalFunding(ctx context.Context, accountID string, accountUUID uuid.UUID, since, until time.Time) ([]*models.FundingPaymentInput, error) {
+// The recentWindowStart parameter marks the beginning of the "recent" API window.
+// Records on or after this time will be excluded to avoid overlap with the recent API.
+func (c *Client) fetchHistoricalFunding(ctx context.Context, accountID string, accountUUID uuid.UUID, since, recentWindowStart time.Time) ([]*models.FundingPaymentInput, error) {
 	var allPayments []*models.FundingPaymentInput
 
 	current := time.Date(since.Year(), since.Month(), 1, 0, 0, 0, 0, time.UTC)
-	end := time.Date(until.Year(), until.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(recentWindowStart.Year(), recentWindowStart.Month(), 1, 0, 0, 0, 0, time.UTC)
 
 	for !current.After(end) {
 		if ctx.Err() != nil {
@@ -729,6 +761,18 @@ func (c *Client) fetchHistoricalFunding(ctx context.Context, accountID string, a
 		if err != nil {
 			current = current.AddDate(0, 1, 0)
 			continue
+		}
+
+		// For the month that overlaps with the recent window, filter out records
+		// that would be covered by the recent API (timestamp >= recentWindowStart)
+		if current.Year() == recentWindowStart.Year() && current.Month() == recentWindowStart.Month() {
+			filtered := make([]*models.FundingPaymentInput, 0)
+			for _, payment := range monthPayments {
+				if payment.Timestamp.Before(recentWindowStart) {
+					filtered = append(filtered, payment)
+				}
+			}
+			monthPayments = filtered
 		}
 
 		allPayments = append(allPayments, monthPayments...)
@@ -980,35 +1024,6 @@ func parseRetryAfter(retryAfter string) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-// deduplicateTrades removes duplicate trades by TradeID
-func deduplicateTrades(trades []*models.TradeInput) []*models.TradeInput {
-	seen := make(map[string]bool)
-	result := make([]*models.TradeInput, 0, len(trades))
-
-	for _, trade := range trades {
-		if !seen[trade.TradeID] {
-			seen[trade.TradeID] = true
-			result = append(result, trade)
-		}
-	}
-
-	return result
-}
-
-// deduplicateFunding removes duplicate funding payments by PaymentID
-func deduplicateFunding(payments []*models.FundingPaymentInput) []*models.FundingPaymentInput {
-	seen := make(map[string]bool)
-	result := make([]*models.FundingPaymentInput, 0, len(payments))
-
-	for _, payment := range payments {
-		if !seen[payment.PaymentID] {
-			seen[payment.PaymentID] = true
-			result = append(result, payment)
-		}
-	}
-
-	return result
-}
 
 // FetchDeposits fetches deposits and withdrawals from Drift API
 func (c *Client) FetchDeposits(
@@ -1071,8 +1086,8 @@ func (c *Client) FetchDeposits(
 		allDeposits = filtered
 	}
 
-	// Deduplicate by DepositID
-	allDeposits = deduplicateDeposits(allDeposits)
+	// No deduplication needed - historical fetch filters out records that overlap
+	// with the recent API window
 
 	// Sort by timestamp (oldest first)
 	sort.Slice(allDeposits, func(i, j int) bool {
@@ -1115,11 +1130,13 @@ func (c *Client) fetchRecentDeposits(ctx context.Context, accountID string, acco
 }
 
 // fetchHistoricalDeposits fetches deposits from historical months
-func (c *Client) fetchHistoricalDeposits(ctx context.Context, accountID string, accountUUID uuid.UUID, since, until time.Time) ([]*models.DepositInput, error) {
+// The recentWindowStart parameter marks the beginning of the "recent" API window.
+// Records on or after this time will be excluded to avoid overlap with the recent API.
+func (c *Client) fetchHistoricalDeposits(ctx context.Context, accountID string, accountUUID uuid.UUID, since, recentWindowStart time.Time) ([]*models.DepositInput, error) {
 	var allDeposits []*models.DepositInput
 
 	current := time.Date(since.Year(), since.Month(), 1, 0, 0, 0, 0, time.UTC)
-	end := time.Date(until.Year(), until.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(recentWindowStart.Year(), recentWindowStart.Month(), 1, 0, 0, 0, 0, time.UTC)
 
 	for !current.After(end) {
 		if ctx.Err() != nil {
@@ -1130,6 +1147,18 @@ func (c *Client) fetchHistoricalDeposits(ctx context.Context, accountID string, 
 		if err != nil {
 			current = current.AddDate(0, 1, 0)
 			continue
+		}
+
+		// For the month that overlaps with the recent window, filter out records
+		// that would be covered by the recent API (timestamp >= recentWindowStart)
+		if current.Year() == recentWindowStart.Year() && current.Month() == recentWindowStart.Month() {
+			filtered := make([]*models.DepositInput, 0)
+			for _, deposit := range monthDeposits {
+				if deposit.Timestamp.Before(recentWindowStart) {
+					filtered = append(filtered, deposit)
+				}
+			}
+			monthDeposits = filtered
 		}
 
 		allDeposits = append(allDeposits, monthDeposits...)
@@ -1253,17 +1282,3 @@ func (c *Client) transformDeposit(ctx context.Context, record driftDepositRecord
 	}, nil
 }
 
-// deduplicateDeposits removes duplicate deposits by DepositID
-func deduplicateDeposits(deposits []*models.DepositInput) []*models.DepositInput {
-	seen := make(map[string]bool)
-	result := make([]*models.DepositInput, 0, len(deposits))
-
-	for _, deposit := range deposits {
-		if !seen[deposit.DepositID] {
-			seen[deposit.DepositID] = true
-			result = append(result, deposit)
-		}
-	}
-
-	return result
-}

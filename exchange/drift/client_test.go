@@ -3,6 +3,7 @@ package drift
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -102,7 +103,10 @@ func TestDriftClient_FetchTrades_Success(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	trades, err := client.FetchTrades(ctx, account, time.Time{})
+	// Use a recent since time (within 31 days) to avoid historical month fetching
+	// which would hit the mock server multiple times
+	since := time.Now().AddDate(0, 0, -30)
+	trades, err := client.FetchTrades(ctx, account, since)
 	if err != nil {
 		t.Fatalf("FetchTrades failed: %v", err)
 	}
@@ -465,7 +469,9 @@ func TestDriftClient_FetchFundingPayments_Success(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	payments, err := client.FetchFundingPayments(ctx, account, time.Time{})
+	// Use a recent since time (within 31 days) to avoid historical month fetching
+	since := time.Now().AddDate(0, 0, -30)
+	payments, err := client.FetchFundingPayments(ctx, account, since)
 	if err != nil {
 		t.Fatalf("FetchFundingPayments failed: %v", err)
 	}
@@ -743,7 +749,9 @@ func TestDriftClient_FetchTrades_WithSwaps(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	trades, err := client.FetchTrades(ctx, account, time.Time{})
+	// Use a recent since time (within 31 days) to avoid historical month fetching
+	since := time.Now().AddDate(0, 0, -30)
+	trades, err := client.FetchTrades(ctx, account, since)
 	if err != nil {
 		t.Fatalf("FetchTrades failed: %v", err)
 	}
@@ -923,74 +931,12 @@ func TestTransformSwap(t *testing.T) {
 	})
 }
 
-func TestDeduplicateDeposits(t *testing.T) {
-	accountUUID := uuid.New()
-
-	t.Run("removes duplicates by DepositID", func(t *testing.T) {
-		deposits := []*models.DepositInput{
-			{
-				ExchangeAccountID: accountUUID,
-				DepositID:         "deposit-1",
-				Asset:             "USDC",
-				Amount:            "100.00",
-				Direction:         "deposit",
-			},
-			{
-				ExchangeAccountID: accountUUID,
-				DepositID:         "deposit-1", // duplicate
-				Asset:             "USDC",
-				Amount:            "100.00",
-				Direction:         "deposit",
-			},
-			{
-				ExchangeAccountID: accountUUID,
-				DepositID:         "deposit-2",
-				Asset:             "USDC",
-				Amount:            "200.00",
-				Direction:         "deposit",
-			},
-		}
-
-		result := deduplicateDeposits(deposits)
-
-		if len(result) != 2 {
-			t.Errorf("Expected 2 deposits after dedup, got %d", len(result))
-		}
-	})
-
-	t.Run("preserves order of first occurrence", func(t *testing.T) {
-		deposits := []*models.DepositInput{
-			{DepositID: "a", Amount: "100"},
-			{DepositID: "b", Amount: "200"},
-			{DepositID: "a", Amount: "300"}, // duplicate, should be ignored
-			{DepositID: "c", Amount: "400"},
-		}
-
-		result := deduplicateDeposits(deposits)
-
-		if len(result) != 3 {
-			t.Errorf("Expected 3 deposits, got %d", len(result))
-		}
-		if result[0].DepositID != "a" || result[0].Amount != "100" {
-			t.Errorf("Expected first deposit to be 'a' with amount '100'")
-		}
-		if result[1].DepositID != "b" {
-			t.Errorf("Expected second deposit to be 'b'")
-		}
-		if result[2].DepositID != "c" {
-			t.Errorf("Expected third deposit to be 'c'")
-		}
-	})
-
-	t.Run("handles empty slice", func(t *testing.T) {
-		result := deduplicateDeposits([]*models.DepositInput{})
-		if len(result) != 0 {
-			t.Errorf("Expected empty result, got %d", len(result))
-		}
-	})
-}
-
 func TestDriftClient_FetchDeposits_Success(t *testing.T) {
+	// Use recent timestamps so they pass the since filter
+	now := time.Now()
+	depositTs := now.Add(-10 * 24 * time.Hour).Unix() // 10 days ago
+	withdrawTs := now.Add(-5 * 24 * time.Hour).Unix() // 5 days ago
+
 	// Create a mock server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Handle spot markets request for market info lookup
@@ -1009,11 +955,11 @@ func TestDriftClient_FetchDeposits_Success(t *testing.T) {
 
 		// Handle deposits request
 		if strings.Contains(r.URL.Path, "/deposits") {
-			response := `{
+			response := fmt.Sprintf(`{
 				"success": true,
 				"records": [
 					{
-						"ts": 1700000000,
+						"ts": %d,
 						"txSig": "test-tx-1",
 						"slot": 12345,
 						"amount": "100.000000",
@@ -1024,7 +970,7 @@ func TestDriftClient_FetchDeposits_Success(t *testing.T) {
 						"user": "test-user"
 					},
 					{
-						"ts": 1700001000,
+						"ts": %d,
 						"txSig": "test-tx-2",
 						"slot": 12346,
 						"amount": "50.000000",
@@ -1038,7 +984,7 @@ func TestDriftClient_FetchDeposits_Success(t *testing.T) {
 				"meta": {
 					"nextPage": null
 				}
-			}`
+			}`, depositTs, withdrawTs)
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(response))
 			return
@@ -1060,7 +1006,9 @@ func TestDriftClient_FetchDeposits_Success(t *testing.T) {
 		AccountIdentifier: "test-account-pubkey",
 	}
 
-	deposits, err := client.FetchDeposits(context.Background(), account, time.Time{})
+	// Use a recent since time (within 31 days) to avoid historical month fetching
+	since := time.Now().AddDate(0, 0, -30)
+	deposits, err := client.FetchDeposits(context.Background(), account, since)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1118,6 +1066,12 @@ func TestDriftClient_FetchDeposits_EmptyAccountIdentifier(t *testing.T) {
 }
 
 func TestDriftClient_FetchDeposits_FiltersBySince(t *testing.T) {
+	// Use timestamps within the last 31 days to test filtering without triggering historical fetch
+	now := time.Now()
+	oldTimestamp := now.Add(-20 * 24 * time.Hour).Unix()  // 20 days ago
+	newTimestamp := now.Add(-10 * 24 * time.Hour).Unix()  // 10 days ago
+	sinceTimestamp := now.Add(-15 * 24 * time.Hour).Unix() // 15 days ago (filters out old)
+
 	// Create a mock server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/spotMarkets") {
@@ -1134,11 +1088,11 @@ func TestDriftClient_FetchDeposits_FiltersBySince(t *testing.T) {
 
 		if strings.Contains(r.URL.Path, "/deposits") {
 			// Return deposits with different timestamps
-			response := `{
+			response := fmt.Sprintf(`{
 				"success": true,
 				"records": [
 					{
-						"ts": 1700000000,
+						"ts": %d,
 						"txSig": "old-tx",
 						"slot": 12345,
 						"amount": "100.000000",
@@ -1149,7 +1103,7 @@ func TestDriftClient_FetchDeposits_FiltersBySince(t *testing.T) {
 						"user": "test-user"
 					},
 					{
-						"ts": 1700100000,
+						"ts": %d,
 						"txSig": "new-tx",
 						"slot": 12346,
 						"amount": "200.000000",
@@ -1161,7 +1115,7 @@ func TestDriftClient_FetchDeposits_FiltersBySince(t *testing.T) {
 					}
 				],
 				"meta": {"nextPage": null}
-			}`
+			}`, oldTimestamp, newTimestamp)
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(response))
 			return
@@ -1182,8 +1136,8 @@ func TestDriftClient_FetchDeposits_FiltersBySince(t *testing.T) {
 		AccountIdentifier: "test-account-pubkey",
 	}
 
-	// Filter to only get deposits after 1700050000
-	since := time.Unix(1700050000, 0)
+	// Filter to only get deposits after sinceTimestamp
+	since := time.Unix(sinceTimestamp, 0)
 	deposits, err := client.FetchDeposits(context.Background(), account, since)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -1212,5 +1166,126 @@ func TestDriftClient_FetchDeposits_ContextCancellation(t *testing.T) {
 	_, err := client.FetchDeposits(ctx, account, time.Time{})
 	if err == nil {
 		t.Error("Expected error for cancelled context")
+	}
+}
+
+// TestDriftClient_HistoricalFetchFiltersOverlap verifies that historical fetching
+// correctly filters out records that would overlap with the recent API window.
+func TestDriftClient_HistoricalFetchFiltersOverlap(t *testing.T) {
+	// Setup: Create timestamps that span the historical/recent boundary
+	now := time.Now()
+	thirtyOneDaysAgo := now.AddDate(0, 0, -31)
+
+	// Records in the "overlap zone" (within the last 31 days but in the same month as thirtyOneDaysAgo)
+	overlappingTs := thirtyOneDaysAgo.Add(12 * time.Hour).Unix() // Just after the boundary
+	historicalTs := thirtyOneDaysAgo.Add(-48 * time.Hour).Unix() // Before the boundary (should be kept)
+	recentTs := now.Add(-5 * 24 * time.Hour).Unix()              // Clearly in recent window
+
+	var historicalCalled, recentCalled bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Handle spot markets
+		if strings.Contains(r.URL.Path, "/spotMarkets") {
+			w.Write([]byte(`{"success": true, "markets": [{"marketIndex": 0, "symbol": "USDC", "baseAsset": "USDC", "quoteAsset": "USD"}]}`))
+			return
+		}
+
+		// Check if this is a historical request (has year/month in path)
+		// Historical paths look like: /user/id/deposits/2026/1
+		// Recent paths look like: /user/id/deposits
+		path := r.URL.Path
+		isHistorical := false
+		// Count path segments after /deposits
+		if idx := strings.Index(path, "/deposits"); idx != -1 {
+			afterDeposits := path[idx+len("/deposits"):]
+			// If there's more path after /deposits, it's historical (year/month)
+			if len(afterDeposits) > 0 && afterDeposits[0] == '/' {
+				isHistorical = true
+			}
+		}
+
+		if strings.Contains(r.URL.Path, "/deposits") {
+			if isHistorical {
+				historicalCalled = true
+				// Return records that include some in the overlap zone
+				response := fmt.Sprintf(`{
+					"success": true,
+					"records": [
+						{"ts": %d, "txSig": "hist-tx", "slot": 1, "amount": "100", "marketIndex": 0, "depositRecordId": "hist-deposit", "direction": "deposit", "oraclePrice": "1", "user": "u"},
+						{"ts": %d, "txSig": "overlap-tx", "slot": 2, "amount": "200", "marketIndex": 0, "depositRecordId": "overlap-deposit", "direction": "deposit", "oraclePrice": "1", "user": "u"}
+					],
+					"meta": {"nextPage": null}
+				}`, historicalTs, overlappingTs)
+				w.Write([]byte(response))
+			} else {
+				recentCalled = true
+				// Recent endpoint returns only recent records
+				response := fmt.Sprintf(`{
+					"success": true,
+					"records": [
+						{"ts": %d, "txSig": "recent-tx", "slot": 3, "amount": "300", "marketIndex": 0, "depositRecordId": "recent-deposit", "direction": "deposit", "oraclePrice": "1", "user": "u"}
+					],
+					"meta": {"nextPage": null}
+				}`, recentTs)
+				w.Write([]byte(response))
+			}
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		baseURL:     server.URL,
+		httpClient:  &http.Client{Timeout: 10 * time.Second},
+		marketCache: newMarketCache(1 * time.Hour),
+	}
+
+	account := &models.ExchangeAccount{
+		ID:                uuid.New().String(),
+		AccountIdentifier: "test-account",
+	}
+
+	// Request data from before the 31-day window to trigger historical fetch
+	since := thirtyOneDaysAgo.Add(-72 * time.Hour) // 3 days before the 31-day window
+	deposits, err := client.FetchDeposits(context.Background(), account, since)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Verify both endpoints were called
+	if !historicalCalled {
+		t.Error("Expected historical endpoint to be called")
+	}
+	if !recentCalled {
+		t.Error("Expected recent endpoint to be called")
+	}
+
+	// Should have exactly 2 deposits: historical (before overlap) and recent
+	// The overlapping deposit should be filtered out by the historical fetch
+	if len(deposits) != 2 {
+		t.Errorf("Expected 2 deposits (no overlap), got %d", len(deposits))
+		for _, d := range deposits {
+			t.Logf("Deposit: %s at %v", d.DepositID, d.Timestamp)
+		}
+	}
+
+	// Verify we have the correct deposits
+	depositIDs := make(map[string]bool)
+	for _, d := range deposits {
+		depositIDs[d.DepositID] = true
+	}
+
+	if !depositIDs["hist-deposit"] {
+		t.Error("Expected hist-deposit to be included")
+	}
+	if !depositIDs["recent-deposit"] {
+		t.Error("Expected recent-deposit to be included")
+	}
+	if depositIDs["overlap-deposit"] {
+		t.Error("overlap-deposit should have been filtered out")
 	}
 }
