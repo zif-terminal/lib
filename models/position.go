@@ -23,6 +23,7 @@ type Position struct {
 	TotalQuantity     string    `json:"total_quantity"`  // NUMERIC as string
 	TotalFees         string    `json:"total_fees"`      // NUMERIC as string
 	RealizedPnL       string    `json:"realized_pnl"`    // NUMERIC as string
+	MarketType        string    `json:"market_type"`     // "perp", "spot", etc.
 }
 
 // UnmarshalJSON custom unmarshaler to handle BIGINT timestamps and NUMERIC fields
@@ -118,6 +119,7 @@ type PositionInput struct {
 	TotalQuantity     string    `json:"total_quantity"`
 	TotalFees         string    `json:"total_fees"`
 	RealizedPnL       string    `json:"realized_pnl"`
+	MarketType        string    `json:"market_type"`
 }
 
 // PositionTrade represents a trade allocation for a position
