@@ -99,6 +99,7 @@ func (c *Client) CreatePosition(ctx context.Context, input *PositionInput) (*Pos
 			$total_quantity: numeric!
 			$total_fees: numeric!
 			$realized_pnl: numeric!
+			$market_type: String!
 		) {
 			insert_positions_one(object: {
 				exchange_account_id: $exchange_account_id
@@ -112,6 +113,7 @@ func (c *Client) CreatePosition(ctx context.Context, input *PositionInput) (*Pos
 				total_quantity: $total_quantity
 				total_fees: $total_fees
 				realized_pnl: $realized_pnl
+				market_type: $market_type
 			}) {
 				id
 				exchange_account_id
@@ -125,6 +127,7 @@ func (c *Client) CreatePosition(ctx context.Context, input *PositionInput) (*Pos
 				total_quantity
 				total_fees
 				realized_pnl
+				market_type
 			}
 		}
 	`
@@ -141,6 +144,7 @@ func (c *Client) CreatePosition(ctx context.Context, input *PositionInput) (*Pos
 		"total_quantity":      input.TotalQuantity,
 		"total_fees":          input.TotalFees,
 		"realized_pnl":        input.RealizedPnL,
+		"market_type":         input.MarketType,
 	}
 
 	req := c.graphqlRequestWithVars(query, vars)
@@ -315,6 +319,7 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 					total_quantity
 					total_fees
 					realized_pnl
+					market_type
 				}
 			}
 		`, varDeclarations, whereClause)
@@ -334,6 +339,7 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 					total_quantity
 					total_fees
 					realized_pnl
+					market_type
 				}
 			}
 		`
