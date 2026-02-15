@@ -16,6 +16,14 @@ import (
 	"github.com/zif-terminal/lib/models"
 )
 
+// Retry configuration for rate limiting
+const (
+	maxRetries       = 5
+	initialBackoff   = 2 * time.Second
+	maxBackoff       = 60 * time.Second
+	backoffMultipler = 2.0
+)
+
 // Client implements iface.ExchangeClient for Drift
 type Client struct {
 	baseURL     string
@@ -30,6 +38,63 @@ func NewClient() *Client {
 		httpClient:  &http.Client{Timeout: 30 * time.Second},
 		marketCache: newMarketCache(1 * time.Hour), // Cache markets for 1 hour
 	}
+}
+
+// doRequestWithRetry executes an HTTP request with exponential backoff for rate limits
+func (c *Client) doRequestWithRetry(ctx context.Context, url string) (*http.Response, error) {
+	backoff := initialBackoff
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("request failed: %w", err)
+		}
+
+		// Check for rate limiting (429 or 403)
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden {
+			resp.Body.Close()
+
+			if attempt == maxRetries {
+				return nil, &iface.RateLimitError{
+					Exchange:   "drift",
+					Message:    fmt.Sprintf("rate limit exceeded after %d retries", maxRetries),
+					RetryAfter: backoff,
+				}
+			}
+
+			// Check Retry-After header
+			if retryAfter := parseRetryAfter(resp.Header.Get("Retry-After")); retryAfter > 0 {
+				backoff = retryAfter
+			}
+
+			// Wait before retry
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+
+			// Exponential backoff for next attempt
+			backoff = time.Duration(float64(backoff) * backoffMultipler)
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
+		}
+
+		return resp, nil
+	}
+
+	return nil, fmt.Errorf("max retries exceeded")
 }
 
 // Name returns the exchange identifier
@@ -94,6 +159,23 @@ func (c *Client) FetchTrades(
 		return nil, err
 	}
 	allTrades = append(allTrades, recentTrades...)
+
+	// Fetch swaps (similar pattern to trades)
+	// Fetch historical swaps if needed
+	if needsHistorical {
+		historicalSwaps, err := c.fetchHistoricalSwaps(ctx, accountID, accountUUID, effectiveSince, thirtyOneDaysAgo)
+		if err != nil {
+			return nil, err
+		}
+		allTrades = append(allTrades, historicalSwaps...)
+	}
+
+	// Fetch recent swaps (last 31 days)
+	recentSwaps, err := c.fetchRecentSwaps(ctx, accountID, accountUUID)
+	if err != nil {
+		return nil, err
+	}
+	allTrades = append(allTrades, recentSwaps...)
 
 	// Filter by since timestamp
 	if !since.IsZero() {
@@ -210,26 +292,11 @@ func (c *Client) fetchTradesForMonth(ctx context.Context, accountID string, acco
 
 // fetchTradesPage fetches a single page of trades
 func (c *Client) fetchTradesPage(ctx context.Context, url string, accountUUID uuid.UUID) ([]*models.TradeInput, string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequestWithRetry(ctx, url)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to fetch trades: %w", err)
 	}
 	defer resp.Body.Close()
-
-	// Check for rate limit (HTTP 429)
-	if resp.StatusCode == http.StatusTooManyRequests {
-		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
-		return nil, "", &iface.RateLimitError{
-			Exchange:   "drift",
-			Message:    "rate limit exceeded",
-			RetryAfter: retryAfter,
-		}
-	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
@@ -266,6 +333,208 @@ func (c *Client) fetchTradesPage(ctx context.Context, url string, accountUUID uu
 	}
 
 	return trades, nextPage, nil
+}
+
+// fetchRecentSwaps fetches swaps from the last 31 days
+func (c *Client) fetchRecentSwaps(ctx context.Context, accountID string, accountUUID uuid.UUID) ([]*models.TradeInput, error) {
+	var allSwaps []*models.TradeInput
+	var page string
+
+	for {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		var url string
+		if page == "" {
+			url = fmt.Sprintf("%s/user/%s/swaps", c.baseURL, accountID)
+		} else {
+			url = fmt.Sprintf("%s/user/%s/swaps?page=%s", c.baseURL, accountID, page)
+		}
+		swaps, nextPage, err := c.fetchSwapsPage(ctx, url, accountUUID)
+		if err != nil {
+			return nil, err
+		}
+
+		allSwaps = append(allSwaps, swaps...)
+
+		if nextPage == "" {
+			break
+		}
+		page = nextPage
+	}
+
+	return allSwaps, nil
+}
+
+// fetchHistoricalSwaps fetches swaps from historical months
+func (c *Client) fetchHistoricalSwaps(ctx context.Context, accountID string, accountUUID uuid.UUID, since, until time.Time) ([]*models.TradeInput, error) {
+	var allSwaps []*models.TradeInput
+
+	current := time.Date(since.Year(), since.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(until.Year(), until.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	for !current.After(end) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		monthSwaps, err := c.fetchSwapsForMonth(ctx, accountID, accountUUID, current.Year(), int(current.Month()))
+		if err != nil {
+			// Log but continue - some months may not have data
+			current = current.AddDate(0, 1, 0)
+			continue
+		}
+
+		allSwaps = append(allSwaps, monthSwaps...)
+		current = current.AddDate(0, 1, 0)
+	}
+
+	return allSwaps, nil
+}
+
+// fetchSwapsForMonth fetches swaps for a specific year/month
+func (c *Client) fetchSwapsForMonth(ctx context.Context, accountID string, accountUUID uuid.UUID, year, month int) ([]*models.TradeInput, error) {
+	var allSwaps []*models.TradeInput
+	var page string
+
+	for {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		var url string
+		if page == "" {
+			url = fmt.Sprintf("%s/user/%s/swaps/%d/%d", c.baseURL, accountID, year, month)
+		} else {
+			url = fmt.Sprintf("%s/user/%s/swaps/%d/%d?page=%s", c.baseURL, accountID, year, month, page)
+		}
+		swaps, nextPage, err := c.fetchSwapsPage(ctx, url, accountUUID)
+		if err != nil {
+			return nil, err
+		}
+
+		allSwaps = append(allSwaps, swaps...)
+
+		if nextPage == "" {
+			break
+		}
+		page = nextPage
+	}
+
+	return allSwaps, nil
+}
+
+// fetchSwapsPage fetches a single page of swaps
+func (c *Client) fetchSwapsPage(ctx context.Context, url string, accountUUID uuid.UUID) ([]*models.TradeInput, string, error) {
+	resp, err := c.doRequestWithRetry(ctx, url)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to fetch swaps: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+	}
+
+	var response driftSwapsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if !response.Success {
+		return nil, "", fmt.Errorf("API returned success=false")
+	}
+
+	// Transform records to TradeInput
+	trades := make([]*models.TradeInput, 0, len(response.Records))
+	for _, record := range response.Records {
+		trade := c.transformSwap(record, accountUUID)
+		trades = append(trades, trade)
+	}
+
+	// Get next page
+	nextPage := ""
+	if response.Meta.NextPage != nil {
+		switch v := response.Meta.NextPage.(type) {
+		case string:
+			nextPage = v
+		case float64:
+			nextPage = strconv.Itoa(int(v))
+		}
+	}
+
+	return trades, nextPage, nil
+}
+
+// transformSwap converts a Drift swap record to TradeInput
+func (c *Client) transformSwap(record driftSwapRecord, accountUUID uuid.UUID) *models.TradeInput {
+	// For swaps, default to USDC as the quote asset.
+	//
+	// API gives us:
+	// - InSymbol: asset received
+	// - OutSymbol: asset spent
+	// - AmountIn: amount received
+	// - AmountOut: amount spent
+	//
+	// Logic:
+	// - If spent USDC (outSymbol=USDC): buying inSymbol with USDC → side = "buy"
+	// - If received USDC (inSymbol=USDC): selling outSymbol for USDC → side = "sell"
+	// - Otherwise (non-USDC swap): treat as buying inSymbol with outSymbol → side = "buy"
+
+	amountIn := cleanDecimalString(record.AmountIn)
+	amountOut := cleanDecimalString(record.AmountOut)
+	fee := cleanDecimalString(record.Fee)
+
+	var baseAsset, quoteAsset, side, quantity, price string
+
+	// Drift API field names:
+	// - OutSymbol/AmountOut = what user RECEIVES (goes out TO user)
+	// - InSymbol/AmountIn = what user SPENDS (comes in FROM user)
+
+	if record.OutSymbol == "USDC" {
+		// User received USDC by selling inSymbol
+		baseAsset = record.InSymbol
+		quoteAsset = "USDC"
+		side = "sell"
+		quantity = amountIn
+		price = calculatePrice(amountOut, amountIn) // price = USDC received / base sold
+	} else if record.InSymbol == "USDC" {
+		// User spent USDC to buy outSymbol
+		baseAsset = record.OutSymbol
+		quoteAsset = "USDC"
+		side = "buy"
+		quantity = amountOut
+		price = calculatePrice(amountIn, amountOut) // price = USDC spent / base received
+	} else {
+		// Non-USDC swap (e.g., SOL/mSOL)
+		// User spent inSymbol to receive outSymbol
+		baseAsset = record.OutSymbol
+		quoteAsset = record.InSymbol
+		side = "buy"
+		quantity = amountOut
+		price = calculatePrice(amountIn, amountOut)
+	}
+
+	// Convert timestamp
+	timestamp := time.Unix(record.Ts, 0).UTC()
+
+	// Generate unique trade ID from txSig and txSigIndex
+	tradeID := fmt.Sprintf("swap_%s_%d", record.TxSig, record.TxSigIndex)
+
+	return &models.TradeInput{
+		TradeID:           tradeID,
+		OrderID:           record.TxSig,
+		BaseAsset:         baseAsset,
+		QuoteAsset:        quoteAsset,
+		Side:              side,
+		Price:             price,
+		Quantity:          quantity,
+		Fee:               fee,
+		Timestamp:         timestamp,
+		ExchangeAccountID: accountUUID,
+		MarketType:        "swap",
+	}
 }
 
 // transformTrade converts a Drift trade record to TradeInput
@@ -503,25 +772,11 @@ func (c *Client) fetchFundingForMonth(ctx context.Context, accountID string, acc
 
 // fetchFundingPage fetches a single page of funding payments
 func (c *Client) fetchFundingPage(ctx context.Context, url string, accountUUID uuid.UUID) ([]*models.FundingPaymentInput, string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequestWithRetry(ctx, url)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to fetch funding payments: %w", err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusTooManyRequests {
-		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
-		return nil, "", &iface.RateLimitError{
-			Exchange:   "drift",
-			Message:    "rate limit exceeded",
-			RetryAfter: retryAfter,
-		}
-	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
@@ -749,6 +1004,264 @@ func deduplicateFunding(payments []*models.FundingPaymentInput) []*models.Fundin
 		if !seen[payment.PaymentID] {
 			seen[payment.PaymentID] = true
 			result = append(result, payment)
+		}
+	}
+
+	return result
+}
+
+// FetchDeposits fetches deposits and withdrawals from Drift API
+func (c *Client) FetchDeposits(
+	ctx context.Context,
+	account *models.ExchangeAccount,
+	since time.Time,
+) ([]*models.DepositInput, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	accountUUID, err := uuid.Parse(account.ID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid account ID: %w", err)
+	}
+
+	accountID := account.AccountIdentifier
+	if accountID == "" {
+		return nil, fmt.Errorf("account identifier (subaccount public key) is required")
+	}
+
+	// Determine if we need to fetch historical data
+	thirtyOneDaysAgo := time.Now().AddDate(0, 0, -31)
+
+	var effectiveSince time.Time
+	if since.IsZero() {
+		effectiveSince = time.Date(2021, 11, 1, 0, 0, 0, 0, time.UTC)
+	} else {
+		effectiveSince = since
+	}
+
+	needsHistorical := effectiveSince.Before(thirtyOneDaysAgo)
+
+	var allDeposits []*models.DepositInput
+
+	// Fetch historical months if needed
+	if needsHistorical {
+		historicalDeposits, err := c.fetchHistoricalDeposits(ctx, accountID, accountUUID, effectiveSince, thirtyOneDaysAgo)
+		if err != nil {
+			return nil, err
+		}
+		allDeposits = append(allDeposits, historicalDeposits...)
+	}
+
+	// Fetch recent deposits (last 31 days)
+	recentDeposits, err := c.fetchRecentDeposits(ctx, accountID, accountUUID)
+	if err != nil {
+		return nil, err
+	}
+	allDeposits = append(allDeposits, recentDeposits...)
+
+	// Filter by since timestamp
+	if !since.IsZero() {
+		filtered := make([]*models.DepositInput, 0)
+		for _, deposit := range allDeposits {
+			if !deposit.Timestamp.Before(since) {
+				filtered = append(filtered, deposit)
+			}
+		}
+		allDeposits = filtered
+	}
+
+	// Deduplicate by DepositID
+	allDeposits = deduplicateDeposits(allDeposits)
+
+	// Sort by timestamp (oldest first)
+	sort.Slice(allDeposits, func(i, j int) bool {
+		return allDeposits[i].Timestamp.Before(allDeposits[j].Timestamp)
+	})
+
+	return allDeposits, nil
+}
+
+// fetchRecentDeposits fetches deposits from the last 31 days
+func (c *Client) fetchRecentDeposits(ctx context.Context, accountID string, accountUUID uuid.UUID) ([]*models.DepositInput, error) {
+	var allDeposits []*models.DepositInput
+	var page string
+
+	for {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		var url string
+		if page == "" {
+			url = fmt.Sprintf("%s/user/%s/deposits", c.baseURL, accountID)
+		} else {
+			url = fmt.Sprintf("%s/user/%s/deposits?page=%s", c.baseURL, accountID, page)
+		}
+		deposits, nextPage, err := c.fetchDepositsPage(ctx, url, accountUUID)
+		if err != nil {
+			return nil, err
+		}
+
+		allDeposits = append(allDeposits, deposits...)
+
+		if nextPage == "" {
+			break
+		}
+		page = nextPage
+	}
+
+	return allDeposits, nil
+}
+
+// fetchHistoricalDeposits fetches deposits from historical months
+func (c *Client) fetchHistoricalDeposits(ctx context.Context, accountID string, accountUUID uuid.UUID, since, until time.Time) ([]*models.DepositInput, error) {
+	var allDeposits []*models.DepositInput
+
+	current := time.Date(since.Year(), since.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(until.Year(), until.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	for !current.After(end) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		monthDeposits, err := c.fetchDepositsForMonth(ctx, accountID, accountUUID, current.Year(), int(current.Month()))
+		if err != nil {
+			current = current.AddDate(0, 1, 0)
+			continue
+		}
+
+		allDeposits = append(allDeposits, monthDeposits...)
+		current = current.AddDate(0, 1, 0)
+	}
+
+	return allDeposits, nil
+}
+
+// fetchDepositsForMonth fetches deposits for a specific year/month
+func (c *Client) fetchDepositsForMonth(ctx context.Context, accountID string, accountUUID uuid.UUID, year, month int) ([]*models.DepositInput, error) {
+	var allDeposits []*models.DepositInput
+	var page string
+
+	for {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		var url string
+		if page == "" {
+			url = fmt.Sprintf("%s/user/%s/deposits/%d/%d", c.baseURL, accountID, year, month)
+		} else {
+			url = fmt.Sprintf("%s/user/%s/deposits/%d/%d?page=%s", c.baseURL, accountID, year, month, page)
+		}
+		deposits, nextPage, err := c.fetchDepositsPage(ctx, url, accountUUID)
+		if err != nil {
+			return nil, err
+		}
+
+		allDeposits = append(allDeposits, deposits...)
+
+		if nextPage == "" {
+			break
+		}
+		page = nextPage
+	}
+
+	return allDeposits, nil
+}
+
+// fetchDepositsPage fetches a single page of deposits
+func (c *Client) fetchDepositsPage(ctx context.Context, url string, accountUUID uuid.UUID) ([]*models.DepositInput, string, error) {
+	resp, err := c.doRequestWithRetry(ctx, url)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to fetch deposits: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+	}
+
+	var response driftDepositsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if !response.Success {
+		return nil, "", fmt.Errorf("API returned success=false")
+	}
+
+	// Transform records to DepositInput
+	deposits := make([]*models.DepositInput, 0, len(response.Records))
+	for _, record := range response.Records {
+		deposit, err := c.transformDeposit(ctx, record, accountUUID)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to transform deposit: %w", err)
+		}
+		deposits = append(deposits, deposit)
+	}
+
+	// Get next page
+	nextPage := ""
+	if response.Meta.NextPage != nil {
+		switch v := response.Meta.NextPage.(type) {
+		case string:
+			nextPage = v
+		case float64:
+			nextPage = strconv.Itoa(int(v))
+		}
+	}
+
+	return deposits, nextPage, nil
+}
+
+// transformDeposit converts a Drift deposit record to DepositInput
+func (c *Client) transformDeposit(ctx context.Context, record driftDepositRecord, accountUUID uuid.UUID) (*models.DepositInput, error) {
+	// Get spot market info to determine asset
+	marketInfo, err := c.getMarketInfo(ctx, record.MarketIndex, "spot")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get market info for index %d: %w", record.MarketIndex, err)
+	}
+
+	// API returns already-formatted decimal values
+	amount := cleanDecimalString(record.Amount)
+
+	// Use oracle price as cost basis (Drift provides this)
+	userCostBasis := cleanDecimalString(record.OraclePrice)
+	if userCostBasis == "" {
+		userCostBasis = "0"
+	}
+
+	// Convert timestamp
+	timestamp := time.Unix(record.Ts, 0).UTC()
+
+	// Normalize direction
+	direction := strings.ToLower(record.Direction)
+	if direction != "deposit" && direction != "withdraw" {
+		direction = "deposit" // Default to deposit if unknown
+	}
+
+	return &models.DepositInput{
+		ExchangeAccountID: accountUUID,
+		Asset:             marketInfo.BaseAsset,
+		Direction:         direction,
+		Amount:            amount,
+		UserCostBasis:     userCostBasis,
+		Timestamp:         timestamp,
+		DepositID:         record.DepositRecordID,
+	}, nil
+}
+
+// deduplicateDeposits removes duplicate deposits by DepositID
+func deduplicateDeposits(deposits []*models.DepositInput) []*models.DepositInput {
+	seen := make(map[string]bool)
+	result := make([]*models.DepositInput, 0, len(deposits))
+
+	for _, deposit := range deposits {
+		if !seen[deposit.DepositID] {
+			seen[deposit.DepositID] = true
+			result = append(result, deposit)
 		}
 	}
 

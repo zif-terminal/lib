@@ -5,9 +5,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
+
+// parseBaseAssetFromSymbol extracts base asset from symbol
+// e.g., "SOL-PERP" -> "SOL"
+func parseBaseAssetFromSymbol(symbol string) string {
+	parts := strings.Split(symbol, "-")
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return symbol
+}
 
 // MarketInfo contains parsed market information
 type MarketInfo struct {
@@ -76,12 +87,7 @@ func (c *Client) fetchMarkets(ctx context.Context) error {
 		return nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/stats/markets", nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequestWithRetry(ctx, c.baseURL+"/stats/markets")
 	if err != nil {
 		return fmt.Errorf("failed to fetch markets: %w", err)
 	}
@@ -105,10 +111,23 @@ func (c *Client) fetchMarkets(ctx context.Context) error {
 	spotMarkets := make(map[int]MarketInfo)
 
 	for _, m := range response.Markets {
+		// For spot markets, symbol IS the asset (e.g., "SOL", "USDC")
+		// For perp markets, symbol is like "SOL-PERP" and baseAsset is "SOL"
+		baseAsset := m.BaseAsset
+		if baseAsset == "" {
+			// Fallback: for spot markets, use symbol directly
+			// For perp markets, strip "-PERP" suffix
+			if m.MarketType == "spot" {
+				baseAsset = m.Symbol
+			} else {
+				baseAsset = parseBaseAssetFromSymbol(m.Symbol)
+			}
+		}
+
 		info := MarketInfo{
 			MarketIndex: m.MarketIndex,
 			Symbol:      m.Symbol,
-			BaseAsset:   m.BaseAsset,
+			BaseAsset:   baseAsset,
 			QuoteAsset:  "USDC", // Drift uses USDC as quote for all markets
 			MarketType:  m.MarketType,
 		}
