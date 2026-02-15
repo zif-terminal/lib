@@ -485,3 +485,9 @@ func parseRetryAfter(retryAfter string) time.Duration {
 	}
 	return time.Duration(seconds) * time.Second
 }
+
+// FetchDeposits fetches deposits for a given account since a specific timestamp
+// TODO: Implement deposit fetching for Hyperliquid
+func (c *Client) FetchDeposits(ctx context.Context, account *models.ExchangeAccount, since time.Time) ([]*models.DepositInput, error) {
+	return []*models.DepositInput{}, nil
+}

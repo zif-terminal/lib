@@ -94,3 +94,50 @@ type driftAuthorityAccountsResponse struct {
 	Success  bool                    `json:"success"`
 	Accounts []driftAuthorityAccount `json:"accounts"`
 }
+
+// driftDepositRecord represents a single deposit/withdrawal from Drift API
+// GET /user/{accountId}/deposits
+type driftDepositRecord struct {
+	Ts              int64  `json:"ts"`              // Unix timestamp (seconds)
+	TxSig           string `json:"txSig"`           // Transaction signature
+	Slot            int64  `json:"slot"`            // Solana slot
+	Amount          string `json:"amount"`          // Amount (raw, divide by token precision)
+	MarketIndex     int    `json:"marketIndex"`     // Spot market index
+	DepositRecordID string `json:"depositRecordId"` // Unique record ID
+	Direction       string `json:"direction"`       // "deposit" or "withdraw"
+	OraclePrice     string `json:"oraclePrice"`     // Oracle price at time of deposit/withdrawal
+	User            string `json:"user"`            // Account public key
+}
+
+// driftDepositsResponse wraps the deposits API response
+type driftDepositsResponse struct {
+	Success bool                 `json:"success"`
+	Records []driftDepositRecord `json:"records"`
+	Meta    driftMeta            `json:"meta"`
+}
+
+// driftSwapRecord represents a single swap from Drift API
+// GET /user/{accountId}/swaps
+type driftSwapRecord struct {
+	Ts             int64  `json:"ts"`             // Unix timestamp (seconds)
+	TxSig          string `json:"txSig"`          // Transaction signature
+	TxSigIndex     int    `json:"txSigIndex"`     // Index within tx
+	Slot           int64  `json:"slot"`           // Solana slot
+	User           string `json:"user"`           // Account public key
+	OutMarketIndex int    `json:"outMarketIndex"` // Market index of asset sold
+	InMarketIndex  int    `json:"inMarketIndex"`  // Market index of asset bought
+	AmountOut      string `json:"amountOut"`      // Amount sold (quote)
+	AmountIn       string `json:"amountIn"`       // Amount bought (base)
+	OutOraclePrice string `json:"outOraclePrice"` // Oracle price of asset sold
+	InOraclePrice  string `json:"inOraclePrice"`  // Oracle price of asset bought
+	Fee            string `json:"fee"`            // Swap fee
+	OutSymbol      string `json:"outSymbol"`      // Symbol of asset sold (e.g., "USDC")
+	InSymbol       string `json:"inSymbol"`       // Symbol of asset bought (e.g., "SOL")
+}
+
+// driftSwapsResponse wraps the swaps API response
+type driftSwapsResponse struct {
+	Success bool              `json:"success"`
+	Records []driftSwapRecord `json:"records"`
+	Meta    driftMeta         `json:"meta"`
+}

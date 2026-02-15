@@ -720,3 +720,9 @@ func calculatePrice(quoteAmount, baseAmount string) string {
 	// Format with enough precision
 	return strings.TrimRight(strings.TrimRight(price.Text('f', 18), "0"), ".")
 }
+
+// FetchDeposits fetches deposits for a given account since a specific timestamp
+// TODO: Implement deposit fetching for Lighter
+func (c *Client) FetchDeposits(ctx context.Context, account *models.ExchangeAccount, since time.Time) ([]*models.DepositInput, error) {
+	return []*models.DepositInput{}, nil
+}
