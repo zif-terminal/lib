@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 
 	"github.com/zif-terminal/lib/models"
 )
@@ -23,22 +22,14 @@ func (c *Client) DiscoverAccounts(ctx context.Context, userIdentifier string) ([
 
 	url := fmt.Sprintf("%s/authority/%s/accounts", c.baseURL, userIdentifier)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
+	// Use doRequestWithRetry which handles 403/429 with exponential backoff
+	resp, err := c.doRequestWithRetry(ctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch accounts: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, fmt.Errorf("rate limit exceeded")
-	}
-
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
 	}
 
@@ -73,7 +64,7 @@ func (c *Client) DiscoverAccounts(ctx context.Context, userIdentifier string) ([
 			AccountType:       accountType,
 			Name:              name,
 			Metadata: map[string]interface{}{
-				"authority":     userIdentifier,
+				"authority":      userIdentifier,
 				"sub_account_id": acc.SubAccountID,
 			},
 		})
