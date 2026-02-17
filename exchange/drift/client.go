@@ -507,7 +507,7 @@ func (c *Client) transformFundingPayment(ctx context.Context, record driftFundin
 	}
 
 	amount := cleanDecimalString(record.FundingPayment)
-	paymentID := fmt.Sprintf("%d_%d", record.Ts, record.MarketIndex)
+	paymentID := fmt.Sprintf("%s_%d", record.TxSig, record.TxSigIndex)
 	timestamp := time.Unix(record.Ts, 0).UTC()
 
 	return &models.FundingPaymentInput{
