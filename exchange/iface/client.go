@@ -48,4 +48,28 @@ type ExchangeClient interface {
 		account *models.ExchangeAccount,
 		since time.Time,
 	) ([]*models.DepositInput, error)
+
+	// FetchPositions fetches current open positions (perp + spot) for a given account
+	FetchPositions(
+		ctx context.Context,
+		account *models.ExchangeAccount,
+	) ([]*models.PositionSnapshot, error)
+
+	// FetchBalances fetches current spot balances for a given account
+	FetchBalances(
+		ctx context.Context,
+		account *models.ExchangeAccount,
+	) ([]*models.BalanceSnapshot, error)
+
+	// FetchOpenOrders fetches currently active orders for a given account
+	FetchOpenOrders(
+		ctx context.Context,
+		account *models.ExchangeAccount,
+	) ([]*models.OpenOrder, error)
+
+	// FetchAccountValue fetches total equity/account value for a given account
+	FetchAccountValue(
+		ctx context.Context,
+		account *models.ExchangeAccount,
+	) (*models.AccountValueSnapshot, error)
 }
