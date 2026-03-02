@@ -3,10 +3,83 @@ package db
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/zif-terminal/lib/models"
 )
+
+// SumFundingForPosition sums all funding payments for a given account and base asset
+// within the inclusive time range [startTimeMs, endTimeMs] (Unix milliseconds).
+// Returns the net funding as a decimal string ("0" if none found).
+// Positive = received, negative = paid (matches funding_payments.amount sign convention).
+func (c *Client) SumFundingForPosition(
+	ctx context.Context,
+	accountID uuid.UUID,
+	baseAsset string,
+	startTimeMs, endTimeMs int64,
+) (string, error) {
+	query := `
+		query SumFundingForPosition(
+			$exchange_account_id: uuid!
+			$base_asset: String!
+			$start_time: bigint!
+			$end_time: bigint!
+		) {
+			funding_payments_aggregate(
+				where: {
+					exchange_account_id: { _eq: $exchange_account_id }
+					base_asset: { _eq: $base_asset }
+					timestamp: { _gte: $start_time, _lte: $end_time }
+				}
+			) {
+				aggregate {
+					sum {
+						amount
+					}
+				}
+			}
+		}
+	`
+
+	vars := map[string]interface{}{
+		"exchange_account_id": accountID.String(),
+		"base_asset":          baseAsset,
+		"start_time":          startTimeMs,
+		"end_time":            endTimeMs,
+	}
+
+	req := c.graphqlRequestWithVars(query, vars)
+
+	var resp struct {
+		FundingPaymentsAggregate struct {
+			Aggregate struct {
+				Sum struct {
+					Amount interface{} `json:"amount"`
+				} `json:"sum"`
+			} `json:"aggregate"`
+		} `json:"funding_payments_aggregate"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return "0", fmt.Errorf("failed to sum funding for position: %w", err)
+	}
+
+	sum := resp.FundingPaymentsAggregate.Aggregate.Sum.Amount
+	if sum == nil {
+		return "0", nil
+	}
+
+	// Convert the sum to a string (Hasura returns NUMERIC aggregates as float64 or string)
+	switch v := sum.(type) {
+	case string:
+		return v, nil
+	case float64:
+		return strconv.FormatFloat(v, 'f', 18, 64), nil
+	default:
+		return fmt.Sprintf("%v", v), nil
+	}
+}
 
 // FundingPayment represents a funding payment model (aliased from models package)
 type FundingPayment = models.FundingPayment

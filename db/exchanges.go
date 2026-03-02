@@ -21,6 +21,7 @@ func (c *Client) GetExchange(ctx context.Context, id string) (*Exchange, error) 
 				id
 				name
 				display_name
+				requires_api_key
 			}
 		}
 	`
@@ -52,6 +53,7 @@ func (c *Client) ListExchanges(ctx context.Context) ([]*Exchange, error) {
 				id
 				name
 				display_name
+				requires_api_key
 			}
 		}
 	`
@@ -72,21 +74,24 @@ func (c *Client) ListExchanges(ctx context.Context) ([]*Exchange, error) {
 // CreateExchange creates a new exchange
 func (c *Client) CreateExchange(ctx context.Context, input *ExchangeInput) (*Exchange, error) {
 	query := `
-		mutation CreateExchange($name: String!, $display_name: String!) {
+		mutation CreateExchange($name: String!, $display_name: String!, $requires_api_key: Boolean!) {
 			insert_exchanges_one(object: {
 				name: $name
 				display_name: $display_name
+				requires_api_key: $requires_api_key
 			}) {
 				id
 				name
 				display_name
+				requires_api_key
 			}
 		}
 	`
 
 	req := c.graphqlRequestWithVars(query, map[string]interface{}{
-		"name":         input.Name,
-		"display_name": input.DisplayName,
+		"name":             input.Name,
+		"display_name":     input.DisplayName,
+		"requires_api_key": input.RequiresAPIKey,
 	})
 
 	var resp struct {
@@ -107,22 +112,25 @@ func (c *Client) CreateExchange(ctx context.Context, input *ExchangeInput) (*Exc
 // UpdateExchange updates an existing exchange
 func (c *Client) UpdateExchange(ctx context.Context, id string, input *ExchangeInput) (*Exchange, error) {
 	query := `
-		mutation UpdateExchange($id: uuid!, $name: String!, $display_name: String!) {
+		mutation UpdateExchange($id: uuid!, $name: String!, $display_name: String!, $requires_api_key: Boolean!) {
 			update_exchanges_by_pk(pk_columns: {id: $id}, _set: {
 				name: $name
 				display_name: $display_name
+				requires_api_key: $requires_api_key
 			}) {
 				id
 				name
 				display_name
+				requires_api_key
 			}
 		}
 	`
 
 	req := c.graphqlRequestWithVars(query, map[string]interface{}{
-		"id":           id,
-		"name":         input.Name,
-		"display_name": input.DisplayName,
+		"id":               id,
+		"name":             input.Name,
+		"display_name":     input.DisplayName,
+		"requires_api_key": input.RequiresAPIKey,
 	})
 
 	var resp struct {

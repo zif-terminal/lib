@@ -130,13 +130,15 @@ func (c *Client) ListWalletsByChain(ctx context.Context, chain string) ([]*Walle
 	return resp.Wallets, nil
 }
 
-// CreateWallet creates a new wallet (or returns existing if duplicate)
+// CreateWallet creates a new wallet (or returns existing if duplicate).
+// Admin-secret callers do not carry a user session; the DB column default
+// ('admin') is applied automatically by PostgreSQL for any unspecified user_id.
 func (c *Client) CreateWallet(ctx context.Context, input *WalletInput) (*Wallet, error) {
 	query := `
 		mutation CreateWallet($address: String!, $chain: String!) {
 			insert_wallets_one(
 				object: {address: $address, chain: $chain}
-				on_conflict: {constraint: wallets_address_chain_key, update_columns: []}
+				on_conflict: {constraint: wallets_user_address_chain_key, update_columns: []}
 			) {
 				id
 				address

@@ -102,6 +102,7 @@ type DBClient interface {
 	// Funding payment methods
 	GetLatestFundingPayment(ctx context.Context, exchangeAccountID uuid.UUID) (*FundingPayment, error)
 	AddFundingPayments(ctx context.Context, inputs []*FundingPaymentInput) ([]*FundingPayment, error)
+	SumFundingForPosition(ctx context.Context, accountID uuid.UUID, baseAsset string, startTimeMs, endTimeMs int64) (string, error)
 
 	// Position methods
 	GetLastProcessedTradeTimestamp(ctx context.Context, exchangeAccountID uuid.UUID, baseAsset string, quoteAsset string) (*time.Time, error)

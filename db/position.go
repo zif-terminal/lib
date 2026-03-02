@@ -92,6 +92,7 @@ func (c *Client) CreatePosition(ctx context.Context, input *PositionInput) (*Pos
 			$base_asset: String!
 			$quote_asset: String!
 			$side: String!
+			$market_type: String!
 			$start_time: bigint!
 			$end_time: bigint!
 			$entry_avg_price: numeric!
@@ -99,13 +100,14 @@ func (c *Client) CreatePosition(ctx context.Context, input *PositionInput) (*Pos
 			$total_quantity: numeric!
 			$total_fees: numeric!
 			$realized_pnl: numeric!
-			$market_type: String!
+			$total_funding: numeric!
 		) {
 			insert_positions_one(object: {
 				exchange_account_id: $exchange_account_id
 				base_asset: $base_asset
 				quote_asset: $quote_asset
 				side: $side
+				market_type: $market_type
 				start_time: $start_time
 				end_time: $end_time
 				entry_avg_price: $entry_avg_price
@@ -113,13 +115,14 @@ func (c *Client) CreatePosition(ctx context.Context, input *PositionInput) (*Pos
 				total_quantity: $total_quantity
 				total_fees: $total_fees
 				realized_pnl: $realized_pnl
-				market_type: $market_type
+				total_funding: $total_funding
 			}) {
 				id
 				exchange_account_id
 				base_asset
 				quote_asset
 				side
+				market_type
 				start_time
 				end_time
 				entry_avg_price
@@ -127,7 +130,7 @@ func (c *Client) CreatePosition(ctx context.Context, input *PositionInput) (*Pos
 				total_quantity
 				total_fees
 				realized_pnl
-				market_type
+				total_funding
 			}
 		}
 	`
@@ -137,6 +140,7 @@ func (c *Client) CreatePosition(ctx context.Context, input *PositionInput) (*Pos
 		"base_asset":          input.BaseAsset,
 		"quote_asset":         input.QuoteAsset,
 		"side":                input.Side,
+		"market_type":         input.MarketType,
 		"start_time":          input.StartTime.UnixMilli(),
 		"end_time":            input.EndTime.UnixMilli(),
 		"entry_avg_price":     input.EntryAvgPrice,
@@ -144,7 +148,7 @@ func (c *Client) CreatePosition(ctx context.Context, input *PositionInput) (*Pos
 		"total_quantity":      input.TotalQuantity,
 		"total_fees":          input.TotalFees,
 		"realized_pnl":        input.RealizedPnL,
-		"market_type":         input.MarketType,
+		"total_funding":       input.TotalFunding,
 	}
 
 	req := c.graphqlRequestWithVars(query, vars)
@@ -312,6 +316,7 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 					base_asset
 					quote_asset
 					side
+					market_type
 					start_time
 					end_time
 					entry_avg_price
@@ -319,7 +324,7 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 					total_quantity
 					total_fees
 					realized_pnl
-					market_type
+					total_funding
 				}
 			}
 		`, varDeclarations, whereClause)
@@ -332,6 +337,7 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 					base_asset
 					quote_asset
 					side
+					market_type
 					start_time
 					end_time
 					entry_avg_price
@@ -339,7 +345,7 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 					total_quantity
 					total_fees
 					realized_pnl
-					market_type
+					total_funding
 				}
 			}
 		`
@@ -368,6 +374,7 @@ func (c *Client) GetPositionByID(ctx context.Context, positionID string) (*Posit
 				base_asset
 				quote_asset
 				side
+				market_type
 				start_time
 				end_time
 				entry_avg_price
@@ -375,6 +382,7 @@ func (c *Client) GetPositionByID(ctx context.Context, positionID string) (*Posit
 				total_quantity
 				total_fees
 				realized_pnl
+				total_funding
 				position_trades {
 					position_id
 					trade_id

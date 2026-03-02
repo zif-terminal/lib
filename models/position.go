@@ -15,15 +15,16 @@ type Position struct {
 	ExchangeAccountID uuid.UUID `json:"exchange_account_id"`
 	BaseAsset         string    `json:"base_asset"`
 	QuoteAsset        string    `json:"quote_asset"`
-	Side              string    `json:"side"` // "long" or "short"
+	Side              string    `json:"side"`         // "long" or "short"
+	MarketType        string    `json:"market_type"`  // "perp", "spot", "swap"
 	StartTime         time.Time `json:"start_time"`
 	EndTime           time.Time `json:"end_time"`
 	EntryAvgPrice     string    `json:"entry_avg_price"` // NUMERIC as string
 	ExitAvgPrice      string    `json:"exit_avg_price"`  // NUMERIC as string
 	TotalQuantity     string    `json:"total_quantity"`  // NUMERIC as string
 	TotalFees         string    `json:"total_fees"`      // NUMERIC as string
-	RealizedPnL       string    `json:"realized_pnl"`    // NUMERIC as string
-	MarketType        string    `json:"market_type"`     // "perp", "spot", etc.
+	RealizedPnL       string    `json:"realized_pnl"`   // NUMERIC as string; = gross_pnl - fees + funding
+	TotalFunding      string    `json:"total_funding"`   // NUMERIC as string; positive = received, negative = paid
 }
 
 // UnmarshalJSON custom unmarshaler to handle BIGINT timestamps and NUMERIC fields
@@ -37,6 +38,7 @@ func (p *Position) UnmarshalJSON(data []byte) error {
 		TotalQuantity interface{} `json:"total_quantity"`
 		TotalFees     interface{} `json:"total_fees"`
 		RealizedPnL   interface{} `json:"realized_pnl"`
+		TotalFunding  interface{} `json:"total_funding"`
 		*Alias
 	}{
 		Alias: (*Alias)(p),
@@ -80,6 +82,9 @@ func (p *Position) UnmarshalJSON(data []byte) error {
 	if aux.RealizedPnL != nil {
 		p.RealizedPnL = convertToString(aux.RealizedPnL)
 	}
+	if aux.TotalFunding != nil {
+		p.TotalFunding = convertToString(aux.TotalFunding)
+	}
 
 	return nil
 }
@@ -112,6 +117,7 @@ type PositionInput struct {
 	BaseAsset         string    `json:"base_asset"`
 	QuoteAsset        string    `json:"quote_asset"`
 	Side              string    `json:"side"`
+	MarketType        string    `json:"market_type"`
 	StartTime         time.Time `json:"start_time"`
 	EndTime           time.Time `json:"end_time"`
 	EntryAvgPrice     string    `json:"entry_avg_price"`
@@ -119,7 +125,7 @@ type PositionInput struct {
 	TotalQuantity     string    `json:"total_quantity"`
 	TotalFees         string    `json:"total_fees"`
 	RealizedPnL       string    `json:"realized_pnl"`
-	MarketType        string    `json:"market_type"`
+	TotalFunding      string    `json:"total_funding"` // Net funding received/paid; 0 for spot
 }
 
 // PositionTrade represents a trade allocation for a position
