@@ -9,13 +9,13 @@ import (
 )
 
 // FetchVaults returns all public Hyperliquid vaults.
-// Uses POST /info with {"type": "vaults"}.
+// Uses POST /info with {"type": "vaultSummaries"}.
 func (c *Client) FetchVaults(ctx context.Context) ([]*VaultSummary, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 
-	reqBody := map[string]interface{}{"type": "vaults"}
+	reqBody := map[string]interface{}{"type": "vaultSummaries"}
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("hyperliquid FetchVaults: marshal request: %w", err)
@@ -45,13 +45,11 @@ func (c *Client) FetchVaults(ctx context.Context) ([]*VaultSummary, error) {
 	out := make([]*VaultSummary, 0, len(raw))
 	for _, v := range raw {
 		out = append(out, &VaultSummary{
-			Address:     v.Vault,
-			Name:        v.Name,
-			Leader:      v.Leader,
-			Description: v.Description,
-			TVL:         v.Tvl,
-			APR:         v.Apr,
-			IsClosed:    v.IsClosed,
+			Address:  v.VaultAddress,
+			Name:     v.Name,
+			Leader:   v.Leader,
+			TVL:      v.Tvl,
+			IsClosed: v.IsClosed,
 		})
 	}
 	return out, nil
@@ -98,11 +96,11 @@ func (c *Client) FetchVaultDetails(ctx context.Context, vaultAddress string) (*V
 	}
 
 	return &VaultSummary{
-		Address:     raw.Vault,
+		Address:     raw.VaultAddress,
 		Name:        raw.Name,
 		Leader:      raw.Leader,
 		Description: raw.Description,
-		TVL:         raw.Tvl,
+		TVL:         raw.MaxDistributable,
 		APR:         raw.Apr,
 		IsClosed:    raw.IsClosed,
 	}, nil
