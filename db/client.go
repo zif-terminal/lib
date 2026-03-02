@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -128,6 +129,9 @@ type DBClient interface {
 
 	// Sync timestamp methods
 	UpdateAccountLastSynced(ctx context.Context, accountID string) error
+
+	// C1.1: Update account_type_metadata (e.g. vault equity sync).
+	UpdateAccountTypeMetadata(ctx context.Context, accountID uuid.UUID, metadata json.RawMessage) error
 }
 
 // Ensure Client implements DBClient

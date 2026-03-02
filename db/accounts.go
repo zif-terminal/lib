@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/zif-terminal/lib/models"
 )
 
@@ -287,6 +288,41 @@ func (c *Client) UpdateAccountTags(ctx context.Context, accountID string, tags [
 		return fmt.Errorf("account not found: %s", accountID)
 	}
 
+	return nil
+}
+
+// UpdateAccountTypeMetadata updates only account_type_metadata for a given account.
+// C1.1: Used by account_sync to persist vault equity fetched from Hyperliquid.
+func (c *Client) UpdateAccountTypeMetadata(ctx context.Context, accountID uuid.UUID, metadata json.RawMessage) error {
+	query := `
+		mutation UpdateAccountTypeMetadata($id: uuid!, $account_type_metadata: jsonb!) {
+			update_exchange_accounts_by_pk(pk_columns: {id: $id}, _set: {account_type_metadata: $account_type_metadata}) {
+				id
+			}
+		}
+	`
+
+	var metadataValue interface{}
+	if err := json.Unmarshal(metadata, &metadataValue); err != nil {
+		return fmt.Errorf("UpdateAccountTypeMetadata: invalid JSON metadata: %w", err)
+	}
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id":                   accountID.String(),
+		"account_type_metadata": metadataValue,
+	})
+
+	var resp struct {
+		UpdateExchangeAccountsByPk *struct {
+			ID string `json:"id"`
+		} `json:"update_exchange_accounts_by_pk"`
+	}
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("UpdateAccountTypeMetadata: %w", err)
+	}
+	if resp.UpdateExchangeAccountsByPk == nil {
+		return fmt.Errorf("UpdateAccountTypeMetadata: account %s not found", accountID)
+	}
 	return nil
 }
 
