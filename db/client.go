@@ -132,6 +132,15 @@ type DBClient interface {
 
 	// C1.1: Update account_type_metadata (e.g. vault equity sync).
 	UpdateAccountTypeMetadata(ctx context.Context, accountID uuid.UUID, metadata json.RawMessage) error
+
+	// OPS.3: Spot balance snapshots and interest payments
+	AddSpotBalanceSnapshots(ctx context.Context, inputs []*SpotBalanceSnapshotInput) ([]*SpotBalanceSnapshot, error)
+	GetLatestSpotBalanceSnapshot(ctx context.Context, exchangeAccountID uuid.UUID, asset string) (*SpotBalanceSnapshot, error)
+	GetSpotBalanceSnapshotsBefore(ctx context.Context, exchangeAccountID uuid.UUID, asset string, beforeMs int64) (*SpotBalanceSnapshot, error)
+	AddInterestPayments(ctx context.Context, inputs []*InterestPaymentInput) ([]*InterestPayment, error)
+	SumInterestForAccount(ctx context.Context, accountID uuid.UUID, startTimeMs, endTimeMs int64) (map[string]string, error)
+	SumFundingInRange(ctx context.Context, accountID uuid.UUID, fromMs, toMs int64) (string, error)
+	PruneOldSpotBalanceSnapshots(ctx context.Context, retentionMs int64) (int, error)
 }
 
 // Ensure Client implements DBClient
