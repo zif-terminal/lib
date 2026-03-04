@@ -81,11 +81,67 @@ func (c *Client) SumFundingForPosition(
 	}
 }
 
+// FundingPaymentFilter represents filtering options for listing funding payments
+type FundingPaymentFilter struct {
+	ExchangeAccountIDs []uuid.UUID
+}
+
 // FundingPayment represents a funding payment model (aliased from models package)
 type FundingPayment = models.FundingPayment
 
 // FundingPaymentInput represents funding payment input for mutations (aliased from models package)
 type FundingPaymentInput = models.FundingPaymentInput
+
+// ListFundingPayments retrieves funding payments with optional filtering
+func (c *Client) ListFundingPayments(ctx context.Context, filter FundingPaymentFilter) ([]*FundingPayment, error) {
+	vars := make(map[string]interface{})
+	whereClause := ""
+	varDeclarations := ""
+
+	if len(filter.ExchangeAccountIDs) > 0 {
+		accountIDs := make([]string, len(filter.ExchangeAccountIDs))
+		for i, id := range filter.ExchangeAccountIDs {
+			accountIDs[i] = id.String()
+		}
+		vars["account_ids"] = accountIDs
+		whereClause = "where: { exchange_account_id: { _in: $account_ids } }"
+		varDeclarations = "$account_ids: [uuid!]"
+	}
+
+	queryHeader := "query ListFundingPayments"
+	if varDeclarations != "" {
+		queryHeader += "(" + varDeclarations + ")"
+	}
+
+	query := fmt.Sprintf(`
+		%s {
+			funding_payments(
+				%s
+				order_by: { timestamp: desc }
+			) {
+				id
+				exchange_account_id
+				base_asset
+				quote_asset
+				amount
+				timestamp
+				payment_id
+			}
+		}
+	`, queryHeader, whereClause)
+
+	req := c.graphqlRequestWithVars(query, vars)
+
+	var resp struct {
+		FundingPayments []*FundingPayment `json:"funding_payments"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to list funding payments: %w", err)
+	}
+
+	return resp.FundingPayments, nil
+}
 
 // GetLatestFundingPayment retrieves the latest funding payment for an exchange account
 func (c *Client) GetLatestFundingPayment(ctx context.Context, exchangeAccountID uuid.UUID) (*FundingPayment, error) {

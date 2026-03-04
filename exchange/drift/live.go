@@ -66,15 +66,18 @@ type driftSnapshotAccountV2 struct {
 }
 
 type driftOverviewSnapshot struct {
+	EpochTs           int64  `json:"epochTs"`
 	TotalAccountValue string `json:"totalAccountValue"`
 	AccountBalance    string `json:"accountBalance"`
 }
 
 type driftEarnSnapshot struct {
-	Assets []driftEarnAsset `json:"assets"`
+	EpochTs int64            `json:"epochTs"`
+	Assets  []driftEarnAsset `json:"assets"`
 }
 
 type driftEarnAsset struct {
+	Symbol      string `json:"symbol"`
 	MarketIndex int    `json:"marketIndex"`
 	Balance     string `json:"balance"`
 	OraclePrice string `json:"oraclePrice"`

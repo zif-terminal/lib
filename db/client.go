@@ -103,6 +103,7 @@ type DBClient interface {
 	// Funding payment methods
 	GetLatestFundingPayment(ctx context.Context, exchangeAccountID uuid.UUID) (*FundingPayment, error)
 	AddFundingPayments(ctx context.Context, inputs []*FundingPaymentInput) ([]*FundingPayment, error)
+	ListFundingPayments(ctx context.Context, filter FundingPaymentFilter) ([]*FundingPayment, error)
 	SumFundingForPosition(ctx context.Context, accountID uuid.UUID, baseAsset string, startTimeMs, endTimeMs int64) (string, error)
 
 	// Position methods
@@ -127,6 +128,9 @@ type DBClient interface {
 	UpdateDepositCostBasis(ctx context.Context, depositID uuid.UUID, userCostBasis string) (*Deposit, error)
 	ListDeposits(ctx context.Context, filter DepositFilter) ([]*Deposit, error)
 
+	// Transfer methods (unified view of deposits + interest)
+	ListTransfers(ctx context.Context, filter TransferFilter) ([]*Transfer, error)
+
 	// Sync timestamp methods
 	UpdateAccountLastSynced(ctx context.Context, accountID string) error
 
@@ -138,6 +142,7 @@ type DBClient interface {
 	GetLatestSpotBalanceSnapshot(ctx context.Context, exchangeAccountID uuid.UUID, asset string) (*SpotBalanceSnapshot, error)
 	GetSpotBalanceSnapshotsBefore(ctx context.Context, exchangeAccountID uuid.UUID, asset string, beforeMs int64) (*SpotBalanceSnapshot, error)
 	AddInterestPayments(ctx context.Context, inputs []*InterestPaymentInput) ([]*InterestPayment, error)
+	DeleteInterestPaymentsForAccount(ctx context.Context, accountID uuid.UUID) (int, error)
 	SumInterestForAccount(ctx context.Context, accountID uuid.UUID, startTimeMs, endTimeMs int64) (map[string]string, error)
 	SumFundingInRange(ctx context.Context, accountID uuid.UUID, fromMs, toMs int64) (string, error)
 	PruneOldSpotBalanceSnapshots(ctx context.Context, retentionMs int64) (int, error)

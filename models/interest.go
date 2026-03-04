@@ -102,10 +102,12 @@ type InterestPayment struct {
 func (ip *InterestPayment) UnmarshalJSON(data []byte) error {
 	type Alias InterestPayment
 	aux := &struct {
-		Timestamp interface{} `json:"timestamp"`
-		Amount    interface{} `json:"amount"`
-		OraclePrice interface{} `json:"oracle_price"`
-		USDValue  interface{} `json:"usd_value"`
+		Timestamp    interface{} `json:"timestamp"`
+		SnapshotFrom interface{} `json:"snapshot_from"`
+		SnapshotTo   interface{} `json:"snapshot_to"`
+		Amount       interface{} `json:"amount"`
+		OraclePrice  interface{} `json:"oracle_price"`
+		USDValue     interface{} `json:"usd_value"`
 		*Alias
 	}{
 		Alias: (*Alias)(ip),
@@ -116,24 +118,27 @@ func (ip *InterestPayment) UnmarshalJSON(data []byte) error {
 	}
 
 	if aux.Timestamp != nil {
-		var unixMillis int64
-		switch v := aux.Timestamp.(type) {
-		case float64:
-			unixMillis = int64(v)
-		case int64:
-			unixMillis = v
-		case int:
-			unixMillis = int64(v)
-		case string:
-			var err error
-			unixMillis, err = parseInt64(v)
-			if err != nil {
-				return fmt.Errorf("failed to parse timestamp: %w", err)
-			}
-		default:
-			return fmt.Errorf("unexpected timestamp type: %T", aux.Timestamp)
+		unixMillis, err := parseInterfaceToInt64(aux.Timestamp)
+		if err != nil {
+			return fmt.Errorf("failed to parse timestamp: %w", err)
 		}
 		ip.Timestamp = time.Unix(0, unixMillis*int64(time.Millisecond)).UTC()
+	}
+
+	if aux.SnapshotFrom != nil {
+		v, err := parseInterfaceToInt64(aux.SnapshotFrom)
+		if err != nil {
+			return fmt.Errorf("failed to parse snapshot_from: %w", err)
+		}
+		ip.SnapshotFrom = v
+	}
+
+	if aux.SnapshotTo != nil {
+		v, err := parseInterfaceToInt64(aux.SnapshotTo)
+		if err != nil {
+			return fmt.Errorf("failed to parse snapshot_to: %w", err)
+		}
+		ip.SnapshotTo = v
 	}
 
 	if aux.Amount != nil {
@@ -147,6 +152,22 @@ func (ip *InterestPayment) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
+}
+
+// parseInterfaceToInt64 converts a JSON value (float64, string, int) to int64
+func parseInterfaceToInt64(v interface{}) (int64, error) {
+	switch val := v.(type) {
+	case float64:
+		return int64(val), nil
+	case int64:
+		return val, nil
+	case int:
+		return int64(val), nil
+	case string:
+		return parseInt64(val)
+	default:
+		return 0, fmt.Errorf("unexpected type: %T", v)
+	}
 }
 
 // InterestPaymentInput represents input for creating an interest payment record

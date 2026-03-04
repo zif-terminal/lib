@@ -207,15 +207,10 @@ func (c *Client) AddInterestPayments(ctx context.Context, inputs []*InterestPaym
 		objects[i] = obj
 	}
 
-	// ON CONFLICT DO NOTHING: idempotent — re-running reconciliation won't create duplicates
 	query := `
 		mutation AddInterestPayments($objects: [interest_payments_insert_input!]!) {
 			insert_interest_payments(
 				objects: $objects
-				on_conflict: {
-					constraint: idx_interest_unique
-					update_columns: []
-				}
 			) {
 				returning {
 					id
@@ -397,6 +392,36 @@ func (c *Client) SumFundingInRange(ctx context.Context, accountID uuid.UUID, fro
 	default:
 		return fmt.Sprintf("%v", v), nil
 	}
+}
+
+// DeleteInterestPaymentsForAccount deletes all interest payment records for a given account.
+// Used by the activity processor to ensure idempotent re-derivation on each run.
+func (c *Client) DeleteInterestPaymentsForAccount(ctx context.Context, accountID uuid.UUID) (int, error) {
+	query := `
+		mutation DeleteInterestPayments($exchange_account_id: uuid!) {
+			delete_interest_payments(
+				where: { exchange_account_id: { _eq: $exchange_account_id } }
+			) {
+				affected_rows
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"exchange_account_id": accountID.String(),
+	})
+
+	var resp struct {
+		DeleteInterestPayments struct {
+			AffectedRows int `json:"affected_rows"`
+		} `json:"delete_interest_payments"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return 0, fmt.Errorf("failed to delete interest payments: %w", err)
+	}
+
+	return resp.DeleteInterestPayments.AffectedRows, nil
 }
 
 // PruneOldSpotBalanceSnapshots deletes spot_balance_snapshots older than retentionDays.
