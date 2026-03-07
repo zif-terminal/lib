@@ -726,3 +726,28 @@ func calculatePrice(quoteAmount, baseAmount string) string {
 func (c *Client) FetchDeposits(ctx context.Context, account *models.ExchangeAccount, since time.Time) ([]*models.DepositInput, error) {
 	return []*models.DepositInput{}, nil
 }
+
+// FetchSettlements returns an empty slice — Lighter settles PnL immediately at trade time.
+func (c *Client) FetchSettlements(ctx context.Context, account *models.ExchangeAccount, since time.Time) ([]*models.Settlement, error) {
+	return []*models.Settlement{}, nil
+}
+
+// FetchPositions is not yet implemented for Lighter.
+func (c *Client) FetchPositions(ctx context.Context, account *models.ExchangeAccount) ([]*models.PositionSnapshot, error) {
+	return []*models.PositionSnapshot{}, nil
+}
+
+// FetchBalances is not yet implemented for Lighter.
+func (c *Client) FetchBalances(ctx context.Context, account *models.ExchangeAccount) ([]*models.BalanceSnapshot, error) {
+	return []*models.BalanceSnapshot{}, nil
+}
+
+// FetchOpenOrders is not yet implemented for Lighter.
+func (c *Client) FetchOpenOrders(ctx context.Context, account *models.ExchangeAccount) ([]*models.OpenOrder, error) {
+	return []*models.OpenOrder{}, nil
+}
+
+// FetchAccountValue is not yet implemented for Lighter.
+func (c *Client) FetchAccountValue(ctx context.Context, account *models.ExchangeAccount) (*models.AccountValueSnapshot, error) {
+	return &models.AccountValueSnapshot{}, nil
+}

@@ -2,7 +2,7 @@ package db
 
 import (
 	"context"
-	"time"
+	"encoding/json"
 
 	"github.com/google/uuid"
 	"github.com/machinebox/graphql"
@@ -102,13 +102,13 @@ type DBClient interface {
 	// Funding payment methods
 	GetLatestFundingPayment(ctx context.Context, exchangeAccountID uuid.UUID) (*FundingPayment, error)
 	AddFundingPayments(ctx context.Context, inputs []*FundingPaymentInput) ([]*FundingPayment, error)
+	ListFundingPayments(ctx context.Context, filter FundingPaymentFilter) ([]*FundingPayment, error)
 
 	// Position methods
-	GetLastProcessedTradeTimestamp(ctx context.Context, exchangeAccountID uuid.UUID, baseAsset string, quoteAsset string) (*time.Time, error)
-	CreatePosition(ctx context.Context, input *PositionInput) (*Position, error)
-	CreatePositionTrades(ctx context.Context, inputs []*PositionTradeInput) ([]*PositionTrade, error)
+	DeletePositionsForAccount(ctx context.Context, accountID uuid.UUID) (int, error)
+	AddPositions(ctx context.Context, inputs []*PositionInput) ([]*Position, error)
+	AddPositionEvents(ctx context.Context, inputs []*PositionEventInput) (int, error)
 	GetPositions(ctx context.Context, filter PositionFilter) ([]*Position, error)
-	GetPositionByID(ctx context.Context, positionID string) (*Position, []*PositionTrade, error)
 
 	// Wallet methods
 	GetWallet(ctx context.Context, id string) (*Wallet, error)
@@ -124,6 +124,22 @@ type DBClient interface {
 	AddDeposits(ctx context.Context, inputs []*DepositInput) ([]*Deposit, error)
 	UpdateDepositCostBasis(ctx context.Context, depositID uuid.UUID, userCostBasis string) (*Deposit, error)
 	ListDeposits(ctx context.Context, filter DepositFilter) ([]*Deposit, error)
+
+	// Transfer methods (unified view of deposits + interest)
+	ListTransfers(ctx context.Context, filter TransferFilter) ([]*Transfer, error)
+
+	// Settlement methods
+	AddSettlements(ctx context.Context, inputs []*SettlementInput) (int, error)
+	ListSettlements(ctx context.Context, filter SettlementFilter) ([]*Settlement, error)
+	GetLatestSettlement(ctx context.Context, exchangeAccountID uuid.UUID) (*Settlement, error)
+
+	// Interest methods
+	AddInterestPayments(ctx context.Context, inputs []*InterestPaymentInput) ([]*InterestPayment, error)
+	DeleteInterestPaymentsForAccount(ctx context.Context, accountID uuid.UUID) (int, error)
+
+	// Processor checkpoint methods
+	SaveCheckpoint(ctx context.Context, accountID uuid.UUID, state json.RawMessage, lastEventTimestamp int64, eventCounts json.RawMessage) error
+	LoadCheckpoint(ctx context.Context, accountID uuid.UUID) (*ProcessorCheckpoint, error)
 
 	// Sync timestamp methods
 	UpdateAccountLastSynced(ctx context.Context, accountID string) error

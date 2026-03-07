@@ -292,3 +292,140 @@ func TestHyperliquidClient_Contract(t *testing.T) {
 		}
 	})
 }
+
+func TestHyperliquidClient_FetchDeposits_Stub(t *testing.T) {
+	client := NewClient()
+	ctx := context.Background()
+	account := &models.ExchangeAccount{
+		ID:                uuid.New().String(),
+		AccountIdentifier: "0xtest",
+	}
+	deposits, err := client.FetchDeposits(ctx, account, time.Time{})
+	if err != nil {
+		t.Fatalf("FetchDeposits stub failed: %v", err)
+	}
+	if len(deposits) != 0 {
+		t.Errorf("Expected empty, got %d", len(deposits))
+	}
+}
+
+func TestHyperliquidClient_FetchSettlements_Stub(t *testing.T) {
+	client := NewClient()
+	ctx := context.Background()
+	account := &models.ExchangeAccount{
+		ID:                uuid.New().String(),
+		AccountIdentifier: "0xtest",
+	}
+	settlements, err := client.FetchSettlements(ctx, account, time.Time{})
+	if err != nil {
+		t.Fatalf("FetchSettlements stub failed: %v", err)
+	}
+	if len(settlements) != 0 {
+		t.Errorf("Expected empty, got %d", len(settlements))
+	}
+}
+
+func TestDetectMarketType(t *testing.T) {
+	tests := []struct {
+		coin string
+		want string
+	}{
+		{"@107", "spot"},
+		{"PURR/USDC", "spot"},
+		{"BTC", "perp"},
+		{"ETH", "perp"},
+		{"xyz:XYZ100", "perp"},
+	}
+	for _, tt := range tests {
+		got := detectMarketType(tt.coin)
+		if got != tt.want {
+			t.Errorf("detectMarketType(%q) = %q, want %q", tt.coin, got, tt.want)
+		}
+	}
+}
+
+func TestConvertToString(t *testing.T) {
+	tests := []struct {
+		input interface{}
+		want  string
+	}{
+		{"hello", "hello"},
+		{float64(3.14), "3.14"},
+		{int(42), "42"},
+		{int64(12345), "12345"},
+		{nil, ""},
+		{true, "true"},
+	}
+	for _, tt := range tests {
+		got := convertToString(tt.input)
+		if got != tt.want {
+			t.Errorf("convertToString(%v) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	tests := []struct {
+		input string
+		want  time.Duration
+	}{
+		{"60", 60 * time.Second},
+		{"", 0},
+		{"invalid", 0},
+	}
+	for _, tt := range tests {
+		got := parseRetryAfter(tt.input)
+		if got != tt.want {
+			t.Errorf("parseRetryAfter(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestHyperliquidClient_LiveStubs(t *testing.T) {
+	client := NewClient()
+	ctx := context.Background()
+	account := &models.ExchangeAccount{
+		ID:                uuid.New().String(),
+		AccountIdentifier: "0xtest",
+	}
+
+	t.Run("FetchPositions", func(t *testing.T) {
+		positions, err := client.FetchPositions(ctx, account)
+		if err != nil {
+			t.Fatalf("FetchPositions stub failed: %v", err)
+		}
+		if len(positions) != 0 {
+			t.Errorf("Expected empty, got %d", len(positions))
+		}
+	})
+
+	t.Run("FetchBalances", func(t *testing.T) {
+		balances, err := client.FetchBalances(ctx, account)
+		if err != nil {
+			t.Fatalf("FetchBalances stub failed: %v", err)
+		}
+		if len(balances) != 0 {
+			t.Errorf("Expected empty, got %d", len(balances))
+		}
+	})
+
+	t.Run("FetchOpenOrders", func(t *testing.T) {
+		orders, err := client.FetchOpenOrders(ctx, account)
+		if err != nil {
+			t.Fatalf("FetchOpenOrders stub failed: %v", err)
+		}
+		if len(orders) != 0 {
+			t.Errorf("Expected empty, got %d", len(orders))
+		}
+	})
+
+	t.Run("FetchAccountValue", func(t *testing.T) {
+		value, err := client.FetchAccountValue(ctx, account)
+		if err != nil {
+			t.Fatalf("FetchAccountValue stub failed: %v", err)
+		}
+		if value == nil {
+			t.Fatal("Expected non-nil value")
+		}
+	})
+}
