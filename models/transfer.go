@@ -27,6 +27,7 @@ type Transfer struct {
 	Asset             string    `json:"asset"`
 	Amount            string    `json:"amount"` // Always positive; direction determined by Type
 	Timestamp         time.Time `json:"timestamp"`
+	CostBasis         string    `json:"cost_basis"` // USD cost basis per unit (from user_cost_basis on deposits)
 }
 
 // TransferFilter represents filtering options for listing transfers

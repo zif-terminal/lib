@@ -491,3 +491,8 @@ func parseRetryAfter(retryAfter string) time.Duration {
 func (c *Client) FetchDeposits(ctx context.Context, account *models.ExchangeAccount, since time.Time) ([]*models.DepositInput, error) {
 	return []*models.DepositInput{}, nil
 }
+
+// FetchSettlements returns an empty slice — Hyperliquid settles PnL immediately at trade time.
+func (c *Client) FetchSettlements(ctx context.Context, account *models.ExchangeAccount, since time.Time) ([]*models.Settlement, error) {
+	return []*models.Settlement{}, nil
+}

@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"encoding/json"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/machinebox/graphql"
@@ -107,11 +106,10 @@ type DBClient interface {
 	SumFundingForPosition(ctx context.Context, accountID uuid.UUID, baseAsset string, startTimeMs, endTimeMs int64) (string, error)
 
 	// Position methods
-	GetLastProcessedTradeTimestamp(ctx context.Context, exchangeAccountID uuid.UUID, baseAsset string, quoteAsset string) (*time.Time, error)
-	CreatePosition(ctx context.Context, input *PositionInput) (*Position, error)
-	CreatePositionTrades(ctx context.Context, inputs []*PositionTradeInput) ([]*PositionTrade, error)
+	DeletePositionsForAccount(ctx context.Context, accountID uuid.UUID) (int, error)
+	AddPositions(ctx context.Context, inputs []*PositionInput) ([]*Position, error)
+	AddPositionEvents(ctx context.Context, inputs []*PositionEventInput) (int, error)
 	GetPositions(ctx context.Context, filter PositionFilter) ([]*Position, error)
-	GetPositionByID(ctx context.Context, positionID string) (*Position, []*PositionTrade, error)
 
 	// Wallet methods
 	GetWallet(ctx context.Context, id string) (*Wallet, error)
@@ -136,6 +134,15 @@ type DBClient interface {
 
 	// C1.1: Update account_type_metadata (e.g. vault equity sync).
 	UpdateAccountTypeMetadata(ctx context.Context, accountID uuid.UUID, metadata json.RawMessage) error
+
+	// Settlement methods
+	AddSettlements(ctx context.Context, inputs []*SettlementInput) (int, error)
+	ListSettlements(ctx context.Context, filter SettlementFilter) ([]*Settlement, error)
+	GetLatestSettlement(ctx context.Context, exchangeAccountID uuid.UUID) (*Settlement, error)
+
+	// Processor checkpoint methods
+	SaveCheckpoint(ctx context.Context, accountID uuid.UUID, state json.RawMessage, lastEventTimestamp int64, eventCounts json.RawMessage) error
+	LoadCheckpoint(ctx context.Context, accountID uuid.UUID) (*ProcessorCheckpoint, error)
 
 	// OPS.3: Spot balance snapshots and interest payments
 	AddSpotBalanceSnapshots(ctx context.Context, inputs []*SpotBalanceSnapshotInput) ([]*SpotBalanceSnapshot, error)

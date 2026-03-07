@@ -106,6 +106,28 @@ func parseInt64(s string) (int64, error) {
 	return result, err
 }
 
+// parseTimestamp parses a timestamp from various formats (BIGINT Unix milliseconds)
+func parseTimestamp(v interface{}) (time.Time, error) {
+	var unixMillis int64
+	switch val := v.(type) {
+	case float64:
+		unixMillis = int64(val)
+	case int64:
+		unixMillis = val
+	case int:
+		unixMillis = int64(val)
+	case string:
+		var err error
+		unixMillis, err = parseInt64(val)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("failed to parse timestamp string: %w", err)
+		}
+	default:
+		return time.Time{}, fmt.Errorf("unexpected timestamp type: %T", v)
+	}
+	return time.Unix(0, unixMillis*int64(time.Millisecond)).UTC(), nil
+}
+
 // TradeInput represents input for creating/updating a trade
 // Used for GraphQL mutations
 type TradeInput struct {

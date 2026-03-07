@@ -72,4 +72,15 @@ type ExchangeClient interface {
 		ctx context.Context,
 		account *models.ExchangeAccount,
 	) (*models.AccountValueSnapshot, error)
+
+	// FetchSettlements fetches PnL settlement events for a given account since a specific timestamp.
+	// On exchanges with deferred settlement (e.g., Drift), this returns actual settlement records
+	// from keeper bots that move PnL + accrued funding into the spot balance.
+	// On exchanges with immediate settlement (e.g., Hyperliquid), this returns an empty slice
+	// because PnL is settled inline with trades.
+	FetchSettlements(
+		ctx context.Context,
+		account *models.ExchangeAccount,
+		since time.Time,
+	) ([]*models.Settlement, error)
 }
