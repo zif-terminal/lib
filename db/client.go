@@ -125,17 +125,15 @@ type DBClient interface {
 	UpdateDepositCostBasis(ctx context.Context, depositID uuid.UUID, userCostBasis string) (*Deposit, error)
 	ListDeposits(ctx context.Context, filter DepositFilter) ([]*Deposit, error)
 
-	// Transfer methods (unified view of deposits + interest)
+	// Transfer methods
 	ListTransfers(ctx context.Context, filter TransferFilter) ([]*Transfer, error)
+	AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*Transfer, error)
+	DeleteTransfersByAccountAndType(ctx context.Context, accountID uuid.UUID, transferType string) (int, error)
 
 	// Settlement methods
 	AddSettlements(ctx context.Context, inputs []*SettlementInput) (int, error)
 	ListSettlements(ctx context.Context, filter SettlementFilter) ([]*Settlement, error)
 	GetLatestSettlement(ctx context.Context, exchangeAccountID uuid.UUID) (*Settlement, error)
-
-	// Interest methods
-	AddInterestPayments(ctx context.Context, inputs []*InterestPaymentInput) ([]*InterestPayment, error)
-	DeleteInterestPaymentsForAccount(ctx context.Context, accountID uuid.UUID) (int, error)
 
 	// Processor checkpoint methods
 	SaveCheckpoint(ctx context.Context, accountID uuid.UUID, state json.RawMessage, lastEventTimestamp int64, eventCounts json.RawMessage) error

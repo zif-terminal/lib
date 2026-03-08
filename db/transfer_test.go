@@ -37,53 +37,40 @@ func TestClient_ListTransfers(t *testing.T) {
 	ctx := context.Background()
 	accountID := uuid.New()
 
-	callCount := 0
+	expectedTransfers := []*models.Transfer{
+		{
+			ID:                uuid.New(),
+			ExchangeAccountID: accountID,
+			Type:              models.TypeDeposit,
+			Asset:             "USDC",
+			Amount:            "1000.50",
+			Timestamp:         time.Now(),
+		},
+		{
+			ID:                uuid.New(),
+			ExchangeAccountID: accountID,
+			Type:              models.TypeWithdraw,
+			Asset:             "SOL",
+			Amount:            "10.5",
+			Timestamp:         time.Now(),
+		},
+		{
+			ID:                uuid.New(),
+			ExchangeAccountID: accountID,
+			Type:              models.TypeInterest,
+			Asset:             "USDC",
+			Amount:            "2.50",
+			Timestamp:         time.Now(),
+		},
+	}
+
 	mockClient := &mockGraphQLClient{
 		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
-			callCount++
-			switch {
-			case callCount == 1:
-				// ListDeposits response
-				respData := map[string]interface{}{
-					"deposits": []*models.Deposit{
-						{
-							ID:                uuid.New(),
-							ExchangeAccountID: accountID,
-							Asset:             "USDC",
-							Amount:            "1000.50",
-							Direction:         "deposit",
-							Timestamp:         time.Now(),
-						},
-						{
-							ID:                uuid.New(),
-							ExchangeAccountID: accountID,
-							Asset:             "SOL",
-							Amount:            "-10.5",
-							Direction:         "withdraw",
-							Timestamp:         time.Now(),
-						},
-					},
-				}
-				data, _ := json.Marshal(respData)
-				return json.Unmarshal(data, resp)
-			case callCount == 2:
-				// listInterestPaymentsForAccount response
-				respData := map[string]interface{}{
-					"interest_payments": []*models.InterestPayment{
-						{
-							ID:                uuid.New(),
-							ExchangeAccountID: accountID,
-							Asset:             "USDC",
-							Amount:            "2.50",
-							Timestamp:         time.Now(),
-						},
-					},
-				}
-				data, _ := json.Marshal(respData)
-				return json.Unmarshal(data, resp)
-			default:
-				return nil
+			respData := map[string]interface{}{
+				"transfers": expectedTransfers,
 			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
 		},
 	}
 
@@ -99,7 +86,6 @@ func TestClient_ListTransfers(t *testing.T) {
 		t.Fatalf("ListTransfers failed: %v", err)
 	}
 
-	// Should have 2 deposits + 1 interest = 3 transfers
 	if len(transfers) != 3 {
 		t.Fatalf("Expected 3 transfers, got %d", len(transfers))
 	}

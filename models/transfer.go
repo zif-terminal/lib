@@ -19,7 +19,7 @@ const (
 )
 
 // Transfer represents a unified transfer event (deposit, withdrawal, interest, etc.)
-// This is a superset that combines deposits table + interest_payments table
+// Maps to the 'transfers' table
 type Transfer struct {
 	ID                uuid.UUID `json:"id"`
 	ExchangeAccountID uuid.UUID `json:"exchange_account_id"`
@@ -33,6 +33,16 @@ type Transfer struct {
 // TransferFilter represents filtering options for listing transfers
 type TransferFilter struct {
 	ExchangeAccountIDs []uuid.UUID
+}
+
+// TransferInput represents input for creating a transfer record
+type TransferInput struct {
+	ExchangeAccountID uuid.UUID `json:"exchange_account_id"`
+	Type              string    `json:"type"`
+	Asset             string    `json:"asset"`
+	Amount            string    `json:"amount"`
+	Timestamp         time.Time `json:"timestamp"`
+	CostBasis         string    `json:"cost_basis,omitempty"`
 }
 
 // UnmarshalJSON custom unmarshaler to handle BIGINT timestamp
