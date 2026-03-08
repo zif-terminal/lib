@@ -41,13 +41,13 @@ type ExchangeClient interface {
 	) ([]*models.DiscoverableAccount, error)
 
 	// FetchDeposits fetches deposits and withdrawals for a given account since a specific timestamp
-	// Returns deposits as DepositInput (ready for database insertion), sorted by timestamp (oldest first)
+	// Returns transfers as TransferInput (ready for database insertion), sorted by timestamp (oldest first)
 	// ctx can be cancelled or have a timeout set by the caller (sync service)
 	FetchDeposits(
 		ctx context.Context,
 		account *models.ExchangeAccount,
 		since time.Time,
-	) ([]*models.DepositInput, error)
+	) ([]*models.TransferInput, error)
 
 	// FetchPositions fetches current open positions (perp + spot) for a given account
 	FetchPositions(

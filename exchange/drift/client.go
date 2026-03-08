@@ -204,7 +204,7 @@ func (c *Client) FetchDeposits(
 	ctx context.Context,
 	account *models.ExchangeAccount,
 	since time.Time,
-) ([]*models.DepositInput, error) {
+) ([]*models.TransferInput, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -226,7 +226,7 @@ func (c *Client) FetchDeposits(
 		"deposits",
 		since,
 		c.createDepositPageFetcher(accountUUID),
-		func(d *models.DepositInput) time.Time { return d.Timestamp },
+		func(d *models.TransferInput) time.Time { return d.Timestamp },
 	)
 	if err != nil {
 		return nil, err
@@ -350,37 +350,37 @@ func (c *Client) createFundingPageFetcher(accountUUID uuid.UUID) pageFetcher[*mo
 	}
 }
 
-func (c *Client) createDepositPageFetcher(accountUUID uuid.UUID) pageFetcher[*models.DepositInput] {
-	return func(ctx context.Context, url string) (pageResult[*models.DepositInput], error) {
+func (c *Client) createDepositPageFetcher(accountUUID uuid.UUID) pageFetcher[*models.TransferInput] {
+	return func(ctx context.Context, url string) (pageResult[*models.TransferInput], error) {
 		resp, err := c.doRequestWithRetry(ctx, url)
 		if err != nil {
-			return pageResult[*models.DepositInput]{}, fmt.Errorf("failed to fetch deposits: %w", err)
+			return pageResult[*models.TransferInput]{}, fmt.Errorf("failed to fetch deposits: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return pageResult[*models.DepositInput]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+			return pageResult[*models.TransferInput]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
 		}
 
 		var response driftDepositsResponse
 		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			return pageResult[*models.DepositInput]{}, fmt.Errorf("failed to decode response: %w", err)
+			return pageResult[*models.TransferInput]{}, fmt.Errorf("failed to decode response: %w", err)
 		}
 
 		if !response.Success {
-			return pageResult[*models.DepositInput]{}, fmt.Errorf("API returned success=false")
+			return pageResult[*models.TransferInput]{}, fmt.Errorf("API returned success=false")
 		}
 
-		deposits := make([]*models.DepositInput, 0, len(response.Records))
+		deposits := make([]*models.TransferInput, 0, len(response.Records))
 		for _, record := range response.Records {
 			deposit, err := c.transformDeposit(ctx, record, accountUUID)
 			if err != nil {
-				return pageResult[*models.DepositInput]{}, fmt.Errorf("failed to transform deposit: %w", err)
+				return pageResult[*models.TransferInput]{}, fmt.Errorf("failed to transform deposit: %w", err)
 			}
 			deposits = append(deposits, deposit)
 		}
 
-		return pageResult[*models.DepositInput]{
+		return pageResult[*models.TransferInput]{
 			items:    deposits,
 			nextPage: extractNextPage(response.Meta),
 		}, nil
@@ -635,33 +635,33 @@ func (c *Client) transformFundingPayment(ctx context.Context, record driftFundin
 	}, nil
 }
 
-func (c *Client) transformDeposit(ctx context.Context, record driftDepositRecord, accountUUID uuid.UUID) (*models.DepositInput, error) {
+func (c *Client) transformDeposit(ctx context.Context, record driftDepositRecord, accountUUID uuid.UUID) (*models.TransferInput, error) {
 	marketInfo, err := c.getMarketInfo(ctx, record.MarketIndex, "spot")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get market info for index %d: %w", record.MarketIndex, err)
 	}
 
 	amount := cleanDecimalString(record.Amount)
-	userCostBasis := cleanDecimalString(record.OraclePrice)
-	if userCostBasis == "" {
-		userCostBasis = "0"
+	costBasis := cleanDecimalString(record.OraclePrice)
+	if costBasis == "" {
+		costBasis = "0"
 	}
 
 	timestamp := time.Unix(record.Ts, 0).UTC()
 
 	direction := strings.ToLower(record.Direction)
-	if direction != "deposit" && direction != "withdraw" {
-		direction = "deposit"
+	transferType := models.TypeDeposit
+	if direction == "withdraw" {
+		transferType = models.TypeWithdraw
 	}
 
-	return &models.DepositInput{
+	return &models.TransferInput{
 		ExchangeAccountID: accountUUID,
 		Asset:             marketInfo.BaseAsset,
-		Direction:         direction,
+		Type:              transferType,
 		Amount:            amount,
-		UserCostBasis:     userCostBasis,
+		CostBasis:         costBasis,
 		Timestamp:         timestamp,
-		DepositID:         record.DepositRecordID,
 	}, nil
 }
 

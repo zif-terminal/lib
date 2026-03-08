@@ -300,12 +300,12 @@ func TestHyperliquidClient_FetchDeposits_Stub(t *testing.T) {
 		ID:                uuid.New().String(),
 		AccountIdentifier: "0xtest",
 	}
-	deposits, err := client.FetchDeposits(ctx, account, time.Time{})
+	transfers, err := client.FetchDeposits(ctx, account, time.Time{})
 	if err != nil {
 		t.Fatalf("FetchDeposits stub failed: %v", err)
 	}
-	if len(deposits) != 0 {
-		t.Errorf("Expected empty, got %d", len(deposits))
+	if len(transfers) != 0 {
+		t.Errorf("Expected empty, got %d", len(transfers))
 	}
 }
 

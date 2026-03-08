@@ -119,12 +119,6 @@ type DBClient interface {
 	DeleteWallet(ctx context.Context, id string) error
 	UpdateWalletLastDetected(ctx context.Context, walletID string) error
 
-	// Deposit methods
-	GetLatestDeposit(ctx context.Context, exchangeAccountID uuid.UUID) (*Deposit, error)
-	AddDeposits(ctx context.Context, inputs []*DepositInput) ([]*Deposit, error)
-	UpdateDepositCostBasis(ctx context.Context, depositID uuid.UUID, userCostBasis string) (*Deposit, error)
-	ListDeposits(ctx context.Context, filter DepositFilter) ([]*Deposit, error)
-
 	// Transfer methods
 	ListTransfers(ctx context.Context, filter TransferFilter) ([]*Transfer, error)
 	AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*Transfer, error)
