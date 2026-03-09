@@ -205,7 +205,7 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 				exchange_account {
 					id
 					exchange_id
-					identifier
+					account_identifier
 					label
 					account_type
 					tags
