@@ -129,6 +129,9 @@ type DBClient interface {
 	ListSettlements(ctx context.Context, filter SettlementFilter) ([]*Settlement, error)
 	GetLatestSettlement(ctx context.Context, exchangeAccountID uuid.UUID) (*Settlement, error)
 
+	// Snapshot methods
+	GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.UUID) ([]*BalanceSnapshot, error)
+
 	// Processor checkpoint methods
 	SaveCheckpoint(ctx context.Context, accountID uuid.UUID, state json.RawMessage, lastEventTimestamp int64, eventCounts json.RawMessage) error
 	LoadCheckpoint(ctx context.Context, accountID uuid.UUID) (*ProcessorCheckpoint, error)
