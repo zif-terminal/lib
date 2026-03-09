@@ -62,7 +62,6 @@ func (c *Client) AddPositions(ctx context.Context, inputs []*PositionInput) ([]*
 					quantity
 					entry_price
 					exit_price
-					realized_pnl
 					total_fees
 					cumulative_funding
 					start_time
@@ -90,9 +89,6 @@ func (c *Client) AddPositions(ctx context.Context, inputs []*PositionInput) ([]*
 		}
 		if inp.ExitPrice != "" {
 			obj["exit_price"] = inp.ExitPrice
-		}
-		if inp.RealizedPnL != "" {
-			obj["realized_pnl"] = inp.RealizedPnL
 		}
 		if inp.EndTime != 0 {
 			obj["end_time"] = inp.EndTime
@@ -200,7 +196,6 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 				quantity
 				entry_price
 				exit_price
-				realized_pnl
 				total_fees
 				cumulative_funding
 				start_time

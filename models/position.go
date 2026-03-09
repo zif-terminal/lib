@@ -20,7 +20,6 @@ type Position struct {
 	Quantity          string           `json:"quantity"`     // NUMERIC as string
 	EntryPrice        string           `json:"entry_price"`  // weighted avg entry (USD)
 	ExitPrice         *string          `json:"exit_price"`   // weighted avg exit; nil if open
-	RealizedPnL       *string          `json:"realized_pnl"` // nil if open
 	TotalFees         string           `json:"total_fees"`
 	CumulativeFunding string           `json:"cumulative_funding"`
 	StartTime         time.Time        `json:"start_time"`
@@ -40,7 +39,6 @@ func (p *Position) UnmarshalJSON(data []byte) error {
 		Quantity          interface{} `json:"quantity"`
 		EntryPrice        interface{} `json:"entry_price"`
 		ExitPrice         interface{} `json:"exit_price"`
-		RealizedPnL       interface{} `json:"realized_pnl"`
 		TotalFees         interface{} `json:"total_fees"`
 		CumulativeFunding interface{} `json:"cumulative_funding"`
 		*Alias
@@ -78,10 +76,6 @@ func (p *Position) UnmarshalJSON(data []byte) error {
 		s := convertToString(aux.ExitPrice)
 		p.ExitPrice = &s
 	}
-	if aux.RealizedPnL != nil {
-		s := convertToString(aux.RealizedPnL)
-		p.RealizedPnL = &s
-	}
 	if aux.TotalFees != nil {
 		p.TotalFees = convertToString(aux.TotalFees)
 	}
@@ -102,7 +96,6 @@ type PositionInput struct {
 	Quantity          string
 	EntryPrice        string
 	ExitPrice         string // "" if open
-	RealizedPnL       string // "" if open
 	TotalFees         string
 	CumulativeFunding string
 	QuoteAsset        string // What the entry/exit prices are denominated in

@@ -109,7 +109,6 @@ func TestClient_AddPositions(t *testing.T) {
 			Quantity:          "100.5",
 			EntryPrice:        "150.25",
 			ExitPrice:         "160.00",
-			RealizedPnL:       "975.0",
 			TotalFees:         "1.5",
 			CumulativeFunding: "0.5",
 			QuoteAsset:        "USDC",
@@ -192,7 +191,7 @@ func TestClient_AddPositions_OpenPosition(t *testing.T) {
 		AdminSecret: "test-secret",
 	})
 
-	// Open position — no ExitPrice, RealizedPnL, EndTime, or OrderID
+	// Open position — no ExitPrice, EndTime, or OrderID
 	inputs := []*PositionInput{
 		{
 			ExchangeAccountID: accountID,

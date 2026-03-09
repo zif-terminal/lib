@@ -17,7 +17,6 @@ func TestPosition_UnmarshalJSON_BigintTimestamps(t *testing.T) {
 		"quantity": "100.5",
 		"entry_price": "150.25",
 		"exit_price": "160.00",
-		"realized_pnl": "975.0",
 		"total_fees": "1.5",
 		"cumulative_funding": "0.5",
 		"start_time": 1700000000000,
@@ -41,9 +40,6 @@ func TestPosition_UnmarshalJSON_BigintTimestamps(t *testing.T) {
 	}
 	if *pos.ExitPrice != "160.00" {
 		t.Errorf("Expected exit_price 160.00, got %s", *pos.ExitPrice)
-	}
-	if pos.RealizedPnL == nil {
-		t.Fatal("Expected realized_pnl to be non-nil")
 	}
 	if pos.StartTime.IsZero() {
 		t.Error("Expected start_time to be non-zero")
@@ -100,7 +96,6 @@ func TestPosition_UnmarshalJSON_NumericAsFloat(t *testing.T) {
 		"quantity": 50.0,
 		"entry_price": 3000.5,
 		"exit_price": 3100.25,
-		"realized_pnl": 4987.5,
 		"total_fees": 10.5,
 		"cumulative_funding": 2.3,
 		"start_time": 1700000000000,
