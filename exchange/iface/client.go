@@ -41,11 +41,46 @@ type ExchangeClient interface {
 	) ([]*models.DiscoverableAccount, error)
 
 	// FetchDeposits fetches deposits and withdrawals for a given account since a specific timestamp
-	// Returns deposits as DepositInput (ready for database insertion), sorted by timestamp (oldest first)
+	// Returns transfers as TransferInput (ready for database insertion), sorted by timestamp (oldest first)
 	// ctx can be cancelled or have a timeout set by the caller (sync service)
 	FetchDeposits(
 		ctx context.Context,
 		account *models.ExchangeAccount,
 		since time.Time,
-	) ([]*models.DepositInput, error)
+	) ([]*models.TransferInput, error)
+
+	// FetchPositions fetches current open positions (perp + spot) for a given account
+	FetchPositions(
+		ctx context.Context,
+		account *models.ExchangeAccount,
+	) ([]*models.PositionSnapshot, error)
+
+	// FetchBalances fetches current spot balances for a given account
+	FetchBalances(
+		ctx context.Context,
+		account *models.ExchangeAccount,
+	) ([]*models.BalanceSnapshot, error)
+
+	// FetchOpenOrders fetches currently active orders for a given account
+	FetchOpenOrders(
+		ctx context.Context,
+		account *models.ExchangeAccount,
+	) ([]*models.OpenOrder, error)
+
+	// FetchAccountValue fetches total equity/account value for a given account
+	FetchAccountValue(
+		ctx context.Context,
+		account *models.ExchangeAccount,
+	) (*models.AccountValueSnapshot, error)
+
+	// FetchSettlements fetches PnL settlement events for a given account since a specific timestamp.
+	// On exchanges with deferred settlement (e.g., Drift), this returns actual settlement records
+	// from keeper bots that move PnL + accrued funding into the spot balance.
+	// On exchanges with immediate settlement (e.g., Hyperliquid), this returns an empty slice
+	// because PnL is settled inline with trades.
+	FetchSettlements(
+		ctx context.Context,
+		account *models.ExchangeAccount,
+		since time.Time,
+	) ([]*models.Settlement, error)
 }

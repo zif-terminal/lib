@@ -8,35 +8,41 @@ import (
 	"github.com/google/uuid"
 )
 
-// Position represents a closed position record in the database
-// Matches the 'positions' table schema
+// Position represents a position record (open or closed) in the database.
+// Matches the 'positions' table schema.
 type Position struct {
-	ID                uuid.UUID `json:"id"`
-	ExchangeAccountID uuid.UUID `json:"exchange_account_id"`
-	BaseAsset         string    `json:"base_asset"`
-	QuoteAsset        string    `json:"quote_asset"`
-	Side              string    `json:"side"` // "long" or "short"
-	StartTime         time.Time `json:"start_time"`
-	EndTime           time.Time `json:"end_time"`
-	EntryAvgPrice     string    `json:"entry_avg_price"` // NUMERIC as string
-	ExitAvgPrice      string    `json:"exit_avg_price"`  // NUMERIC as string
-	TotalQuantity     string    `json:"total_quantity"`  // NUMERIC as string
-	TotalFees         string    `json:"total_fees"`      // NUMERIC as string
-	RealizedPnL       string    `json:"realized_pnl"`    // NUMERIC as string
-	MarketType        string    `json:"market_type"`     // "perp", "spot", etc.
+	ID                uuid.UUID        `json:"id"`
+	ExchangeAccountID uuid.UUID        `json:"exchange_account_id"`
+	Market            string           `json:"market"`       // "SOL-PERP", "SOL", "USDC", "wBTC"
+	MarketType        string           `json:"market_type"`  // "perp" or "spot"
+	Side              string           `json:"side"`         // "long" or "short"
+	Status            string           `json:"status"`       // "open" or "closed"
+	Quantity          string           `json:"quantity"`     // NUMERIC as string
+	EntryPrice        string           `json:"entry_price"`  // weighted avg entry (USD)
+	ExitPrice         *string          `json:"exit_price"`   // weighted avg exit; nil if open
+	RealizedPnL       *string          `json:"realized_pnl"` // nil if open
+	TotalFees         string           `json:"total_fees"`
+	CumulativeFunding string           `json:"cumulative_funding"`
+	StartTime         time.Time        `json:"start_time"`
+	EndTime           *time.Time       `json:"end_time"`  // nil if open
+	OrderID           string           `json:"order_id"`  // Order ID of the closing trade
+	CreatedAt         time.Time        `json:"created_at"`
+	UpdatedAt         time.Time        `json:"updated_at"`
+	ExchangeAccount   *ExchangeAccount `json:"exchange_account,omitempty"`
 }
 
-// UnmarshalJSON custom unmarshaler to handle BIGINT timestamps and NUMERIC fields
+// UnmarshalJSON handles Hasura BIGINT timestamps and NUMERIC fields.
 func (p *Position) UnmarshalJSON(data []byte) error {
 	type Alias Position
 	aux := &struct {
-		StartTime     interface{} `json:"start_time"`
-		EndTime       interface{} `json:"end_time"`
-		EntryAvgPrice interface{} `json:"entry_avg_price"`
-		ExitAvgPrice  interface{} `json:"exit_avg_price"`
-		TotalQuantity interface{} `json:"total_quantity"`
-		TotalFees     interface{} `json:"total_fees"`
-		RealizedPnL   interface{} `json:"realized_pnl"`
+		StartTime         interface{} `json:"start_time"`
+		EndTime           interface{} `json:"end_time"`
+		Quantity          interface{} `json:"quantity"`
+		EntryPrice        interface{} `json:"entry_price"`
+		ExitPrice         interface{} `json:"exit_price"`
+		RealizedPnL       interface{} `json:"realized_pnl"`
+		TotalFees         interface{} `json:"total_fees"`
+		CumulativeFunding interface{} `json:"cumulative_funding"`
 		*Alias
 	}{
 		Alias: (*Alias)(p),
@@ -46,7 +52,6 @@ func (p *Position) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	// Parse start_time (BIGINT Unix milliseconds)
 	if aux.StartTime != nil {
 		ts, err := parseTimestamp(aux.StartTime)
 		if err != nil {
@@ -55,129 +60,84 @@ func (p *Position) UnmarshalJSON(data []byte) error {
 		p.StartTime = ts
 	}
 
-	// Parse end_time (BIGINT Unix milliseconds)
 	if aux.EndTime != nil {
 		ts, err := parseTimestamp(aux.EndTime)
 		if err != nil {
 			return fmt.Errorf("failed to parse end_time: %w", err)
 		}
-		p.EndTime = ts
+		p.EndTime = &ts
 	}
 
-	// Convert NUMERIC fields to string
-	if aux.EntryAvgPrice != nil {
-		p.EntryAvgPrice = convertToString(aux.EntryAvgPrice)
+	if aux.Quantity != nil {
+		p.Quantity = convertToString(aux.Quantity)
 	}
-	if aux.ExitAvgPrice != nil {
-		p.ExitAvgPrice = convertToString(aux.ExitAvgPrice)
+	if aux.EntryPrice != nil {
+		p.EntryPrice = convertToString(aux.EntryPrice)
 	}
-	if aux.TotalQuantity != nil {
-		p.TotalQuantity = convertToString(aux.TotalQuantity)
+	if aux.ExitPrice != nil {
+		s := convertToString(aux.ExitPrice)
+		p.ExitPrice = &s
+	}
+	if aux.RealizedPnL != nil {
+		s := convertToString(aux.RealizedPnL)
+		p.RealizedPnL = &s
 	}
 	if aux.TotalFees != nil {
 		p.TotalFees = convertToString(aux.TotalFees)
 	}
-	if aux.RealizedPnL != nil {
-		p.RealizedPnL = convertToString(aux.RealizedPnL)
+	if aux.CumulativeFunding != nil {
+		p.CumulativeFunding = convertToString(aux.CumulativeFunding)
 	}
 
 	return nil
 }
 
-// parseTimestamp parses a timestamp from various formats (BIGINT Unix milliseconds)
-func parseTimestamp(v interface{}) (time.Time, error) {
-	var unixMillis int64
-	switch val := v.(type) {
-	case float64:
-		unixMillis = int64(val)
-	case int64:
-		unixMillis = val
-	case int:
-		unixMillis = int64(val)
-	case string:
-		var err error
-		unixMillis, err = parseInt64(val)
-		if err != nil {
-			return time.Time{}, fmt.Errorf("failed to parse timestamp string: %w", err)
-		}
-	default:
-		return time.Time{}, fmt.Errorf("unexpected timestamp type: %T", v)
-	}
-	return time.Unix(0, unixMillis*int64(time.Millisecond)).UTC(), nil
-}
-
-// PositionInput represents input for creating a position
+// PositionInput represents input for batch-inserting positions.
 type PositionInput struct {
-	ExchangeAccountID uuid.UUID `json:"exchange_account_id"`
-	BaseAsset         string    `json:"base_asset"`
-	QuoteAsset        string    `json:"quote_asset"`
-	Side              string    `json:"side"`
-	StartTime         time.Time `json:"start_time"`
-	EndTime           time.Time `json:"end_time"`
-	EntryAvgPrice     string    `json:"entry_avg_price"`
-	ExitAvgPrice      string    `json:"exit_avg_price"`
-	TotalQuantity     string    `json:"total_quantity"`
-	TotalFees         string    `json:"total_fees"`
-	RealizedPnL       string    `json:"realized_pnl"`
-	MarketType        string    `json:"market_type"`
+	ExchangeAccountID uuid.UUID
+	Market            string
+	MarketType        string
+	Side              string
+	Status            string // "open" or "closed"
+	Quantity          string
+	EntryPrice        string
+	ExitPrice         string // "" if open
+	RealizedPnL       string // "" if open
+	TotalFees         string
+	CumulativeFunding string
+	QuoteAsset        string // What the entry/exit prices are denominated in
+	StartTime         int64  // Unix ms
+	EndTime           int64  // 0 if open
+	OrderID           string // Order ID that closed this position (closed positions only)
 }
 
-// PositionTrade represents a trade allocation for a position
-// Matches the 'position_trades' junction table
-type PositionTrade struct {
-	PositionID           uuid.UUID `json:"position_id"`
-	TradeID              uuid.UUID `json:"trade_id"`
-	AllocationPercentage string    `json:"allocation_percentage"` // NUMERIC as string
-	AllocatedQuantity    string    `json:"allocated_quantity"`    // NUMERIC as string
-	AllocatedFees        string    `json:"allocated_fees"`        // NUMERIC as string
+// PositionEvent represents a link between a position and a source event.
+type PositionEvent struct {
+	ID         uuid.UUID `json:"id"`
+	PositionID uuid.UUID `json:"position_id"`
+	EventType  string    `json:"event_type"` // "trade", "deposit", "funding", "settlement"
+	EventID    uuid.UUID `json:"event_id"`
+	Direction  string    `json:"direction"` // "entry" or "exit"
+	Quantity   string    `json:"quantity"`
+	Price      *string   `json:"price"`
+	Timestamp  time.Time `json:"timestamp"`
 }
 
-// UnmarshalJSON custom unmarshaler to handle NUMERIC fields
-func (pt *PositionTrade) UnmarshalJSON(data []byte) error {
-	type Alias PositionTrade
-	aux := &struct {
-		AllocationPercentage interface{} `json:"allocation_percentage"`
-		AllocatedQuantity    interface{} `json:"allocated_quantity"`
-		AllocatedFees        interface{} `json:"allocated_fees"`
-		*Alias
-	}{
-		Alias: (*Alias)(pt),
-	}
-
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-
-	if aux.AllocationPercentage != nil {
-		pt.AllocationPercentage = convertToString(aux.AllocationPercentage)
-	}
-	if aux.AllocatedQuantity != nil {
-		pt.AllocatedQuantity = convertToString(aux.AllocatedQuantity)
-	}
-	if aux.AllocatedFees != nil {
-		pt.AllocatedFees = convertToString(aux.AllocatedFees)
-	}
-
-	return nil
+// PositionEventInput represents input for batch-inserting position events.
+type PositionEventInput struct {
+	PositionID uuid.UUID
+	EventType  string
+	EventID    uuid.UUID
+	Direction  string
+	Quantity   string
+	Price      string // "" if not applicable
+	Timestamp  int64  // Unix ms
 }
 
-// PositionTradeInput represents input for creating a position trade link
-type PositionTradeInput struct {
-	PositionID           uuid.UUID `json:"position_id"`
-	TradeID              uuid.UUID `json:"trade_id"`
-	AllocationPercentage string    `json:"allocation_percentage"`
-	AllocatedQuantity    string    `json:"allocated_quantity"`
-	AllocatedFees        string    `json:"allocated_fees"`
-}
-
-// PositionFilter represents filtering options for listing positions
+// PositionFilter represents filtering options for listing positions.
 type PositionFilter struct {
 	ExchangeAccountIDs []uuid.UUID
-	BaseAsset          *string
-	QuoteAsset         *string
-	Side               *string // "long" or "short"
-	StartTimeGte       *time.Time
-	StartTimeLte       *time.Time
-	EndTimeGte         *time.Time
-	EndTimeLte         *time.Time
+	Status             *string // "open" or "closed"
+	MarketType         *string // "perp" or "spot"
+	Market             *string
 }

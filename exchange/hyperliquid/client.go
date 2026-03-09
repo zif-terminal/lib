@@ -488,6 +488,31 @@ func parseRetryAfter(retryAfter string) time.Duration {
 
 // FetchDeposits fetches deposits for a given account since a specific timestamp
 // TODO: Implement deposit fetching for Hyperliquid
-func (c *Client) FetchDeposits(ctx context.Context, account *models.ExchangeAccount, since time.Time) ([]*models.DepositInput, error) {
-	return []*models.DepositInput{}, nil
+func (c *Client) FetchDeposits(ctx context.Context, account *models.ExchangeAccount, since time.Time) ([]*models.TransferInput, error) {
+	return []*models.TransferInput{}, nil
+}
+
+// FetchSettlements returns an empty slice — Hyperliquid settles PnL immediately at trade time.
+func (c *Client) FetchSettlements(ctx context.Context, account *models.ExchangeAccount, since time.Time) ([]*models.Settlement, error) {
+	return []*models.Settlement{}, nil
+}
+
+// FetchPositions is not yet implemented for Hyperliquid.
+func (c *Client) FetchPositions(ctx context.Context, account *models.ExchangeAccount) ([]*models.PositionSnapshot, error) {
+	return []*models.PositionSnapshot{}, nil
+}
+
+// FetchBalances is not yet implemented for Hyperliquid.
+func (c *Client) FetchBalances(ctx context.Context, account *models.ExchangeAccount) ([]*models.BalanceSnapshot, error) {
+	return []*models.BalanceSnapshot{}, nil
+}
+
+// FetchOpenOrders is not yet implemented for Hyperliquid.
+func (c *Client) FetchOpenOrders(ctx context.Context, account *models.ExchangeAccount) ([]*models.OpenOrder, error) {
+	return []*models.OpenOrder{}, nil
+}
+
+// FetchAccountValue is not yet implemented for Hyperliquid.
+func (c *Client) FetchAccountValue(ctx context.Context, account *models.ExchangeAccount) (*models.AccountValueSnapshot, error) {
+	return &models.AccountValueSnapshot{}, nil
 }

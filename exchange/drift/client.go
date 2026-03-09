@@ -204,7 +204,7 @@ func (c *Client) FetchDeposits(
 	ctx context.Context,
 	account *models.ExchangeAccount,
 	since time.Time,
-) ([]*models.DepositInput, error) {
+) ([]*models.TransferInput, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -226,7 +226,7 @@ func (c *Client) FetchDeposits(
 		"deposits",
 		since,
 		c.createDepositPageFetcher(accountUUID),
-		func(d *models.DepositInput) time.Time { return d.Timestamp },
+		func(d *models.TransferInput) time.Time { return d.Timestamp },
 	)
 	if err != nil {
 		return nil, err
@@ -350,38 +350,153 @@ func (c *Client) createFundingPageFetcher(accountUUID uuid.UUID) pageFetcher[*mo
 	}
 }
 
-func (c *Client) createDepositPageFetcher(accountUUID uuid.UUID) pageFetcher[*models.DepositInput] {
-	return func(ctx context.Context, url string) (pageResult[*models.DepositInput], error) {
+func (c *Client) createDepositPageFetcher(accountUUID uuid.UUID) pageFetcher[*models.TransferInput] {
+	return func(ctx context.Context, url string) (pageResult[*models.TransferInput], error) {
 		resp, err := c.doRequestWithRetry(ctx, url)
 		if err != nil {
-			return pageResult[*models.DepositInput]{}, fmt.Errorf("failed to fetch deposits: %w", err)
+			return pageResult[*models.TransferInput]{}, fmt.Errorf("failed to fetch deposits: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return pageResult[*models.DepositInput]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+			return pageResult[*models.TransferInput]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
 		}
 
 		var response driftDepositsResponse
 		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			return pageResult[*models.DepositInput]{}, fmt.Errorf("failed to decode response: %w", err)
+			return pageResult[*models.TransferInput]{}, fmt.Errorf("failed to decode response: %w", err)
 		}
 
 		if !response.Success {
-			return pageResult[*models.DepositInput]{}, fmt.Errorf("API returned success=false")
+			return pageResult[*models.TransferInput]{}, fmt.Errorf("API returned success=false")
 		}
 
-		deposits := make([]*models.DepositInput, 0, len(response.Records))
+		deposits := make([]*models.TransferInput, 0, len(response.Records))
 		for _, record := range response.Records {
 			deposit, err := c.transformDeposit(ctx, record, accountUUID)
 			if err != nil {
-				return pageResult[*models.DepositInput]{}, fmt.Errorf("failed to transform deposit: %w", err)
+				return pageResult[*models.TransferInput]{}, fmt.Errorf("failed to transform deposit: %w", err)
 			}
 			deposits = append(deposits, deposit)
 		}
 
-		return pageResult[*models.DepositInput]{
+		return pageResult[*models.TransferInput]{
 			items:    deposits,
+			nextPage: extractNextPage(response.Meta),
+		}, nil
+	}
+}
+
+// SettlePnlRecord represents a PnL settlement event from Drift (internal type)
+type SettlePnlRecord struct {
+	Timestamp   time.Time
+	Pnl         string // Settled PnL amount (signed)
+	MarketIndex int
+}
+
+// FetchSettlements implements iface.ExchangeClient.
+// On Drift, PnL is settled by keeper bots separately from trade execution.
+// This returns the actual settlePnl records from the Drift API.
+func (c *Client) FetchSettlements(
+	ctx context.Context,
+	account *models.ExchangeAccount,
+	since time.Time,
+) ([]*models.Settlement, error) {
+	accountUUID, err := uuid.Parse(account.ID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid account ID: %w", err)
+	}
+
+	records, err := c.FetchSettlePnl(ctx, account, since)
+	if err != nil {
+		return nil, err
+	}
+
+	settlements := make([]*models.Settlement, 0, len(records))
+	for _, r := range records {
+		// Resolve market index to symbol
+		marketInfo, err := c.getMarketInfo(ctx, r.MarketIndex, "perp")
+		market := fmt.Sprintf("%d", r.MarketIndex)
+		if err == nil {
+			market = marketInfo.Symbol
+		}
+
+		settlements = append(settlements, &models.Settlement{
+			ExchangeAccountID: accountUUID,
+			Asset:             "USDC",
+			Amount:            r.Pnl,
+			Market:            market,
+			Timestamp:         r.Timestamp,
+			SettlementID:      fmt.Sprintf("settle_%d_%s", r.MarketIndex, r.Timestamp.Format("20060102150405")),
+		})
+	}
+
+	return settlements, nil
+}
+
+// FetchSettlePnl fetches raw PnL settlement records from the Drift API (Drift-specific)
+func (c *Client) FetchSettlePnl(
+	ctx context.Context,
+	account *models.ExchangeAccount,
+	since time.Time,
+) ([]SettlePnlRecord, error) {
+	accountID := account.AccountIdentifier
+	if accountID == "" {
+		return nil, fmt.Errorf("account identifier is required")
+	}
+
+	records, err := fetchWithHistory(
+		ctx,
+		c.baseURL,
+		accountID,
+		"settlePnl",
+		since,
+		c.createSettlePnlPageFetcher(),
+		func(r SettlePnlRecord) time.Time { return r.Timestamp },
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].Timestamp.Before(records[j].Timestamp)
+	})
+
+	return records, nil
+}
+
+func (c *Client) createSettlePnlPageFetcher() pageFetcher[SettlePnlRecord] {
+	return func(ctx context.Context, url string) (pageResult[SettlePnlRecord], error) {
+		resp, err := c.doRequestWithRetry(ctx, url)
+		if err != nil {
+			return pageResult[SettlePnlRecord]{}, fmt.Errorf("failed to fetch settlePnl: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return pageResult[SettlePnlRecord]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+		}
+
+		var response driftSettlePnlResponse
+		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			return pageResult[SettlePnlRecord]{}, fmt.Errorf("failed to decode response: %w", err)
+		}
+
+		if !response.Success {
+			return pageResult[SettlePnlRecord]{}, fmt.Errorf("API returned success=false")
+		}
+
+		records := make([]SettlePnlRecord, 0, len(response.Records))
+		for _, r := range response.Records {
+			records = append(records, SettlePnlRecord{
+				Timestamp:   time.Unix(r.Ts, 0).UTC(),
+				Pnl:         cleanDecimalString(r.Pnl),
+				MarketIndex: r.MarketIndex,
+			})
+		}
+
+		return pageResult[SettlePnlRecord]{
+			items:    records,
 			nextPage: extractNextPage(response.Meta),
 		}, nil
 	}
@@ -520,33 +635,33 @@ func (c *Client) transformFundingPayment(ctx context.Context, record driftFundin
 	}, nil
 }
 
-func (c *Client) transformDeposit(ctx context.Context, record driftDepositRecord, accountUUID uuid.UUID) (*models.DepositInput, error) {
+func (c *Client) transformDeposit(ctx context.Context, record driftDepositRecord, accountUUID uuid.UUID) (*models.TransferInput, error) {
 	marketInfo, err := c.getMarketInfo(ctx, record.MarketIndex, "spot")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get market info for index %d: %w", record.MarketIndex, err)
 	}
 
 	amount := cleanDecimalString(record.Amount)
-	userCostBasis := cleanDecimalString(record.OraclePrice)
-	if userCostBasis == "" {
-		userCostBasis = "0"
+	costBasis := cleanDecimalString(record.OraclePrice)
+	if costBasis == "" {
+		costBasis = "0"
 	}
 
 	timestamp := time.Unix(record.Ts, 0).UTC()
 
 	direction := strings.ToLower(record.Direction)
-	if direction != "deposit" && direction != "withdraw" {
-		direction = "deposit"
+	transferType := models.TypeDeposit
+	if direction == "withdraw" {
+		transferType = models.TypeWithdraw
 	}
 
-	return &models.DepositInput{
+	return &models.TransferInput{
 		ExchangeAccountID: accountUUID,
 		Asset:             marketInfo.BaseAsset,
-		Direction:         direction,
+		Type:              transferType,
 		Amount:            amount,
-		UserCostBasis:     userCostBasis,
+		CostBasis:         costBasis,
 		Timestamp:         timestamp,
-		DepositID:         record.DepositRecordID,
 	}, nil
 }
 

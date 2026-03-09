@@ -141,3 +141,27 @@ type driftSwapsResponse struct {
 	Records []driftSwapRecord `json:"records"`
 	Meta    driftMeta         `json:"meta"`
 }
+
+// driftSettlePnlRecord represents a single PnL settlement from Drift API
+// GET /user/{accountId}/settlePnl
+type driftSettlePnlRecord struct {
+	Ts                    int64  `json:"ts"`                    // Unix timestamp (seconds)
+	TxSig                 string `json:"txSig"`                 // Transaction signature
+	TxSigIndex            int    `json:"txSigIndex"`            // Index within tx
+	Slot                  int64  `json:"slot"`                  // Solana slot
+	Pnl                   string `json:"pnl"`                   // Settled PnL amount (positive = profit, negative = loss)
+	User                  string `json:"user"`                  // Account public key
+	BaseAssetAmount       string `json:"baseAssetAmount"`       // Position size at settlement time
+	QuoteAssetAmountAfter string `json:"quoteAssetAmountAfter"` // Quote amount after settlement
+	QuoteEntryAmount      string `json:"quoteEntryAmount"`      // Entry quote amount
+	SettlePrice           string `json:"settlePrice"`           // Settlement price
+	MarketIndex           int    `json:"marketIndex"`           // Perp market index
+	Explanation           string `json:"explanation"`           // Settlement explanation
+}
+
+// driftSettlePnlResponse wraps the settlePnl API response
+type driftSettlePnlResponse struct {
+	Success bool                   `json:"success"`
+	Records []driftSettlePnlRecord `json:"records"`
+	Meta    driftMeta              `json:"meta"`
+}

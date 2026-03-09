@@ -1008,32 +1008,29 @@ func TestDriftClient_FetchDeposits_Success(t *testing.T) {
 
 	// Use a recent since time (within 31 days) to avoid historical month fetching
 	since := time.Now().AddDate(0, 0, -30)
-	deposits, err := client.FetchDeposits(context.Background(), account, since)
+	transfers, err := client.FetchDeposits(context.Background(), account, since)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if len(deposits) != 2 {
-		t.Errorf("Expected 2 deposits, got %d", len(deposits))
+	if len(transfers) != 2 {
+		t.Errorf("Expected 2 transfers, got %d", len(transfers))
 	}
 
-	// Verify first deposit
-	if deposits[0].Direction != "deposit" {
-		t.Errorf("Expected direction 'deposit', got '%s'", deposits[0].Direction)
+	// Verify first transfer (deposit)
+	if transfers[0].Type != models.TypeDeposit {
+		t.Errorf("Expected type '%s', got '%s'", models.TypeDeposit, transfers[0].Type)
 	}
-	if deposits[0].Amount != "100" {
-		t.Errorf("Expected amount '100', got '%s'", deposits[0].Amount)
-	}
-	if deposits[0].DepositID != "deposit-1" {
-		t.Errorf("Expected deposit ID 'deposit-1', got '%s'", deposits[0].DepositID)
+	if transfers[0].Amount != "100" {
+		t.Errorf("Expected amount '100', got '%s'", transfers[0].Amount)
 	}
 
-	// Verify second deposit (withdrawal)
-	if deposits[1].Direction != "withdraw" {
-		t.Errorf("Expected direction 'withdraw', got '%s'", deposits[1].Direction)
+	// Verify second transfer (withdrawal)
+	if transfers[1].Type != models.TypeWithdraw {
+		t.Errorf("Expected type '%s', got '%s'", models.TypeWithdraw, transfers[1].Type)
 	}
-	if deposits[1].Amount != "50" {
-		t.Errorf("Expected amount '50', got '%s'", deposits[1].Amount)
+	if transfers[1].Amount != "50" {
+		t.Errorf("Expected amount '50', got '%s'", transfers[1].Amount)
 	}
 }
 
@@ -1138,17 +1135,17 @@ func TestDriftClient_FetchDeposits_FiltersBySince(t *testing.T) {
 
 	// Filter to only get deposits after sinceTimestamp
 	since := time.Unix(sinceTimestamp, 0)
-	deposits, err := client.FetchDeposits(context.Background(), account, since)
+	transfers, err := client.FetchDeposits(context.Background(), account, since)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	// Should only get the newer deposit
-	if len(deposits) != 1 {
-		t.Errorf("Expected 1 deposit after filtering, got %d", len(deposits))
+	if len(transfers) != 1 {
+		t.Errorf("Expected 1 transfer after filtering, got %d", len(transfers))
 	}
-	if len(deposits) > 0 && deposits[0].DepositID != "new-deposit" {
-		t.Errorf("Expected 'new-deposit', got '%s'", deposits[0].DepositID)
+	if len(transfers) > 0 && transfers[0].Amount != "200" {
+		t.Errorf("Expected amount '200', got '%s'", transfers[0].Amount)
 	}
 }
 
@@ -1264,28 +1261,43 @@ func TestDriftClient_HistoricalFetchFiltersOverlap(t *testing.T) {
 		t.Error("Expected recent endpoint to be called")
 	}
 
-	// Should have exactly 2 deposits: historical (before overlap) and recent
+	// Should have exactly 2 transfers: historical (before overlap) and recent
 	// The overlapping deposit should be filtered out by the historical fetch
 	if len(deposits) != 2 {
-		t.Errorf("Expected 2 deposits (no overlap), got %d", len(deposits))
+		t.Errorf("Expected 2 transfers (no overlap), got %d", len(deposits))
 		for _, d := range deposits {
-			t.Logf("Deposit: %s at %v", d.DepositID, d.Timestamp)
+			t.Logf("Transfer: %s at %v", d.Asset, d.Timestamp)
 		}
 	}
 
-	// Verify we have the correct deposits
-	depositIDs := make(map[string]bool)
+	// Verify we have the correct transfers by checking timestamps
+	// Historical should be at historicalTs, recent at recentTs, overlap filtered out
+	historicalTime := time.Unix(historicalTs, 0).UTC()
+	recentTime := time.Unix(recentTs, 0).UTC()
+
+	hasHistorical := false
+	hasRecent := false
+	hasOverlap := false
+	overlappingTime := time.Unix(overlappingTs, 0).UTC()
 	for _, d := range deposits {
-		depositIDs[d.DepositID] = true
+		if d.Timestamp.Equal(historicalTime) {
+			hasHistorical = true
+		}
+		if d.Timestamp.Equal(recentTime) {
+			hasRecent = true
+		}
+		if d.Timestamp.Equal(overlappingTime) {
+			hasOverlap = true
+		}
 	}
 
-	if !depositIDs["hist-deposit"] {
-		t.Error("Expected hist-deposit to be included")
+	if !hasHistorical {
+		t.Error("Expected historical transfer to be included")
 	}
-	if !depositIDs["recent-deposit"] {
-		t.Error("Expected recent-deposit to be included")
+	if !hasRecent {
+		t.Error("Expected recent transfer to be included")
 	}
-	if depositIDs["overlap-deposit"] {
-		t.Error("overlap-deposit should have been filtered out")
+	if hasOverlap {
+		t.Error("Overlapping transfer should have been filtered out")
 	}
 }
