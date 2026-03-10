@@ -106,6 +106,23 @@ func parseInt64(s string) (int64, error) {
 	return result, err
 }
 
+// parseIntField parses an int64 from various JSON types (Hasura may return BIGINT as number or string).
+func parseIntField(v interface{}) int64 {
+	switch val := v.(type) {
+	case float64:
+		return int64(val)
+	case int64:
+		return val
+	case int:
+		return int64(val)
+	case string:
+		n, _ := parseInt64(val)
+		return n
+	default:
+		return 0
+	}
+}
+
 // parseTimestamp parses a timestamp from various formats (BIGINT Unix milliseconds)
 func parseTimestamp(v interface{}) (time.Time, error) {
 	var unixMillis int64
