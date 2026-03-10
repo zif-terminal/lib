@@ -44,12 +44,7 @@ func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.U
 	})
 
 	var resp struct {
-		Snapshots []struct {
-			Asset       string `json:"asset"`
-			Balance     string `json:"balance"`
-			OraclePrice string `json:"oracle_price"`
-			UsdValue    string `json:"usd_value"`
-		} `json:"spot_balance_snapshots"`
+		Snapshots []*SpotBalanceSnapshot `json:"spot_balance_snapshots"`
 	}
 
 	if err := c.execute(ctx, req, &resp); err != nil {
@@ -62,7 +57,7 @@ func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.U
 			Asset:       s.Asset,
 			Balance:     parseFloat64(s.Balance),
 			OraclePrice: parseFloat64(s.OraclePrice),
-			UsdValue:    parseFloat64(s.UsdValue),
+			UsdValue:    parseFloat64(s.USDValue),
 		})
 	}
 
