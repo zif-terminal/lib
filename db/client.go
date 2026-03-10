@@ -107,6 +107,7 @@ type DBClient interface {
 	// Position methods
 	DeletePositionsForAccount(ctx context.Context, accountID uuid.UUID) (int, error)
 	DeleteOpenPositionsForAccount(ctx context.Context, accountID uuid.UUID) (int, error)
+	DeletePositionsByIDs(ctx context.Context, ids []uuid.UUID) (int, error)
 	CountClosedPositions(ctx context.Context, accountID uuid.UUID) (int, error)
 	AddPositions(ctx context.Context, inputs []*PositionInput) ([]*Position, error)
 	AddPositionEvents(ctx context.Context, inputs []*PositionEventInput) (int, error)
