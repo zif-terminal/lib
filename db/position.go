@@ -74,6 +74,43 @@ func (c *Client) DeleteOpenPositionsForAccount(ctx context.Context, accountID uu
 	return resp.DeletePositions.AffectedRows, nil
 }
 
+// DeletePositionsByIDs deletes positions by their specific IDs (and cascades to position_events).
+// Used by the write-first-then-delete pattern to remove old positions after new ones are inserted.
+func (c *Client) DeletePositionsByIDs(ctx context.Context, ids []uuid.UUID) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	query := `
+		mutation DeletePositionsByIDs($ids: [uuid!]!) {
+			delete_positions(where: { id: { _in: $ids } }) {
+				affected_rows
+			}
+		}
+	`
+
+	idStrs := make([]string, len(ids))
+	for i, id := range ids {
+		idStrs[i] = id.String()
+	}
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"ids": idStrs,
+	})
+
+	var resp struct {
+		DeletePositions struct {
+			AffectedRows int `json:"affected_rows"`
+		} `json:"delete_positions"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return 0, fmt.Errorf("failed to delete positions by IDs: %w", err)
+	}
+
+	return resp.DeletePositions.AffectedRows, nil
+}
+
 // CountClosedPositions returns the number of closed positions for an account.
 func (c *Client) CountClosedPositions(ctx context.Context, accountID uuid.UUID) (int, error) {
 	query := `
