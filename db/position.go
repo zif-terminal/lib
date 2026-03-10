@@ -43,6 +43,69 @@ func (c *Client) DeletePositionsForAccount(ctx context.Context, accountID uuid.U
 	return resp.DeletePositions.AffectedRows, nil
 }
 
+// DeleteOpenPositionsForAccount deletes only open positions (and cascades to their events)
+// for a given account. Closed positions and their events are preserved.
+func (c *Client) DeleteOpenPositionsForAccount(ctx context.Context, accountID uuid.UUID) (int, error) {
+	query := `
+		mutation DeleteOpenPositionsForAccount($account_id: uuid!) {
+			delete_positions(where: {
+				exchange_account_id: { _eq: $account_id }
+				status: { _eq: "open" }
+			}) {
+				affected_rows
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"account_id": accountID.String(),
+	})
+
+	var resp struct {
+		DeletePositions struct {
+			AffectedRows int `json:"affected_rows"`
+		} `json:"delete_positions"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return 0, fmt.Errorf("failed to delete open positions: %w", err)
+	}
+
+	return resp.DeletePositions.AffectedRows, nil
+}
+
+// CountClosedPositions returns the number of closed positions for an account.
+func (c *Client) CountClosedPositions(ctx context.Context, accountID uuid.UUID) (int, error) {
+	query := `
+		query CountClosedPositions($account_id: uuid!) {
+			positions_aggregate(where: {
+				exchange_account_id: { _eq: $account_id }
+				status: { _eq: "closed" }
+			}) {
+				aggregate { count }
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"account_id": accountID.String(),
+	})
+
+	var resp struct {
+		PositionsAggregate struct {
+			Aggregate struct {
+				Count int `json:"count"`
+			} `json:"aggregate"`
+		} `json:"positions_aggregate"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return 0, fmt.Errorf("failed to count closed positions: %w", err)
+	}
+
+	return resp.PositionsAggregate.Aggregate.Count, nil
+}
+
 // AddPositions batch-inserts positions and returns the created records (with IDs).
 func (c *Client) AddPositions(ctx context.Context, inputs []*PositionInput) ([]*Position, error) {
 	if len(inputs) == 0 {
