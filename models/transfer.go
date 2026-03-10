@@ -51,6 +51,7 @@ func (t *Transfer) UnmarshalJSON(data []byte) error {
 	aux := &struct {
 		Timestamp interface{} `json:"timestamp"`
 		Amount    interface{} `json:"amount"`
+		CostBasis interface{} `json:"cost_basis"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -83,6 +84,10 @@ func (t *Transfer) UnmarshalJSON(data []byte) error {
 
 	if aux.Amount != nil {
 		t.Amount = convertToString(aux.Amount)
+	}
+
+	if aux.CostBasis != nil {
+		t.CostBasis = convertToString(aux.CostBasis)
 	}
 
 	return nil

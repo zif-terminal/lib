@@ -79,6 +79,28 @@ func TestTransfer_UnmarshalJSON_FloatAmount(t *testing.T) {
 	}
 }
 
+func TestTransfer_UnmarshalJSON_FloatCostBasis(t *testing.T) {
+	jsonData := `{
+		"id": "00000000-0000-0000-0000-000000000001",
+		"exchange_account_id": "00000000-0000-0000-0000-000000000002",
+		"type": "deposit",
+		"asset": "USDC",
+		"amount": "1000.50",
+		"cost_basis": 1.0012,
+		"timestamp": 1700000000000
+	}`
+
+	var tr Transfer
+	err := json.Unmarshal([]byte(jsonData), &tr)
+	if err != nil {
+		t.Fatalf("UnmarshalJSON failed: %v", err)
+	}
+
+	if tr.CostBasis == "" {
+		t.Error("Expected non-empty cost_basis")
+	}
+}
+
 func TestTransferTypeConstants(t *testing.T) {
 	if TypeDeposit != "deposit" {
 		t.Errorf("Expected deposit, got %s", TypeDeposit)
