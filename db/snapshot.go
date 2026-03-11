@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 
 	"github.com/google/uuid"
@@ -65,9 +66,16 @@ func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.U
 }
 
 // parseFloat64 parses a numeric string to float64, returning 0 on error.
+// Rejects NaN and Inf values which would corrupt downstream calculations.
 func parseFloat64(s string) float64 {
+	if s == "" {
+		return 0
+	}
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
+		return 0
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return 0
 	}
 	return f
@@ -313,9 +321,16 @@ func (c *Client) UpdateAccountTypeMetadata(ctx context.Context, accountID uuid.U
 		}
 	`
 
+	// Pass metadata as a raw JSON value (not string) to avoid double-encoding.
+	// The GraphQL library JSON-encodes variables, so passing string(metadata)
+	// would produce a double-encoded JSON string in the JSONB column.
+	var metadataValue interface{}
+	if err := json.Unmarshal(metadata, &metadataValue); err != nil {
+		return fmt.Errorf("failed to parse metadata JSON: %w", err)
+	}
 	req := c.graphqlRequestWithVars(query, map[string]interface{}{
 		"id":       accountID.String(),
-		"metadata": string(metadata),
+		"metadata": metadataValue,
 	})
 
 	var resp struct {
