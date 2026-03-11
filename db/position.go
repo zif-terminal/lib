@@ -168,6 +168,8 @@ func (c *Client) AddPositions(ctx context.Context, inputs []*PositionInput) ([]*
 					start_time
 					end_time
 					order_id
+					realized_pnl
+					pnl_denomination
 				}
 			}
 		}
@@ -196,6 +198,12 @@ func (c *Client) AddPositions(ctx context.Context, inputs []*PositionInput) ([]*
 		}
 		if inp.OrderID != "" {
 			obj["order_id"] = inp.OrderID
+		}
+		if inp.RealizedPnl != nil {
+			obj["realized_pnl"] = *inp.RealizedPnl
+		}
+		if inp.PnlDenomination != nil {
+			obj["pnl_denomination"] = *inp.PnlDenomination
 		}
 		objects[i] = obj
 	}
