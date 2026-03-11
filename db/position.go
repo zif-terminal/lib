@@ -297,6 +297,7 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 				quantity
 				entry_price
 				exit_price
+				quote_asset
 				total_fees
 				cumulative_funding
 				start_time
@@ -433,6 +434,7 @@ func (c *Client) GetPositionsWithNullPnL(ctx context.Context, since time.Time, l
 				quantity
 				entry_price
 				exit_price
+				quote_asset
 				total_fees
 				cumulative_funding
 				start_time
