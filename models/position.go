@@ -20,6 +20,7 @@ type Position struct {
 	Quantity          string           `json:"quantity"`     // NUMERIC as string
 	EntryPrice        string           `json:"entry_price"`  // weighted avg entry (USD)
 	ExitPrice         *string          `json:"exit_price"`   // weighted avg exit; nil if open
+	QuoteAsset        string           `json:"quote_asset"`  // what entry/exit prices are denominated in
 	TotalFees         string           `json:"total_fees"`
 	CumulativeFunding string           `json:"cumulative_funding"`
 	StartTime         time.Time        `json:"start_time"`
