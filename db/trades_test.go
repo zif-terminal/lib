@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -81,11 +82,8 @@ func TestClient_GetTrade_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for non-existent trade")
 	}
-	if err.Error() != "trade not found: "+uuid.New().String() {
-		// Just check that error contains "trade not found"
-		if err.Error()[:17] != "trade not found: " {
-			t.Errorf("Expected 'trade not found' error, got: %v", err)
-		}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
 }
 

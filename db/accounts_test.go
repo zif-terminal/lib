@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/machinebox/graphql"
@@ -91,8 +92,8 @@ func TestClient_GetAccount_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for non-existent account")
 	}
-	if err.Error() != "account not found: non-existent-id" {
-		t.Errorf("Expected 'account not found' error, got: %v", err)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
 }
 
@@ -482,8 +483,8 @@ func TestClient_UpdateAccount_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for non-existent account")
 	}
-	if err.Error() != "account not found: non-existent-id" {
-		t.Errorf("Expected 'account not found' error, got: %v", err)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
 }
 
@@ -538,8 +539,8 @@ func TestClient_DeleteAccount_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for non-existent account")
 	}
-	if err.Error() != "account not found: non-existent-id" {
-		t.Errorf("Expected 'account not found' error, got: %v", err)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
 }
 
@@ -633,7 +634,7 @@ func TestClient_UpdateAccountLastSynced_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for non-existent account")
 	}
-	if err.Error() != "account not found: non-existent-id" {
-		t.Errorf("Expected 'account not found' error, got: %v", err)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
 }

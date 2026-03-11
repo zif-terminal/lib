@@ -45,7 +45,7 @@ func (c *Client) GetAccount(ctx context.Context, id string) (*ExchangeAccount, e
 	}
 
 	if resp.ExchangeAccountsByPk == nil {
-		return nil, fmt.Errorf("account not found: %s", id)
+		return nil, notFoundError("account", id)
 	}
 
 	return resp.ExchangeAccountsByPk, nil
@@ -199,7 +199,7 @@ func (c *Client) UpdateAccount(ctx context.Context, id string, input *ExchangeAc
 	}
 
 	if resp.UpdateExchangeAccountsByPk == nil {
-		return nil, fmt.Errorf("account not found: %s", id)
+		return nil, notFoundError("account", id)
 	}
 
 	return resp.UpdateExchangeAccountsByPk, nil
@@ -230,7 +230,7 @@ func (c *Client) DeleteAccount(ctx context.Context, id string) error {
 	}
 
 	if resp.DeleteExchangeAccountsByPk.ID == "" {
-		return fmt.Errorf("account not found: %s", id)
+		return notFoundError("account", id)
 	}
 
 	return nil
@@ -284,7 +284,7 @@ func (c *Client) UpdateAccountTags(ctx context.Context, accountID string, tags [
 	}
 
 	if resp.UpdateExchangeAccountsByPk == nil {
-		return fmt.Errorf("account not found: %s", accountID)
+		return notFoundError("account", accountID)
 	}
 
 	return nil
@@ -315,7 +315,7 @@ func (c *Client) UpdateAccountLastSynced(ctx context.Context, accountID string) 
 	}
 
 	if resp.UpdateExchangeAccountsByPk == nil {
-		return fmt.Errorf("account not found: %s", accountID)
+		return notFoundError("account", accountID)
 	}
 
 	return nil

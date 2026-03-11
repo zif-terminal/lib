@@ -38,7 +38,7 @@ func (c *Client) GetExchange(ctx context.Context, id string) (*Exchange, error) 
 	}
 
 	if resp.ExchangesByPk == nil {
-		return nil, fmt.Errorf("exchange not found: %s", id)
+		return nil, notFoundError("exchange", id)
 	}
 
 	return resp.ExchangesByPk, nil
@@ -134,7 +134,7 @@ func (c *Client) UpdateExchange(ctx context.Context, id string, input *ExchangeI
 	}
 
 	if resp.UpdateExchangesByPk == nil {
-		return nil, fmt.Errorf("exchange not found: %s", id)
+		return nil, notFoundError("exchange", id)
 	}
 
 	return resp.UpdateExchangesByPk, nil

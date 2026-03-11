@@ -51,7 +51,7 @@ func (c *Client) GetTrade(ctx context.Context, id string) (*Trade, error) {
 	}
 
 	if resp.TradesByPk == nil {
-		return nil, fmt.Errorf("trade not found: %s", id)
+		return nil, notFoundError("trade", id)
 	}
 
 	return resp.TradesByPk, nil
@@ -361,7 +361,7 @@ func (c *Client) UpdateTrade(ctx context.Context, id string, input *TradeInput) 
 	}
 
 	if resp.UpdateTradesByPk == nil {
-		return nil, fmt.Errorf("trade not found: %s", id)
+		return nil, notFoundError("trade", id)
 	}
 
 	return resp.UpdateTradesByPk, nil
@@ -392,7 +392,7 @@ func (c *Client) DeleteTrade(ctx context.Context, id string) error {
 	}
 
 	if resp.DeleteTradesByPk.ID == "" {
-		return fmt.Errorf("trade not found: %s", id)
+		return notFoundError("trade", id)
 	}
 
 	return nil

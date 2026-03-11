@@ -54,31 +54,44 @@ func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.U
 
 	balances := make([]*BalanceSnapshot, 0, len(resp.Snapshots))
 	for _, s := range resp.Snapshots {
+		balance, err := parseFloat64(s.Balance)
+		if err != nil {
+			return nil, fmt.Errorf("invalid balance %q for asset %s: %w", s.Balance, s.Asset, err)
+		}
+		oraclePrice, err := parseFloat64(s.OraclePrice)
+		if err != nil {
+			return nil, fmt.Errorf("invalid oracle_price %q for asset %s: %w", s.OraclePrice, s.Asset, err)
+		}
+		usdValue, err := parseFloat64(s.USDValue)
+		if err != nil {
+			return nil, fmt.Errorf("invalid usd_value %q for asset %s: %w", s.USDValue, s.Asset, err)
+		}
 		balances = append(balances, &BalanceSnapshot{
 			Asset:       s.Asset,
-			Balance:     parseFloat64(s.Balance),
-			OraclePrice: parseFloat64(s.OraclePrice),
-			UsdValue:    parseFloat64(s.USDValue),
+			Balance:     balance,
+			OraclePrice: oraclePrice,
+			UsdValue:    usdValue,
 		})
 	}
 
 	return balances, nil
 }
 
-// parseFloat64 parses a numeric string to float64, returning 0 on error.
-// Rejects NaN and Inf values which would corrupt downstream calculations.
-func parseFloat64(s string) float64 {
+// parseFloat64 parses a numeric string to float64.
+// Returns an error on empty strings, unparseable values, NaN, and Inf
+// to prevent silent data corruption in downstream calculations.
+func parseFloat64(s string) (float64, error) {
 	if s == "" {
-		return 0
+		return 0, fmt.Errorf("empty string")
 	}
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return 0
+		return 0, fmt.Errorf("cannot parse %q: %w", s, err)
 	}
 	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return 0
+		return 0, fmt.Errorf("invalid value: %v", f)
 	}
-	return f
+	return f, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +354,10 @@ func (c *Client) UpdateAccountTypeMetadata(ctx context.Context, accountID uuid.U
 
 	if err := c.execute(ctx, req, &resp); err != nil {
 		return fmt.Errorf("failed to update account type metadata: %w", err)
+	}
+
+	if resp.Update == nil {
+		return notFoundError("account", accountID.String())
 	}
 
 	return nil

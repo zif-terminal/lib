@@ -37,7 +37,7 @@ func (c *Client) GetWallet(ctx context.Context, id string) (*Wallet, error) {
 	}
 
 	if resp.WalletsByPk == nil {
-		return nil, fmt.Errorf("wallet not found: %s", id)
+		return nil, notFoundError("wallet", id)
 	}
 
 	return resp.WalletsByPk, nil
@@ -192,7 +192,7 @@ func (c *Client) DeleteWallet(ctx context.Context, id string) error {
 	}
 
 	if resp.DeleteWalletsByPk.ID == "" {
-		return fmt.Errorf("wallet not found: %s", id)
+		return notFoundError("wallet", id)
 	}
 
 	return nil
@@ -223,7 +223,7 @@ func (c *Client) UpdateWalletTags(ctx context.Context, walletID string, tags []s
 	}
 
 	if resp.UpdateWalletsByPk == nil {
-		return fmt.Errorf("wallet not found: %s", walletID)
+		return notFoundError("wallet", walletID)
 	}
 
 	return nil
@@ -254,7 +254,7 @@ func (c *Client) UpdateWalletLastDetected(ctx context.Context, walletID string) 
 	}
 
 	if resp.UpdateWalletsByPk == nil {
-		return fmt.Errorf("wallet not found: %s", walletID)
+		return notFoundError("wallet", walletID)
 	}
 
 	return nil

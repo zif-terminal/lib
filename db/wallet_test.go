@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -77,8 +78,8 @@ func TestClient_GetWallet_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for non-existent wallet")
 	}
-	if err.Error() != "wallet not found: non-existent-id" {
-		t.Errorf("Expected 'wallet not found' error, got: %v", err)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
 }
 
@@ -414,8 +415,8 @@ func TestClient_DeleteWallet_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for non-existent wallet")
 	}
-	if err.Error() != "wallet not found: non-existent-id" {
-		t.Errorf("Expected 'wallet not found' error, got: %v", err)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
 }
 
@@ -470,7 +471,7 @@ func TestClient_UpdateWalletLastDetected_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for non-existent wallet")
 	}
-	if err.Error() != "wallet not found: non-existent-id" {
-		t.Errorf("Expected 'wallet not found' error, got: %v", err)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
 }

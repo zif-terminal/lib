@@ -100,23 +100,33 @@ func TestClient_GetLatestBalanceSnapshots_Empty(t *testing.T) {
 }
 
 func TestParseFloat64(t *testing.T) {
-	tests := []struct {
-		input string
-		want  float64
-	}{
-		{"100.5", 100.5},
-		{"-50.25", -50.25},
-		{"0", 0},
-		{"invalid", 0},
-		{"", 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := parseFloat64(tt.input)
+	t.Run("valid values", func(t *testing.T) {
+		tests := []struct {
+			input string
+			want  float64
+		}{
+			{"100.5", 100.5},
+			{"-50.25", -50.25},
+			{"0", 0},
+		}
+		for _, tt := range tests {
+			got, err := parseFloat64(tt.input)
+			if err != nil {
+				t.Errorf("parseFloat64(%q) unexpected error: %v", tt.input, err)
+			}
 			if got != tt.want {
 				t.Errorf("parseFloat64(%q) = %f, want %f", tt.input, got, tt.want)
 			}
-		})
-	}
+		}
+	})
+
+	t.Run("invalid values return error", func(t *testing.T) {
+		invalid := []string{"invalid", "", "NaN", "Inf", "-Inf"}
+		for _, input := range invalid {
+			_, err := parseFloat64(input)
+			if err == nil {
+				t.Errorf("parseFloat64(%q) expected error, got nil", input)
+			}
+		}
+	})
 }
