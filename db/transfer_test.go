@@ -11,28 +11,6 @@ import (
 	"github.com/zif-terminal/lib/models"
 )
 
-func TestAbsNumeric(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"100.5", "100.500000000000000000"},
-		{"-50.25", "50.250000000000000000"},
-		{"0", "0.000000000000000000"},
-		{"-0", "0.000000000000000000"},
-		{"invalid", "invalid"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := absNumeric(tt.input)
-			if got != tt.want {
-				t.Errorf("absNumeric(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestClient_ListTransfers(t *testing.T) {
 	ctx := context.Background()
 	accountID := uuid.New()

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/machinebox/graphql"
@@ -84,8 +85,8 @@ func TestClient_GetExchange_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for non-existent exchange")
 	}
-	if err.Error() != "exchange not found: non-existent-id" {
-		t.Errorf("Expected 'exchange not found' error, got: %v", err)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
 }
 
@@ -245,7 +246,7 @@ func TestClient_UpdateExchange_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for non-existent exchange")
 	}
-	if err.Error() != "exchange not found: non-existent-id" {
-		t.Errorf("Expected 'exchange not found' error, got: %v", err)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
 }

@@ -3,11 +3,23 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/machinebox/graphql"
 )
+
+// ErrNotFound is returned when a requested record does not exist.
+// Callers can use errors.Is(err, ErrNotFound) to distinguish "not found"
+// from network/DB failures.
+var ErrNotFound = errors.New("not found")
+
+// notFoundError returns an ErrNotFound-wrapped error with entity context.
+func notFoundError(entity, id string) error {
+	return fmt.Errorf("%s %s: %w", entity, id, ErrNotFound)
+}
 
 // GraphQLClient is an interface for the GraphQL client (allows mocking for testing)
 type GraphQLClient interface {

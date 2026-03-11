@@ -406,7 +406,7 @@ func (c *Client) UpdatePositionPnL(ctx context.Context, positionID uuid.UUID, re
 	}
 
 	if resp.UpdatePositionsByPk == nil {
-		return fmt.Errorf("position %s not found", positionID)
+		return notFoundError("position", positionID.String())
 	}
 
 	return nil

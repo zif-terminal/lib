@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"fmt"
-	"math/big"
 
 	"github.com/google/uuid"
 	"github.com/zif-terminal/lib/models"
@@ -144,13 +143,4 @@ func (c *Client) DeleteTransfersByAccountAndType(ctx context.Context, accountID 
 	}
 
 	return resp.DeleteTransfers.AffectedRows, nil
-}
-
-// absNumeric returns the absolute value of a numeric string
-func absNumeric(s string) string {
-	f, _, err := big.ParseFloat(s, 10, 256, big.ToNearestEven)
-	if err != nil || f == nil {
-		return s
-	}
-	return f.Abs(f).Text('f', 18)
 }
