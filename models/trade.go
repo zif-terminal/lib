@@ -99,6 +99,22 @@ func convertToString(v interface{}) string {
 	}
 }
 
+// convertToFloat64 converts a JSON value (string or number) to float64.
+func convertToFloat64(v interface{}) (float64, error) {
+	switch val := v.(type) {
+	case float64:
+		return val, nil
+	case string:
+		var f float64
+		_, err := fmt.Sscanf(val, "%f", &f)
+		return f, err
+	case json.Number:
+		return val.Float64()
+	default:
+		return 0, fmt.Errorf("unsupported type %T for float64 conversion", v)
+	}
+}
+
 // parseInt64 parses a string to int64
 func parseInt64(s string) (int64, error) {
 	var result int64

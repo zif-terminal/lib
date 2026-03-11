@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/machinebox/graphql"
@@ -112,6 +113,9 @@ type DBClient interface {
 	AddPositions(ctx context.Context, inputs []*PositionInput) ([]*Position, error)
 	AddPositionEvents(ctx context.Context, inputs []*PositionEventInput) (int, error)
 	GetPositions(ctx context.Context, filter PositionFilter) ([]*Position, error)
+	GetPositionEventsByPositionID(ctx context.Context, positionID uuid.UUID) ([]*PositionEvent, error)
+	UpdatePositionPnL(ctx context.Context, positionID uuid.UUID, realizedPnl float64, denomination string) error
+	GetPositionsWithNullPnL(ctx context.Context, since time.Time, limit int) ([]*Position, error)
 
 	// Wallet methods
 	GetWallet(ctx context.Context, id string) (*Wallet, error)
@@ -131,6 +135,10 @@ type DBClient interface {
 	AddSettlements(ctx context.Context, inputs []*SettlementInput) (int, error)
 	ListSettlements(ctx context.Context, filter SettlementFilter) ([]*Settlement, error)
 	GetLatestSettlement(ctx context.Context, exchangeAccountID uuid.UUID) (*Settlement, error)
+
+	// Price cache methods
+	GetCachedPrice(ctx context.Context, asset, denomination string, timestamp time.Time, tolerance time.Duration) (*PriceCache, error)
+	AddPriceCache(ctx context.Context, input *PriceCacheInput) error
 
 	// Snapshot methods
 	GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.UUID) ([]*BalanceSnapshot, error)

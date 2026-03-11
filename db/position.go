@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zif-terminal/lib/models"
@@ -329,6 +330,143 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 
 	if err := c.execute(ctx, req, &resp); err != nil {
 		return nil, fmt.Errorf("failed to get positions: %w", err)
+	}
+
+	return resp.Positions, nil
+}
+
+// GetPositionEventsByPositionID returns all position events for a given position,
+// ordered by timestamp ascending (chronological trade order).
+func (c *Client) GetPositionEventsByPositionID(ctx context.Context, positionID uuid.UUID) ([]*PositionEvent, error) {
+	query := `
+		query GetPositionEventsByPositionID($position_id: uuid!) {
+			position_events(
+				where: { position_id: { _eq: $position_id } }
+				order_by: { timestamp: asc }
+			) {
+				id
+				position_id
+				event_type
+				event_id
+				direction
+				quantity
+				price
+				timestamp
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"position_id": positionID.String(),
+	})
+
+	var resp struct {
+		PositionEvents []*PositionEvent `json:"position_events"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get position events: %w", err)
+	}
+
+	return resp.PositionEvents, nil
+}
+
+// UpdatePositionPnL sets realized_pnl and pnl_denomination on a single position.
+func (c *Client) UpdatePositionPnL(ctx context.Context, positionID uuid.UUID, realizedPnl float64, denomination string) error {
+	query := `
+		mutation UpdatePositionPnL($id: uuid!, $realized_pnl: numeric!, $pnl_denomination: String!) {
+			update_positions_by_pk(
+				pk_columns: { id: $id }
+				_set: {
+					realized_pnl: $realized_pnl
+					pnl_denomination: $pnl_denomination
+					updated_at: "now()"
+				}
+			) {
+				id
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id":               positionID.String(),
+		"realized_pnl":     realizedPnl,
+		"pnl_denomination": denomination,
+	})
+
+	var resp struct {
+		UpdatePositionsByPk *struct {
+			ID string `json:"id"`
+		} `json:"update_positions_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to update position PnL: %w", err)
+	}
+
+	if resp.UpdatePositionsByPk == nil {
+		return fmt.Errorf("position %s not found", positionID)
+	}
+
+	return nil
+}
+
+// GetPositionsWithNullPnL returns closed positions that don't yet have realized_pnl computed.
+func (c *Client) GetPositionsWithNullPnL(ctx context.Context, since time.Time, limit int) ([]*Position, error) {
+	query := `
+		query GetPositionsWithNullPnL($since: timestamptz!, $limit: Int!) {
+			positions(
+				where: {
+					status: { _eq: "closed" }
+					realized_pnl: { _is_null: true }
+					end_time: { _gte: $since }
+				}
+				order_by: { end_time: asc }
+				limit: $limit
+			) {
+				id
+				exchange_account_id
+				market
+				market_type
+				side
+				status
+				quantity
+				entry_price
+				exit_price
+				total_fees
+				cumulative_funding
+				start_time
+				end_time
+				order_id
+				updated_at
+				exchange_account {
+					id
+					exchange_id
+					account_identifier
+					label
+					account_type
+					tags
+					exchange {
+						id
+						name
+						display_name
+					}
+				}
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"since": since.Format(time.RFC3339),
+		"limit": limit,
+	})
+
+	var resp struct {
+		Positions []*Position `json:"positions"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get positions with null PnL: %w", err)
 	}
 
 	return resp.Positions, nil
