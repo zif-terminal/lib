@@ -237,6 +237,46 @@ func (c *Client) GetSpotBalanceSnapshotsBefore(ctx context.Context, accountID uu
 	return resp.Snapshots[0], nil
 }
 
+// ListSpotBalanceSnapshots returns all snapshots for a specific account and asset,
+// sorted by timestamp ascending. Used by the interest reconciler to process all
+// consecutive snapshot pairs when rebuilding historical interest data.
+func (c *Client) ListSpotBalanceSnapshots(ctx context.Context, accountID uuid.UUID, asset string) ([]*SpotBalanceSnapshot, error) {
+	query := `
+		query ListSpotBalanceSnapshots($account_id: uuid!, $asset: String!) {
+			spot_balance_snapshots(
+				where: {
+					exchange_account_id: { _eq: $account_id }
+					asset: { _eq: $asset }
+				}
+				order_by: { timestamp: asc }
+			) {
+				id
+				exchange_account_id
+				asset
+				balance
+				oracle_price
+				usd_value
+				timestamp
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"account_id": accountID.String(),
+		"asset":      asset,
+	})
+
+	var resp struct {
+		Snapshots []*SpotBalanceSnapshot `json:"spot_balance_snapshots"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to list spot balance snapshots: %w", err)
+	}
+
+	return resp.Snapshots, nil
+}
+
 // PruneOldSpotBalanceSnapshots deletes snapshots older than the given timestamp.
 func (c *Client) PruneOldSpotBalanceSnapshots(ctx context.Context, beforeMs int64) (int, error) {
 	query := `
