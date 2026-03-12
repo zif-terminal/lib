@@ -337,7 +337,12 @@ func (c *Client) FetchPositions(
 	return positions, nil
 }
 
-// FetchBalances fetches current spot balances from Drift
+// FetchBalances fetches current spot balances from Drift.
+//
+// Uses the earn snapshots endpoint as the primary source because it returns
+// ALL spot assets (including bSOL, mSOL, JUP, etc.) with oracle prices.
+// The /user/{accountID} endpoint only returns a subset of assets.
+// Falls back to the user endpoint if earn snapshots are unavailable.
 func (c *Client) FetchBalances(
 	ctx context.Context,
 	account *models.ExchangeAccount,
@@ -351,6 +356,17 @@ func (c *Client) FetchBalances(
 		return nil, fmt.Errorf("account identifier (subaccount public key) is required")
 	}
 
+	// Try earn snapshots first — they include ALL spot assets with oracle prices.
+	// The /user/{accountID} endpoint may omit some tokens (bSOL, mSOL, JUP, etc.).
+	wallet := c.getWalletFromAccount(account)
+	if wallet != "" {
+		balances, err := c.fetchBalancesFromEarn(ctx, wallet, accountID)
+		if err == nil && len(balances) > 0 {
+			return balances, nil
+		}
+	}
+
+	// Fallback: use /user/{accountID} endpoint (may return incomplete asset list)
 	userData, err := c.fetchUserAccount(ctx, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch user data: %w", err)
@@ -359,8 +375,6 @@ func (c *Client) FetchBalances(
 		return []*models.BalanceSnapshot{}, nil
 	}
 
-	// Get spot oracle prices from earn snapshots
-	wallet := c.getWalletFromAccount(account)
 	spotOraclePrices := map[int]float64{}
 	if wallet != "" {
 		spotOraclePrices, _ = c.fetchEarnSnapshots(ctx, wallet)
@@ -384,6 +398,61 @@ func (c *Client) FetchBalances(
 	}
 
 	return balances, nil
+}
+
+// fetchBalancesFromEarn extracts balance snapshots from the earn endpoint for a
+// specific account. Returns all non-zero balances with oracle prices.
+func (c *Client) fetchBalancesFromEarn(ctx context.Context, wallet, accountID string) ([]*models.BalanceSnapshot, error) {
+	url := fmt.Sprintf("%s/authority/%s/snapshots/earn", c.baseURL, wallet)
+	resp, err := c.doRequestWithRetry(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("earn snapshots returned status %d", resp.StatusCode)
+	}
+
+	var result driftEarnResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode earn response: %w", err)
+	}
+
+	if !result.Success {
+		return nil, fmt.Errorf("earn snapshots returned success=false")
+	}
+
+	// Find the matching account and extract balances from the latest snapshot
+	for _, acct := range result.Accounts {
+		if acct.AccountID != accountID {
+			continue
+		}
+		if len(acct.Snapshots) == 0 {
+			return nil, nil
+		}
+
+		latest := acct.Snapshots[0]
+		var balances []*models.BalanceSnapshot
+		for _, asset := range latest.Assets {
+			balance := toFloat(asset.Balance)
+			if math.Abs(balance) < 0.000001 {
+				continue
+			}
+
+			oraclePrice := toFloat(asset.OraclePrice)
+
+			balances = append(balances, &models.BalanceSnapshot{
+				Asset:       asset.Symbol,
+				Balance:     balance,
+				UsdValue:    balance * oraclePrice,
+				OraclePrice: oraclePrice,
+			})
+		}
+		return balances, nil
+	}
+
+	return nil, nil
 }
 
 // FetchOpenOrders fetches currently active orders from Drift
