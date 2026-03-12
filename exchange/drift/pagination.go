@@ -3,6 +3,7 @@ package drift
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -149,6 +150,8 @@ func fetchWithHistory[T any](
 	}
 	all = append(all, recent...)
 
+	preFilterCount := len(all)
+
 	// Filter by since timestamp
 	if !since.IsZero() {
 		filtered := make([]T, 0)
@@ -158,6 +161,13 @@ func fetchWithHistory[T any](
 			}
 		}
 		all = filtered
+	}
+
+	// Log diagnostic info when API returns 0 records or all records were filtered
+	if preFilterCount == 0 {
+		log.Printf("drift/%s: API returned 0 records | account=%s | url=%s", endpoint, accountID, recentURL)
+	} else if len(all) == 0 && preFilterCount > 0 {
+		log.Printf("drift/%s: all %d records filtered by since=%v | account=%s", endpoint, preFilterCount, since, accountID)
 	}
 
 	return all, nil
