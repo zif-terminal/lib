@@ -229,6 +229,44 @@ func (c *Client) UpdateWalletTags(ctx context.Context, walletID string, tags []s
 	return nil
 }
 
+// VerifyWalletByDetection sets verified_at and verification_method='detected'
+// on a wallet that has not already been verified by a stronger method (signature/api_key).
+// This is called by account_detector after successfully discovering exchange accounts,
+// so wallets added via the dashboard don't stay unverified indefinitely.
+func (c *Client) VerifyWalletByDetection(ctx context.Context, walletID string) error {
+	query := `
+		mutation VerifyWalletByDetection($id: uuid!, $verified_at: timestamptz!, $method: String!) {
+			update_wallets(
+				where: {
+					id: {_eq: $id}
+					verified_at: {_is_null: true}
+				}
+				_set: {verified_at: $verified_at, verification_method: $method}
+			) {
+				affected_rows
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id":          walletID,
+		"verified_at": "now()",
+		"method":      "detected",
+	})
+
+	var resp struct {
+		UpdateWallets struct {
+			AffectedRows int `json:"affected_rows"`
+		} `json:"update_wallets"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to verify wallet by detection: %w", err)
+	}
+
+	return nil
+}
+
 // UpdateWalletLastDetected updates the last_detected_at timestamp for a wallet
 func (c *Client) UpdateWalletLastDetected(ctx context.Context, walletID string) error {
 	query := `
