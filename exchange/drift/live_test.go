@@ -131,6 +131,114 @@ func TestDriftClient_FetchBalances_EmptyIdentifier(t *testing.T) {
 	}
 }
 
+// TestDriftClient_FetchBalances_EarnSnapshots verifies that FetchBalances uses
+// the earn snapshots endpoint when available, which returns ALL spot assets
+// including bSOL, mSOL, JUP, etc. that the /user endpoint may omit.
+func TestDriftClient_FetchBalances_EarnSnapshots(t *testing.T) {
+	client, server := newTestDriftClient(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Earn endpoint returns all 6 assets
+		if r.URL.Path == "/authority/wallet123/snapshots/earn" {
+			json.NewEncoder(w).Encode(driftEarnResponse{
+				Success: true,
+				Accounts: []driftEarnAccountSnapshot{
+					{
+						AccountID: "test-account",
+						Snapshots: []driftEarnSnapshot{
+							{
+								EpochTs: 1000,
+								Assets: []driftEarnAsset{
+									{Symbol: "USDC", MarketIndex: 0, Balance: "5000", OraclePrice: "1"},
+									{Symbol: "SOL", MarketIndex: 1, Balance: "100", OraclePrice: "200"},
+									{Symbol: "bSOL", MarketIndex: 5, Balance: "2.017", OraclePrice: "210"},
+									{Symbol: "mSOL", MarketIndex: 2, Balance: "1.719", OraclePrice: "215"},
+									{Symbol: "JUP", MarketIndex: 7, Balance: "-213.845", OraclePrice: "0.8"},
+									{Symbol: "FARTCOIN", MarketIndex: 12, Balance: "-0.168", OraclePrice: "1.5"},
+								},
+							},
+						},
+					},
+				},
+			})
+			return
+		}
+		// User endpoint should NOT be called when earn succeeds
+		if r.URL.Path == "/user/test-account" {
+			t.Error("User endpoint should not be called when earn snapshots succeed")
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	defer server.Close()
+
+	metadata := json.RawMessage(`{"authority":"wallet123"}`)
+	account := &models.ExchangeAccount{
+		ID:                  "test-id",
+		AccountIdentifier:   "test-account",
+		AccountTypeMetadata: metadata,
+	}
+
+	balances, err := client.FetchBalances(context.Background(), account)
+	if err != nil {
+		t.Fatalf("FetchBalances failed: %v", err)
+	}
+
+	if len(balances) != 6 {
+		t.Fatalf("Expected 6 balances (all assets), got %d", len(balances))
+	}
+
+	// Verify all assets are present
+	assetMap := map[string]float64{}
+	for _, b := range balances {
+		assetMap[b.Asset] = b.Balance
+	}
+	for _, asset := range []string{"USDC", "SOL", "bSOL", "mSOL", "JUP", "FARTCOIN"} {
+		if _, ok := assetMap[asset]; !ok {
+			t.Errorf("Missing asset: %s", asset)
+		}
+	}
+
+	// Verify negative balances (borrows) are included
+	if assetMap["JUP"] >= 0 {
+		t.Errorf("Expected negative JUP balance (borrow), got %f", assetMap["JUP"])
+	}
+}
+
+// TestDriftClient_FetchBalances_EarnFallback verifies fallback to /user endpoint
+// when earn snapshots are unavailable (no wallet metadata).
+func TestDriftClient_FetchBalances_EarnFallback(t *testing.T) {
+	client, server := newTestDriftClient(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/user/test-account" {
+			json.NewEncoder(w).Encode(driftUserResponse{
+				Balances: []driftUserBalance{
+					{Symbol: "USDC", MarketIndex: 0, Balance: "1000"},
+					{Symbol: "SOL", MarketIndex: 1, Balance: "50"},
+				},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	defer server.Close()
+
+	// No metadata → no wallet → earn endpoint not called → fallback to user
+	account := &models.ExchangeAccount{
+		ID:                "test-id",
+		AccountIdentifier: "test-account",
+	}
+
+	balances, err := client.FetchBalances(context.Background(), account)
+	if err != nil {
+		t.Fatalf("FetchBalances failed: %v", err)
+	}
+
+	if len(balances) != 2 {
+		t.Fatalf("Expected 2 balances from fallback, got %d", len(balances))
+	}
+}
+
 func TestDriftClient_FetchOpenOrders_Success(t *testing.T) {
 	client, server := newTestDriftClient(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
