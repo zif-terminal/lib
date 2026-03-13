@@ -161,6 +161,7 @@ type DBClient interface {
 
 	// Sync timestamp methods
 	UpdateAccountLastSynced(ctx context.Context, accountID string) error
+	ResetAccountLastSynced(ctx context.Context, accountID string) error
 }
 
 // Ensure Client implements DBClient

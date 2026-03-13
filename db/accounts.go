@@ -320,3 +320,35 @@ func (c *Client) UpdateAccountLastSynced(ctx context.Context, accountID string) 
 
 	return nil
 }
+
+// ResetAccountLastSynced resets the last_synced_at timestamp for an account to null,
+// forcing a full re-sync of all historical data from the exchange on the next sync cycle.
+// This is used for recovery after data loss incidents.
+func (c *Client) ResetAccountLastSynced(ctx context.Context, accountID string) error {
+	query := `
+		mutation ResetAccountLastSynced($id: uuid!) {
+			update_exchange_accounts_by_pk(pk_columns: {id: $id}, _set: {last_synced_at: null}) {
+				id
+				last_synced_at
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id": accountID,
+	})
+
+	var resp struct {
+		UpdateExchangeAccountsByPk *ExchangeAccount `json:"update_exchange_accounts_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to reset account last_synced_at: %w", err)
+	}
+
+	if resp.UpdateExchangeAccountsByPk == nil {
+		return notFoundError("account", accountID)
+	}
+
+	return nil
+}
