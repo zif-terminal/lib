@@ -25,9 +25,6 @@ type Position struct {
 	CumulativeFunding string           `json:"cumulative_funding"`
 	StartTime         time.Time        `json:"start_time"`
 	EndTime           *time.Time       `json:"end_time"`  // nil if open
-	OrderID           string           `json:"order_id"`  // Order ID of the closing trade
-	RealizedPnl       *float64         `json:"realized_pnl"`
-	PnlDenomination   *string          `json:"pnl_denomination"`
 	CreatedAt         time.Time        `json:"created_at"`
 	UpdatedAt         time.Time        `json:"updated_at"`
 	ExchangeAccount   *ExchangeAccount `json:"exchange_account,omitempty"`
@@ -44,7 +41,6 @@ func (p *Position) UnmarshalJSON(data []byte) error {
 		ExitPrice         interface{} `json:"exit_price"`
 		TotalFees         interface{} `json:"total_fees"`
 		CumulativeFunding interface{} `json:"cumulative_funding"`
-		RealizedPnl       interface{} `json:"realized_pnl"`
 		*Alias
 	}{
 		Alias: (*Alias)(p),
@@ -86,13 +82,6 @@ func (p *Position) UnmarshalJSON(data []byte) error {
 	if aux.CumulativeFunding != nil {
 		p.CumulativeFunding = convertToString(aux.CumulativeFunding)
 	}
-	if aux.RealizedPnl != nil {
-		v, err := convertToFloat64(aux.RealizedPnl)
-		if err != nil {
-			return fmt.Errorf("failed to parse realized_pnl: %w", err)
-		}
-		p.RealizedPnl = &v
-	}
 
 	return nil
 }
@@ -112,9 +101,6 @@ type PositionInput struct {
 	QuoteAsset        string // What the entry/exit prices are denominated in
 	StartTime         int64  // Unix ms
 	EndTime           int64  // 0 if open
-	OrderID           string // Order ID that closed this position (closed positions only)
-	RealizedPnl       *float64 // nil = NULL (PnL not yet computed)
-	PnlDenomination   *string  // nil = NULL
 }
 
 // PositionEvent represents a link between a position and a source event.

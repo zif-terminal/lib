@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/machinebox/graphql"
@@ -115,7 +114,6 @@ func TestClient_AddPositions(t *testing.T) {
 			QuoteAsset:        "USDC",
 			StartTime:         1700000000000,
 			EndTime:           1700100000000,
-			OrderID:           "order-123",
 		},
 	}
 
@@ -522,99 +520,3 @@ func TestClient_GetPositionEventsByPositionID_Error(t *testing.T) {
 	}
 }
 
-func TestClient_UpdatePositionPnL(t *testing.T) {
-	ctx := context.Background()
-	positionID := uuid.New()
-
-	mockClient := &mockGraphQLClient{
-		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
-			respData := map[string]interface{}{
-				"update_positions_by_pk": map[string]interface{}{
-					"id": positionID.String(),
-				},
-			}
-			data, _ := json.Marshal(respData)
-			return json.Unmarshal(data, resp)
-		},
-	}
-
-	client := NewClientWithGraphQL(mockClient, ClientConfig{
-		URL:         "http://localhost:8080/v1/graphql",
-		AdminSecret: "test-secret",
-	})
-
-	err := client.UpdatePositionPnL(ctx, positionID, 1234.56, "USDC")
-	if err != nil {
-		t.Fatalf("UpdatePositionPnL failed: %v", err)
-	}
-}
-
-func TestClient_UpdatePositionPnL_NotFound(t *testing.T) {
-	ctx := context.Background()
-
-	mockClient := &mockGraphQLClient{
-		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
-			respData := map[string]interface{}{
-				"update_positions_by_pk": nil,
-			}
-			data, _ := json.Marshal(respData)
-			return json.Unmarshal(data, resp)
-		},
-	}
-
-	client := NewClientWithGraphQL(mockClient, ClientConfig{
-		URL:         "http://localhost:8080/v1/graphql",
-		AdminSecret: "test-secret",
-	})
-
-	err := client.UpdatePositionPnL(ctx, uuid.New(), 1234.56, "USDC")
-	if err == nil {
-		t.Fatal("Expected error for non-existent position")
-	}
-}
-
-func TestClient_GetPositionsWithNullPnL(t *testing.T) {
-	ctx := context.Background()
-	accountID := uuid.New()
-
-	mockClient := &mockGraphQLClient{
-		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
-			respData := map[string]interface{}{
-				"positions": []*models.Position{
-					{
-						ID:                uuid.New(),
-						ExchangeAccountID: accountID,
-						Market:            "SOL-PERP",
-						MarketType:        "perp",
-						Side:              "long",
-						Status:            "closed",
-						Quantity:          "100",
-						EntryPrice:        "150",
-						TotalFees:         "1.5",
-						CumulativeFunding: "0.5",
-					},
-				},
-			}
-			data, _ := json.Marshal(respData)
-			return json.Unmarshal(data, resp)
-		},
-	}
-
-	client := NewClientWithGraphQL(mockClient, ClientConfig{
-		URL:         "http://localhost:8080/v1/graphql",
-		AdminSecret: "test-secret",
-	})
-
-	since := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	positions, err := client.GetPositionsWithNullPnL(ctx, since, 100)
-	if err != nil {
-		t.Fatalf("GetPositionsWithNullPnL failed: %v", err)
-	}
-
-	if len(positions) != 1 {
-		t.Fatalf("Expected 1 position, got %d", len(positions))
-	}
-	if positions[0].RealizedPnl != nil {
-		t.Errorf("Expected nil RealizedPnl, got %v", positions[0].RealizedPnl)
-	}
-}

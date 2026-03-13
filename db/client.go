@@ -126,9 +126,6 @@ type DBClient interface {
 	AddPositionEvents(ctx context.Context, inputs []*PositionEventInput) (int, error)
 	GetPositions(ctx context.Context, filter PositionFilter) ([]*Position, error)
 	GetPositionEventsByPositionID(ctx context.Context, positionID uuid.UUID) ([]*PositionEvent, error)
-	UpdatePositionPnL(ctx context.Context, positionID uuid.UUID, realizedPnl float64, denomination string) error
-	GetPositionsWithNullPnL(ctx context.Context, since time.Time, limit int) ([]*Position, error)
-
 	// Wallet methods
 	GetWallet(ctx context.Context, id string) (*Wallet, error)
 	GetWalletByAddress(ctx context.Context, address string, chain string) (*Wallet, error)
