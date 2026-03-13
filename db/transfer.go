@@ -83,7 +83,7 @@ func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*
 
 	query := `
 		mutation AddTransfers($objects: [transfers_insert_input!]!) {
-			insert_transfers(objects: $objects, on_conflict: {constraint: transfers_pkey, update_columns: []}) {
+			insert_transfers(objects: $objects, on_conflict: {constraint: idx_transfers_unique, update_columns: []}) {
 				returning {
 					id
 					exchange_account_id
