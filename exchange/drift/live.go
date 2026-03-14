@@ -356,28 +356,15 @@ func (c *Client) FetchBalances(
 		return nil, fmt.Errorf("account identifier (subaccount public key) is required")
 	}
 
-	// Try earn snapshots first — they include ALL spot assets with oracle prices.
-	// The /user/{accountID} endpoint may omit some tokens (bSOL, mSOL, JUP, etc.).
-	wallet := c.getWalletFromAccount(account)
-	if wallet != "" {
-		balances, err := c.fetchBalancesFromEarn(ctx, wallet, accountID)
-		if err == nil && len(balances) > 0 {
-			return balances, nil
-		}
-	}
-
-	// Fallback: use /user/{accountID} endpoint (may return incomplete asset list)
+	// Use /user/{accountID} — returns live spot balances.
+	// Oracle prices are not available from this endpoint; a separate price
+	// service will provide them.
 	userData, err := c.fetchUserAccount(ctx, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch user data: %w", err)
 	}
 	if userData == nil {
 		return []*models.BalanceSnapshot{}, nil
-	}
-
-	spotOraclePrices := map[int]float64{}
-	if wallet != "" {
-		spotOraclePrices, _ = c.fetchEarnSnapshots(ctx, wallet)
 	}
 
 	var balances []*models.BalanceSnapshot
@@ -387,13 +374,9 @@ func (c *Client) FetchBalances(
 			continue
 		}
 
-		oraclePrice := spotOraclePrices[b.MarketIndex]
-
 		balances = append(balances, &models.BalanceSnapshot{
-			Asset:       b.Symbol,
-			Balance:     balance,
-			UsdValue:    balance * oraclePrice,
-			OraclePrice: oraclePrice,
+			Asset:   b.Symbol,
+			Balance: balance,
 		})
 	}
 
