@@ -36,6 +36,7 @@ func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.U
 				balance
 				oracle_price
 				usd_value
+				timestamp
 			}
 		}
 	`
@@ -71,6 +72,7 @@ func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.U
 			Balance:     balance,
 			OraclePrice: oraclePrice,
 			UsdValue:    usdValue,
+			TimestampMs: s.Timestamp.UnixMilli(),
 		})
 	}
 
