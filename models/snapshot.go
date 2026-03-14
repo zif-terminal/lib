@@ -19,6 +19,7 @@ type BalanceSnapshot struct {
 	Balance     float64 `json:"balance"`
 	UsdValue    float64 `json:"usd_value"`
 	OraclePrice float64 `json:"oracle_price"`
+	TimestampMs int64   `json:"timestamp_ms"` // Unix milliseconds of the snapshot
 }
 
 // OpenOrder represents a currently active order
