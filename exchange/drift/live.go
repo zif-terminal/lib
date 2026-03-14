@@ -423,6 +423,10 @@ func (c *Client) fetchBalancesFromEarn(ctx context.Context, wallet, accountID st
 		return nil, fmt.Errorf("earn snapshots returned success=false")
 	}
 
+	// Ensure market cache is populated so we can resolve marketIndex → symbol.
+	// The earn API returns marketIndex but not the symbol name.
+	_ = c.fetchMarkets(ctx)
+
 	// Find the matching account and extract balances from the latest snapshot
 	for _, acct := range result.Accounts {
 		if acct.AccountID != accountID {
@@ -440,10 +444,21 @@ func (c *Client) fetchBalancesFromEarn(ctx context.Context, wallet, accountID st
 				continue
 			}
 
+			// Resolve symbol: earn API only has marketIndex, not symbol
+			symbol := asset.Symbol
+			if symbol == "" {
+				if info, ok := c.marketCache.getMarket(asset.MarketIndex, "spot"); ok {
+					symbol = info.BaseAsset
+				}
+			}
+			if symbol == "" {
+				continue
+			}
+
 			oraclePrice := toFloat(asset.OraclePrice)
 
 			balances = append(balances, &models.BalanceSnapshot{
-				Asset:       asset.Symbol,
+				Asset:       symbol,
 				Balance:     balance,
 				UsdValue:    balance * oraclePrice,
 				OraclePrice: oraclePrice,
