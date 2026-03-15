@@ -28,9 +28,8 @@ type Transfer struct {
 	Asset             string    `json:"asset"`
 	Amount            string    `json:"amount"` // Always positive; direction determined by Type
 	Timestamp         time.Time `json:"timestamp"`
-	CostBasis         string    `json:"cost_basis"`          // USD cost basis per unit (from user_cost_basis on deposits)
-	Market            string    `json:"market,omitempty"`     // Market context (e.g., for funding payments, settlements)
-	PaymentID         string    `json:"payment_id,omitempty"` // External payment ID for dedup (e.g., funding payment ID)
+	CostBasis         string            `json:"cost_basis"`          // USD cost basis per unit (from user_cost_basis on deposits)
+	Metadata          map[string]string `json:"metadata,omitempty"`  // Extensible metadata (e.g., market, payment_id for funding)
 }
 
 // TransferFilter represents filtering options for listing transfers
@@ -45,9 +44,8 @@ type TransferInput struct {
 	Asset             string    `json:"asset"`
 	Amount            string    `json:"amount"`
 	Timestamp         time.Time `json:"timestamp"`
-	CostBasis         string    `json:"cost_basis,omitempty"`
-	Market            string    `json:"market,omitempty"`
-	PaymentID         string    `json:"payment_id,omitempty"`
+	CostBasis         string            `json:"cost_basis,omitempty"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
 }
 
 // UnmarshalJSON custom unmarshaler to handle BIGINT timestamp

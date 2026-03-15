@@ -40,8 +40,7 @@ func (c *Client) ListTransfers(ctx context.Context, filter TransferFilter) ([]*T
 				amount
 				timestamp
 				cost_basis
-				market
-				payment_id
+				metadata
 			}
 		}
 	`
@@ -80,11 +79,8 @@ func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*
 		if input.CostBasis != "" {
 			obj["cost_basis"] = input.CostBasis
 		}
-		if input.Market != "" {
-			obj["market"] = input.Market
-		}
-		if input.PaymentID != "" {
-			obj["payment_id"] = input.PaymentID
+		if len(input.Metadata) > 0 {
+			obj["metadata"] = input.Metadata
 		}
 		objects[i] = obj
 	}
@@ -100,8 +96,7 @@ func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*
 					amount
 					timestamp
 					cost_basis
-					market
-					payment_id
+					metadata
 				}
 			}
 		}
@@ -175,8 +170,7 @@ func (c *Client) GetLatestTransferByType(ctx context.Context, accountID uuid.UUI
 				amount
 				timestamp
 				cost_basis
-				market
-				payment_id
+				metadata
 			}
 		}
 	`
