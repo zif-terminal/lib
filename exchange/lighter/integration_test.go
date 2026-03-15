@@ -166,8 +166,9 @@ func TestIntegration_FetchFundingPayments(t *testing.T) {
 			break
 		}
 		fmt.Printf("Payment %d:\n", i+1)
-		fmt.Printf("  ID: %s\n", payment.PaymentID)
-		fmt.Printf("  Pair: %s/%s\n", payment.BaseAsset, payment.QuoteAsset)
+		fmt.Printf("  ID: %s\n", payment.Metadata["payment_id"])
+		fmt.Printf("  Market: %s\n", payment.Metadata["market"])
+		fmt.Printf("  Asset: %s\n", payment.Asset)
 		fmt.Printf("  Amount: %s\n", payment.Amount)
 		fmt.Printf("  Time: %s\n\n", payment.Timestamp.Format(time.RFC3339))
 	}

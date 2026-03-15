@@ -112,11 +112,6 @@ type DBClient interface {
 	DeleteTrade(ctx context.Context, id string) error
 	LatestTrade(ctx context.Context, exchangeAccountIDs []uuid.UUID) (map[uuid.UUID]*Trade, error)
 
-	// Funding payment methods
-	GetLatestFundingPayment(ctx context.Context, exchangeAccountID uuid.UUID) (*FundingPayment, error)
-	AddFundingPayments(ctx context.Context, inputs []*FundingPaymentInput) ([]*FundingPayment, error)
-	ListFundingPayments(ctx context.Context, filter FundingPaymentFilter) ([]*FundingPayment, error)
-
 	// Position methods
 	DeletePositionsForAccount(ctx context.Context, accountID uuid.UUID) (int, error)
 	DeleteOpenPositionsForAccount(ctx context.Context, accountID uuid.UUID) (int, error)

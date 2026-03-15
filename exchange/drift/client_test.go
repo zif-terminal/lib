@@ -480,17 +480,24 @@ func TestDriftClient_FetchFundingPayments_Success(t *testing.T) {
 		t.Fatalf("Expected 2 payments, got %d", len(payments))
 	}
 
-	// Verify first payment (oldest)
-	if payments[0].BaseAsset != "SOL" {
-		t.Errorf("Expected base asset 'SOL', got '%s'", payments[0].BaseAsset)
+	// Verify all payments have type="funding"
+	for _, p := range payments {
+		if p.Type != models.TypeFunding {
+			t.Errorf("Expected type 'funding', got '%s'", p.Type)
+		}
+	}
+
+	// Verify first payment (oldest) - market stored in metadata
+	if payments[0].Metadata["market"] != "SOL" {
+		t.Errorf("Expected market 'SOL', got '%s'", payments[0].Metadata["market"])
 	}
 	if payments[0].Amount != "0.1" {
 		t.Errorf("Expected amount '0.1', got '%s'", payments[0].Amount)
 	}
 
 	// Verify second payment (negative)
-	if payments[1].BaseAsset != "BTC" {
-		t.Errorf("Expected base asset 'BTC', got '%s'", payments[1].BaseAsset)
+	if payments[1].Metadata["market"] != "BTC" {
+		t.Errorf("Expected market 'BTC', got '%s'", payments[1].Metadata["market"])
 	}
 	if payments[1].Amount != "-0.05" {
 		t.Errorf("Expected amount '-0.05', got '%s'", payments[1].Amount)

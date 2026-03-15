@@ -158,7 +158,7 @@ Go structs matching the database schema:
 - `ExchangeAccount` - User's exchange account
 - `Trade` - Individual trade record
 - `Position` - Aggregated position
-- `FundingPayment` - Funding payment record
+- `Transfer` - Unified transfer event (deposit, withdrawal, funding, interest, etc.)
 
 ### `db/` - Database Client
 

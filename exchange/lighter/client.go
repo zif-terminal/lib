@@ -178,7 +178,7 @@ func (c *Client) FetchFundingPayments(
 	ctx context.Context,
 	account *models.ExchangeAccount,
 	since time.Time,
-) ([]*models.FundingPaymentInput, error) {
+) ([]*models.TransferInput, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -203,7 +203,7 @@ func (c *Client) FetchFundingPayments(
 		return nil, fmt.Errorf("failed to load market info: %w", err)
 	}
 
-	var allFunding []*models.FundingPaymentInput
+	var allFunding []*models.TransferInput
 	cursor := ""
 	pageCount := 0
 
@@ -258,7 +258,7 @@ func (c *Client) FetchFundingPayments(
 				continue
 			}
 
-			payment, err := c.fundingToPayment(funding, accountUUID)
+			payment, err := c.fundingToTransferInput(funding, accountUUID)
 			if err != nil {
 				continue // Skip fundings that can't be converted
 			}
@@ -626,8 +626,8 @@ func (c *Client) orderToTrade(order lighterOrder, accountUUID uuid.UUID) (*model
 	}, nil
 }
 
-// fundingToPayment converts a Lighter funding to a FundingPaymentInput
-func (c *Client) fundingToPayment(funding lighterPositionFunding, accountUUID uuid.UUID) (*models.FundingPaymentInput, error) {
+// fundingToTransferInput converts a Lighter funding to a TransferInput
+func (c *Client) fundingToTransferInput(funding lighterPositionFunding, accountUUID uuid.UUID) (*models.TransferInput, error) {
 	market, ok := c.getMarketInfo(funding.MarketID)
 	if !ok {
 		// Fallback
@@ -643,13 +643,16 @@ func (c *Client) fundingToPayment(funding lighterPositionFunding, accountUUID uu
 	// Create unique payment ID from funding_id and market_id
 	paymentID := fmt.Sprintf("%d_%d", funding.FundingID, funding.MarketID)
 
-	return &models.FundingPaymentInput{
+	return &models.TransferInput{
 		ExchangeAccountID: accountUUID,
-		BaseAsset:         market.baseAsset,
-		QuoteAsset:        market.quoteAsset,
+		Type:              models.TypeFunding,
+		Asset:             market.quoteAsset,
 		Amount:            funding.Change,
 		Timestamp:         ts,
-		PaymentID:         paymentID,
+		Metadata: map[string]string{
+			"market":     market.baseAsset,
+			"payment_id": paymentID,
+		},
 	}, nil
 }
 
