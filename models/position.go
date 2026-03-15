@@ -18,11 +18,7 @@ type Position struct {
 	Side              string           `json:"side"`         // "long" or "short"
 	Status            string           `json:"status"`       // "open" or "closed"
 	Quantity          string           `json:"quantity"`     // NUMERIC as string
-	EntryPrice        string           `json:"entry_price"`  // weighted avg entry (USD)
-	ExitPrice         *string          `json:"exit_price"`   // weighted avg exit; nil if open
 	QuoteAsset        string           `json:"quote_asset"`  // what entry/exit prices are denominated in
-	TotalFees         string           `json:"total_fees"`
-	CumulativeFunding string           `json:"cumulative_funding"`
 	StartTime         time.Time        `json:"start_time"`
 	EndTime           *time.Time       `json:"end_time"`  // nil if open
 	CreatedAt         time.Time        `json:"created_at"`
@@ -34,13 +30,9 @@ type Position struct {
 func (p *Position) UnmarshalJSON(data []byte) error {
 	type Alias Position
 	aux := &struct {
-		StartTime         interface{} `json:"start_time"`
-		EndTime           interface{} `json:"end_time"`
-		Quantity          interface{} `json:"quantity"`
-		EntryPrice        interface{} `json:"entry_price"`
-		ExitPrice         interface{} `json:"exit_price"`
-		TotalFees         interface{} `json:"total_fees"`
-		CumulativeFunding interface{} `json:"cumulative_funding"`
+		StartTime interface{} `json:"start_time"`
+		EndTime   interface{} `json:"end_time"`
+		Quantity  interface{} `json:"quantity"`
 		*Alias
 	}{
 		Alias: (*Alias)(p),
@@ -69,19 +61,6 @@ func (p *Position) UnmarshalJSON(data []byte) error {
 	if aux.Quantity != nil {
 		p.Quantity = convertToString(aux.Quantity)
 	}
-	if aux.EntryPrice != nil {
-		p.EntryPrice = convertToString(aux.EntryPrice)
-	}
-	if aux.ExitPrice != nil {
-		s := convertToString(aux.ExitPrice)
-		p.ExitPrice = &s
-	}
-	if aux.TotalFees != nil {
-		p.TotalFees = convertToString(aux.TotalFees)
-	}
-	if aux.CumulativeFunding != nil {
-		p.CumulativeFunding = convertToString(aux.CumulativeFunding)
-	}
 
 	return nil
 }
@@ -94,13 +73,16 @@ type PositionInput struct {
 	Side              string
 	Status            string // "open" or "closed"
 	Quantity          string
-	EntryPrice        string
-	ExitPrice         string // "" if open
-	TotalFees         string
-	CumulativeFunding string
 	QuoteAsset        string // What the entry/exit prices are denominated in
 	StartTime         int64  // Unix ms
 	EndTime           int64  // 0 if open
+}
+
+// PositionPnlInput represents input for upserting position PnL records.
+type PositionPnlInput struct {
+	PositionID   uuid.UUID
+	Denomination string
+	Value        string
 }
 
 // PositionEvent links a position to a source event (trade, transfer, funding)

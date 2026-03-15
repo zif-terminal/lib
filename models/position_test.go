@@ -15,10 +15,6 @@ func TestPosition_UnmarshalJSON_BigintTimestamps(t *testing.T) {
 		"side": "long",
 		"status": "closed",
 		"quantity": "100.5",
-		"entry_price": "150.25",
-		"exit_price": "160.00",
-		"total_fees": "1.5",
-		"cumulative_funding": "0.5",
 		"start_time": 1700000000000,
 		"end_time": 1700100000000
 	}`
@@ -34,12 +30,6 @@ func TestPosition_UnmarshalJSON_BigintTimestamps(t *testing.T) {
 	}
 	if pos.Quantity != "100.5" {
 		t.Errorf("Expected quantity 100.5, got %s", pos.Quantity)
-	}
-	if pos.ExitPrice == nil {
-		t.Fatal("Expected exit_price to be non-nil")
-	}
-	if *pos.ExitPrice != "160.00" {
-		t.Errorf("Expected exit_price 160.00, got %s", *pos.ExitPrice)
 	}
 	if pos.StartTime.IsZero() {
 		t.Error("Expected start_time to be non-zero")
@@ -58,9 +48,6 @@ func TestPosition_UnmarshalJSON_StringTimestamps(t *testing.T) {
 		"side": "short",
 		"status": "open",
 		"quantity": "0.5",
-		"entry_price": "60000",
-		"total_fees": "3.0",
-		"cumulative_funding": "1.2",
 		"start_time": "1700000000000"
 	}`
 
@@ -72,9 +59,6 @@ func TestPosition_UnmarshalJSON_StringTimestamps(t *testing.T) {
 
 	if pos.Status != "open" {
 		t.Errorf("Expected open, got %s", pos.Status)
-	}
-	if pos.ExitPrice != nil {
-		t.Errorf("Expected nil exit_price, got %v", pos.ExitPrice)
 	}
 	if pos.EndTime != nil {
 		t.Errorf("Expected nil end_time, got %v", pos.EndTime)
@@ -94,10 +78,6 @@ func TestPosition_UnmarshalJSON_NumericAsFloat(t *testing.T) {
 		"side": "long",
 		"status": "closed",
 		"quantity": 50.0,
-		"entry_price": 3000.5,
-		"exit_price": 3100.25,
-		"total_fees": 10.5,
-		"cumulative_funding": 2.3,
 		"start_time": 1700000000000,
 		"end_time": 1700100000000
 	}`
@@ -110,9 +90,6 @@ func TestPosition_UnmarshalJSON_NumericAsFloat(t *testing.T) {
 
 	if pos.Quantity == "" {
 		t.Error("Expected quantity to be non-empty")
-	}
-	if pos.EntryPrice == "" {
-		t.Error("Expected entry_price to be non-empty")
 	}
 }
 
