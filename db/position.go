@@ -228,18 +228,13 @@ func (c *Client) AddPositionEvents(ctx context.Context, inputs []*PositionEventI
 
 	objects := make([]map[string]interface{}, len(inputs))
 	for i, inp := range inputs {
-		obj := map[string]interface{}{
+		objects[i] = map[string]interface{}{
 			"position_id": inp.PositionID.String(),
-			"event_type":  inp.EventType,
 			"event_id":    inp.EventID.String(),
+			"event_type":  inp.EventType,
 			"direction":   inp.Direction,
 			"quantity":    inp.Quantity,
-			"timestamp":   inp.Timestamp,
 		}
-		if inp.Price != "" {
-			obj["price"] = inp.Price
-		}
-		objects[i] = obj
 	}
 
 	req := c.graphqlRequestWithVars(query, map[string]interface{}{
@@ -331,22 +326,21 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 }
 
 // GetPositionEventsByPositionID returns all position events for a given position,
-// ordered by timestamp ascending (chronological trade order).
+// ordered by created_at ascending (chronological order).
 func (c *Client) GetPositionEventsByPositionID(ctx context.Context, positionID uuid.UUID) ([]*PositionEvent, error) {
 	query := `
 		query GetPositionEventsByPositionID($position_id: uuid!) {
 			position_events(
 				where: { position_id: { _eq: $position_id } }
-				order_by: { timestamp: asc }
+				order_by: { created_at: asc }
 			) {
 				id
 				position_id
-				event_type
 				event_id
+				event_type
 				direction
 				quantity
-				price
-				timestamp
+				created_at
 			}
 		}
 	`

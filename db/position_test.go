@@ -250,8 +250,6 @@ func TestClient_AddPositionEvents(t *testing.T) {
 			EventID:    eventID,
 			Direction:  "entry",
 			Quantity:   "100.5",
-			Price:      "150.25",
-			Timestamp:  1700000000000,
 		},
 		{
 			PositionID: positionID,
@@ -259,7 +257,6 @@ func TestClient_AddPositionEvents(t *testing.T) {
 			EventID:    uuid.New(),
 			Direction:  "received",
 			Quantity:   "0.5",
-			Timestamp:  1700050000000,
 		},
 		{
 			PositionID: positionID,
@@ -267,8 +264,6 @@ func TestClient_AddPositionEvents(t *testing.T) {
 			EventID:    uuid.New(),
 			Direction:  "exit",
 			Quantity:   "100.5",
-			Price:      "160.00",
-			Timestamp:  1700100000000,
 		},
 	}
 
@@ -307,7 +302,7 @@ func TestClient_AddPositionEvents_Empty(t *testing.T) {
 	}
 }
 
-func TestClient_AddPositionEvents_NoPriceField(t *testing.T) {
+func TestClient_AddPositionEvents_FundingEvent(t *testing.T) {
 	ctx := context.Background()
 
 	mockClient := &mockGraphQLClient{
@@ -334,8 +329,6 @@ func TestClient_AddPositionEvents_NoPriceField(t *testing.T) {
 			EventID:    uuid.New(),
 			Direction:  "received",
 			Quantity:   "0.5",
-			// Price intentionally empty
-			Timestamp: 1700000000000,
 		},
 	}
 
@@ -454,22 +447,20 @@ func TestClient_GetPositionEventsByPositionID(t *testing.T) {
 					{
 						"id":          uuid.New().String(),
 						"position_id": positionID.String(),
-						"event_type":  "trade",
 						"event_id":    eventID1.String(),
+						"event_type":  "trade",
 						"direction":   "entry",
 						"quantity":    "100",
-						"price":       "150.25",
-						"timestamp":   "2024-01-15T12:00:00Z",
+						"created_at":  "2024-01-15T12:00:00Z",
 					},
 					{
 						"id":          uuid.New().String(),
 						"position_id": positionID.String(),
-						"event_type":  "trade",
 						"event_id":    eventID2.String(),
+						"event_type":  "trade",
 						"direction":   "exit",
 						"quantity":    "100",
-						"price":       "160.00",
-						"timestamp":   "2024-01-16T12:00:00Z",
+						"created_at":  "2024-01-16T12:00:00Z",
 					},
 				},
 			}
@@ -483,20 +474,20 @@ func TestClient_GetPositionEventsByPositionID(t *testing.T) {
 		AdminSecret: "test-secret",
 	})
 
-	events, err := client.GetPositionEventsByPositionID(ctx, positionID)
+	trades, err := client.GetPositionEventsByPositionID(ctx, positionID)
 	if err != nil {
 		t.Fatalf("GetPositionEventsByPositionID failed: %v", err)
 	}
 
-	if len(events) != 2 {
-		t.Fatalf("Expected 2 events, got %d", len(events))
+	if len(trades) != 2 {
+		t.Fatalf("Expected 2 trades, got %d", len(trades))
 	}
 
-	if events[0].Direction != "entry" {
-		t.Errorf("Expected first event direction 'entry', got %s", events[0].Direction)
+	if trades[0].Direction != "entry" {
+		t.Errorf("Expected first trade direction 'entry', got %s", trades[0].Direction)
 	}
-	if events[1].Direction != "exit" {
-		t.Errorf("Expected second event direction 'exit', got %s", events[1].Direction)
+	if trades[1].Direction != "exit" {
+		t.Errorf("Expected second trade direction 'exit', got %s", trades[1].Direction)
 	}
 }
 
