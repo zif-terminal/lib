@@ -161,6 +161,7 @@ func (c *Client) AddPositions(ctx context.Context, inputs []*PositionInput) ([]*
 					side
 					status
 					quantity
+					quote_asset
 					start_time
 					end_time
 				}
