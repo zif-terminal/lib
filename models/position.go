@@ -103,27 +103,24 @@ type PositionInput struct {
 	EndTime           int64  // 0 if open
 }
 
-// PositionEvent represents a link between a position and a source event.
-type PositionEvent struct {
+// PositionTrade links a position to a source event (trade, transfer, settlement)
+type PositionTrade struct {
 	ID         uuid.UUID `json:"id"`
 	PositionID uuid.UUID `json:"position_id"`
-	EventType  string    `json:"event_type"` // "trade", "deposit", "funding", "settlement"
 	EventID    uuid.UUID `json:"event_id"`
-	Direction  string    `json:"direction"` // "entry" or "exit"
+	EventType  string    `json:"event_type"`  // "trade", "transfer", "settlement", "funding"
+	Direction  string    `json:"direction"`   // "entry", "exit", "received", "paid"
 	Quantity   string    `json:"quantity"`
-	Price      *string   `json:"price"`
-	Timestamp  time.Time `json:"timestamp"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
-// PositionEventInput represents input for batch-inserting position events.
-type PositionEventInput struct {
+// PositionTradeInput for batch inserts
+type PositionTradeInput struct {
 	PositionID uuid.UUID
-	EventType  string
 	EventID    uuid.UUID
+	EventType  string
 	Direction  string
 	Quantity   string
-	Price      string // "" if not applicable
-	Timestamp  int64  // Unix ms
 }
 
 // PositionFilter represents filtering options for listing positions.

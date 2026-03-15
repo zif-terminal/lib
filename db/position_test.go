@@ -221,7 +221,7 @@ func TestClient_AddPositions_OpenPosition(t *testing.T) {
 	}
 }
 
-func TestClient_AddPositionEvents(t *testing.T) {
+func TestClient_AddPositionTrades(t *testing.T) {
 	ctx := context.Background()
 	positionID := uuid.New()
 	eventID := uuid.New()
@@ -229,7 +229,7 @@ func TestClient_AddPositionEvents(t *testing.T) {
 	mockClient := &mockGraphQLClient{
 		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
 			respData := map[string]interface{}{
-				"insert_position_events": map[string]interface{}{
+				"insert_position_trades": map[string]interface{}{
 					"affected_rows": 3,
 				},
 			}
@@ -243,15 +243,13 @@ func TestClient_AddPositionEvents(t *testing.T) {
 		AdminSecret: "test-secret",
 	})
 
-	inputs := []*PositionEventInput{
+	inputs := []*PositionTradeInput{
 		{
 			PositionID: positionID,
 			EventType:  "trade",
 			EventID:    eventID,
 			Direction:  "entry",
 			Quantity:   "100.5",
-			Price:      "150.25",
-			Timestamp:  1700000000000,
 		},
 		{
 			PositionID: positionID,
@@ -259,7 +257,6 @@ func TestClient_AddPositionEvents(t *testing.T) {
 			EventID:    uuid.New(),
 			Direction:  "received",
 			Quantity:   "0.5",
-			Timestamp:  1700050000000,
 		},
 		{
 			PositionID: positionID,
@@ -267,14 +264,12 @@ func TestClient_AddPositionEvents(t *testing.T) {
 			EventID:    uuid.New(),
 			Direction:  "exit",
 			Quantity:   "100.5",
-			Price:      "160.00",
-			Timestamp:  1700100000000,
 		},
 	}
 
-	count, err := client.AddPositionEvents(ctx, inputs)
+	count, err := client.AddPositionTrades(ctx, inputs)
 	if err != nil {
-		t.Fatalf("AddPositionEvents failed: %v", err)
+		t.Fatalf("AddPositionTrades failed: %v", err)
 	}
 
 	if count != 3 {
@@ -282,12 +277,12 @@ func TestClient_AddPositionEvents(t *testing.T) {
 	}
 }
 
-func TestClient_AddPositionEvents_Empty(t *testing.T) {
+func TestClient_AddPositionTrades_Empty(t *testing.T) {
 	ctx := context.Background()
 
 	mockClient := &mockGraphQLClient{
 		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
-			t.Error("AddPositionEvents should not call GraphQL with empty input")
+			t.Error("AddPositionTrades should not call GraphQL with empty input")
 			return nil
 		},
 	}
@@ -297,9 +292,9 @@ func TestClient_AddPositionEvents_Empty(t *testing.T) {
 		AdminSecret: "test-secret",
 	})
 
-	count, err := client.AddPositionEvents(ctx, []*PositionEventInput{})
+	count, err := client.AddPositionTrades(ctx, []*PositionTradeInput{})
 	if err != nil {
-		t.Fatalf("AddPositionEvents failed: %v", err)
+		t.Fatalf("AddPositionTrades failed: %v", err)
 	}
 
 	if count != 0 {
@@ -307,13 +302,13 @@ func TestClient_AddPositionEvents_Empty(t *testing.T) {
 	}
 }
 
-func TestClient_AddPositionEvents_NoPriceField(t *testing.T) {
+func TestClient_AddPositionTrades_FundingEvent(t *testing.T) {
 	ctx := context.Background()
 
 	mockClient := &mockGraphQLClient{
 		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
 			respData := map[string]interface{}{
-				"insert_position_events": map[string]interface{}{
+				"insert_position_trades": map[string]interface{}{
 					"affected_rows": 1,
 				},
 			}
@@ -327,21 +322,19 @@ func TestClient_AddPositionEvents_NoPriceField(t *testing.T) {
 		AdminSecret: "test-secret",
 	})
 
-	inputs := []*PositionEventInput{
+	inputs := []*PositionTradeInput{
 		{
 			PositionID: uuid.New(),
 			EventType:  "funding",
 			EventID:    uuid.New(),
 			Direction:  "received",
 			Quantity:   "0.5",
-			// Price intentionally empty
-			Timestamp: 1700000000000,
 		},
 	}
 
-	count, err := client.AddPositionEvents(ctx, inputs)
+	count, err := client.AddPositionTrades(ctx, inputs)
 	if err != nil {
-		t.Fatalf("AddPositionEvents failed: %v", err)
+		t.Fatalf("AddPositionTrades failed: %v", err)
 	}
 
 	if count != 1 {
@@ -441,7 +434,7 @@ func TestClient_GetPositions_NoFilter(t *testing.T) {
 	}
 }
 
-func TestClient_GetPositionEventsByPositionID(t *testing.T) {
+func TestClient_GetPositionTradesByPositionID(t *testing.T) {
 	ctx := context.Background()
 	positionID := uuid.New()
 	eventID1 := uuid.New()
@@ -450,26 +443,24 @@ func TestClient_GetPositionEventsByPositionID(t *testing.T) {
 	mockClient := &mockGraphQLClient{
 		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
 			respData := map[string]interface{}{
-				"position_events": []map[string]interface{}{
+				"position_trades": []map[string]interface{}{
 					{
 						"id":          uuid.New().String(),
 						"position_id": positionID.String(),
-						"event_type":  "trade",
 						"event_id":    eventID1.String(),
+						"event_type":  "trade",
 						"direction":   "entry",
 						"quantity":    "100",
-						"price":       "150.25",
-						"timestamp":   "2024-01-15T12:00:00Z",
+						"created_at":  "2024-01-15T12:00:00Z",
 					},
 					{
 						"id":          uuid.New().String(),
 						"position_id": positionID.String(),
-						"event_type":  "trade",
 						"event_id":    eventID2.String(),
+						"event_type":  "trade",
 						"direction":   "exit",
 						"quantity":    "100",
-						"price":       "160.00",
-						"timestamp":   "2024-01-16T12:00:00Z",
+						"created_at":  "2024-01-16T12:00:00Z",
 					},
 				},
 			}
@@ -483,24 +474,24 @@ func TestClient_GetPositionEventsByPositionID(t *testing.T) {
 		AdminSecret: "test-secret",
 	})
 
-	events, err := client.GetPositionEventsByPositionID(ctx, positionID)
+	trades, err := client.GetPositionTradesByPositionID(ctx, positionID)
 	if err != nil {
-		t.Fatalf("GetPositionEventsByPositionID failed: %v", err)
+		t.Fatalf("GetPositionTradesByPositionID failed: %v", err)
 	}
 
-	if len(events) != 2 {
-		t.Fatalf("Expected 2 events, got %d", len(events))
+	if len(trades) != 2 {
+		t.Fatalf("Expected 2 trades, got %d", len(trades))
 	}
 
-	if events[0].Direction != "entry" {
-		t.Errorf("Expected first event direction 'entry', got %s", events[0].Direction)
+	if trades[0].Direction != "entry" {
+		t.Errorf("Expected first trade direction 'entry', got %s", trades[0].Direction)
 	}
-	if events[1].Direction != "exit" {
-		t.Errorf("Expected second event direction 'exit', got %s", events[1].Direction)
+	if trades[1].Direction != "exit" {
+		t.Errorf("Expected second trade direction 'exit', got %s", trades[1].Direction)
 	}
 }
 
-func TestClient_GetPositionEventsByPositionID_Error(t *testing.T) {
+func TestClient_GetPositionTradesByPositionID_Error(t *testing.T) {
 	ctx := context.Background()
 
 	mockClient := &mockGraphQLClient{
@@ -514,7 +505,7 @@ func TestClient_GetPositionEventsByPositionID_Error(t *testing.T) {
 		AdminSecret: "test-secret",
 	})
 
-	_, err := client.GetPositionEventsByPositionID(ctx, uuid.New())
+	_, err := client.GetPositionTradesByPositionID(ctx, uuid.New())
 	if err == nil {
 		t.Fatal("Expected error")
 	}

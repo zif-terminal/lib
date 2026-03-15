@@ -11,11 +11,11 @@ import (
 // Position type aliases
 type Position = models.Position
 type PositionInput = models.PositionInput
-type PositionEvent = models.PositionEvent
-type PositionEventInput = models.PositionEventInput
+type PositionTrade = models.PositionTrade
+type PositionTradeInput = models.PositionTradeInput
 type PositionFilter = models.PositionFilter
 
-// DeletePositionsForAccount deletes all positions (and cascades to position_events)
+// DeletePositionsForAccount deletes all positions (and cascades to position_trades)
 // for a given account. Returns the number of deleted rows.
 func (c *Client) DeletePositionsForAccount(ctx context.Context, accountID uuid.UUID) (int, error) {
 	query := `
@@ -74,7 +74,7 @@ func (c *Client) DeleteOpenPositionsForAccount(ctx context.Context, accountID uu
 	return resp.DeletePositions.AffectedRows, nil
 }
 
-// DeletePositionsByIDs deletes positions by their specific IDs (and cascades to position_events).
+// DeletePositionsByIDs deletes positions by their specific IDs (and cascades to position_trades).
 // Used by the write-first-then-delete pattern to remove old positions after new ones are inserted.
 func (c *Client) DeletePositionsByIDs(ctx context.Context, ids []uuid.UUID) (int, error) {
 	if len(ids) == 0 {
@@ -212,15 +212,15 @@ func (c *Client) AddPositions(ctx context.Context, inputs []*PositionInput) ([]*
 	return resp.InsertPositions.Returning, nil
 }
 
-// AddPositionEvents batch-inserts position events.
-func (c *Client) AddPositionEvents(ctx context.Context, inputs []*PositionEventInput) (int, error) {
+// AddPositionTrades batch-inserts position trades.
+func (c *Client) AddPositionTrades(ctx context.Context, inputs []*PositionTradeInput) (int, error) {
 	if len(inputs) == 0 {
 		return 0, nil
 	}
 
 	query := `
-		mutation AddPositionEvents($objects: [position_events_insert_input!]!) {
-			insert_position_events(objects: $objects) {
+		mutation AddPositionTrades($objects: [position_trades_insert_input!]!) {
+			insert_position_trades(objects: $objects) {
 				affected_rows
 			}
 		}
@@ -228,18 +228,13 @@ func (c *Client) AddPositionEvents(ctx context.Context, inputs []*PositionEventI
 
 	objects := make([]map[string]interface{}, len(inputs))
 	for i, inp := range inputs {
-		obj := map[string]interface{}{
+		objects[i] = map[string]interface{}{
 			"position_id": inp.PositionID.String(),
-			"event_type":  inp.EventType,
 			"event_id":    inp.EventID.String(),
+			"event_type":  inp.EventType,
 			"direction":   inp.Direction,
 			"quantity":    inp.Quantity,
-			"timestamp":   inp.Timestamp,
 		}
-		if inp.Price != "" {
-			obj["price"] = inp.Price
-		}
-		objects[i] = obj
 	}
 
 	req := c.graphqlRequestWithVars(query, map[string]interface{}{
@@ -247,16 +242,16 @@ func (c *Client) AddPositionEvents(ctx context.Context, inputs []*PositionEventI
 	})
 
 	var resp struct {
-		InsertPositionEvents struct {
+		InsertPositionTrades struct {
 			AffectedRows int `json:"affected_rows"`
-		} `json:"insert_position_events"`
+		} `json:"insert_position_trades"`
 	}
 
 	if err := c.execute(ctx, req, &resp); err != nil {
-		return 0, fmt.Errorf("failed to add position events: %w", err)
+		return 0, fmt.Errorf("failed to add position trades: %w", err)
 	}
 
-	return resp.InsertPositionEvents.AffectedRows, nil
+	return resp.InsertPositionTrades.AffectedRows, nil
 }
 
 // GetPositions queries positions with filters.
@@ -330,23 +325,22 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 	return resp.Positions, nil
 }
 
-// GetPositionEventsByPositionID returns all position events for a given position,
-// ordered by timestamp ascending (chronological trade order).
-func (c *Client) GetPositionEventsByPositionID(ctx context.Context, positionID uuid.UUID) ([]*PositionEvent, error) {
+// GetPositionTradesByPositionID returns all position trades for a given position,
+// ordered by created_at ascending (chronological order).
+func (c *Client) GetPositionTradesByPositionID(ctx context.Context, positionID uuid.UUID) ([]*PositionTrade, error) {
 	query := `
-		query GetPositionEventsByPositionID($position_id: uuid!) {
-			position_events(
+		query GetPositionTradesByPositionID($position_id: uuid!) {
+			position_trades(
 				where: { position_id: { _eq: $position_id } }
-				order_by: { timestamp: asc }
+				order_by: { created_at: asc }
 			) {
 				id
 				position_id
-				event_type
 				event_id
+				event_type
 				direction
 				quantity
-				price
-				timestamp
+				created_at
 			}
 		}
 	`
@@ -356,13 +350,13 @@ func (c *Client) GetPositionEventsByPositionID(ctx context.Context, positionID u
 	})
 
 	var resp struct {
-		PositionEvents []*PositionEvent `json:"position_events"`
+		PositionTrades []*PositionTrade `json:"position_trades"`
 	}
 
 	if err := c.execute(ctx, req, &resp); err != nil {
-		return nil, fmt.Errorf("failed to get position events: %w", err)
+		return nil, fmt.Errorf("failed to get position trades: %w", err)
 	}
 
-	return resp.PositionEvents, nil
+	return resp.PositionTrades, nil
 }
 
