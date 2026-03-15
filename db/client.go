@@ -139,6 +139,7 @@ type DBClient interface {
 	ListTransfers(ctx context.Context, filter TransferFilter) ([]*Transfer, error)
 	AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*Transfer, error)
 	DeleteTransfersByAccountAndType(ctx context.Context, accountID uuid.UUID, transferType string) (int, error)
+	GetLatestTransferByType(ctx context.Context, accountID uuid.UUID, transferType string) (*Transfer, error)
 
 	// Settlement methods
 	AddSettlements(ctx context.Context, inputs []*SettlementInput) (int, error)
