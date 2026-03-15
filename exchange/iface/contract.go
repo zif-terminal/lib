@@ -161,7 +161,7 @@ func RunExchangeClientContractTests(t *testing.T, contract ExchangeClientContrac
 
 		// Verify payment structure if payments returned
 		for _, payment := range payments {
-			validateFundingPaymentInput(t, payment)
+			validateFundingTransferInput(t, payment)
 		}
 	})
 
@@ -283,21 +283,28 @@ func validateTradeInput(t *testing.T, trade *models.TradeInput) {
 	}
 }
 
-// validateFundingPaymentInput validates FundingPaymentInput structure
-func validateFundingPaymentInput(t *testing.T, payment *models.FundingPaymentInput) {
-	if payment.PaymentID == "" {
-		t.Error("FundingPaymentInput.PaymentID must be non-empty")
+// validateFundingTransferInput validates TransferInput structure for funding payments
+func validateFundingTransferInput(t *testing.T, payment *models.TransferInput) {
+	if payment.Type != models.TypeFunding {
+		t.Errorf("TransferInput.Type must be %q, got %q", models.TypeFunding, payment.Type)
 	}
-	if payment.BaseAsset == "" {
-		t.Error("FundingPaymentInput.BaseAsset must be non-empty")
-	}
-	if payment.QuoteAsset == "" {
-		t.Error("FundingPaymentInput.QuoteAsset must be non-empty")
+	if payment.Asset == "" {
+		t.Error("TransferInput.Asset must be non-empty")
 	}
 	if payment.Amount == "" {
-		t.Error("FundingPaymentInput.Amount must be non-empty")
+		t.Error("TransferInput.Amount must be non-empty")
 	}
 	if payment.Timestamp.IsZero() {
-		t.Error("FundingPaymentInput.Timestamp must be non-zero")
+		t.Error("TransferInput.Timestamp must be non-zero")
+	}
+	if payment.Metadata == nil {
+		t.Error("TransferInput.Metadata must be non-nil for funding payments")
+	} else {
+		if payment.Metadata["market"] == "" {
+			t.Error("TransferInput.Metadata[\"market\"] must be non-empty")
+		}
+		if payment.Metadata["payment_id"] == "" {
+			t.Error("TransferInput.Metadata[\"payment_id\"] must be non-empty")
+		}
 	}
 }

@@ -356,10 +356,15 @@ func TestClient_FetchFundingPayments_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, payments, 2)
 
+	// Verify all payments have type="funding"
+	for _, p := range payments {
+		assert.Equal(t, models.TypeFunding, p.Type)
+	}
+
 	// Verify first payment (positive - received)
-	assert.Equal(t, "1001_1", payments[0].PaymentID)
-	assert.Equal(t, "ETH", payments[0].BaseAsset)
-	assert.Equal(t, "USDC", payments[0].QuoteAsset)
+	assert.Equal(t, "1001_1", payments[0].Metadata["payment_id"])
+	assert.Equal(t, "ETH", payments[0].Metadata["market"])
+	assert.Equal(t, "USDC", payments[0].Asset)
 	assert.Equal(t, "0.5", payments[0].Amount)
 
 	// Verify second payment (negative - paid)

@@ -179,16 +179,19 @@ func TestHyperliquidClient_Integration_FundingPayments(t *testing.T) {
 
 	t.Logf("Fetched %d funding payments", len(payments))
 
-	// Verify payment structure
+	// Verify payment structure (now TransferInput)
 	for i, payment := range payments {
-		if payment.PaymentID == "" {
-			t.Errorf("Payment %d: PaymentID is empty", i)
+		if payment.Type != models.TypeFunding {
+			t.Errorf("Payment %d: Type should be 'funding', got '%s'", i, payment.Type)
 		}
-		if payment.BaseAsset == "" {
-			t.Errorf("Payment %d: BaseAsset is empty", i)
+		if payment.Metadata["payment_id"] == "" {
+			t.Errorf("Payment %d: Metadata[payment_id] is empty", i)
 		}
-		if payment.QuoteAsset == "" {
-			t.Errorf("Payment %d: QuoteAsset is empty", i)
+		if payment.Metadata["market"] == "" {
+			t.Errorf("Payment %d: Metadata[market] is empty", i)
+		}
+		if payment.Asset == "" {
+			t.Errorf("Payment %d: Asset is empty", i)
 		}
 		if payment.Amount == "" {
 			t.Errorf("Payment %d: Amount is empty", i)

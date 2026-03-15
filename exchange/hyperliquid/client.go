@@ -343,12 +343,12 @@ func convertToString(v interface{}) string {
 }
 
 // FetchFundingPayments fetches funding payments directly from Hyperliquid API
-// Transforms exchange response directly to []*models.FundingPaymentInput
+// Transforms exchange response directly to []*models.TransferInput with type="funding"
 func (c *Client) FetchFundingPayments(
 	ctx context.Context,
 	account *models.ExchangeAccount,
 	since time.Time,
-) ([]*models.FundingPaymentInput, error) {
+) ([]*models.TransferInput, error) {
 	// Check if ctx is cancelled
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -414,8 +414,8 @@ func (c *Client) FetchFundingPayments(
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Transform to FundingPaymentInput
-	payments := make([]*models.FundingPaymentInput, 0)
+	// Transform to TransferInput
+	payments := make([]*models.TransferInput, 0)
 	for _, apiPayment := range apiPayments {
 		// Parse timestamp first
 		paymentTimestamp := parseTimestamp(apiPayment.Time)
@@ -441,8 +441,8 @@ func (c *Client) FetchFundingPayments(
 	return payments, nil
 }
 
-// transformFundingPayment converts Hyperliquid funding payment format to FundingPaymentInput
-func transformFundingPayment(apiPayment hyperliquidFundingPayment, accountUUID uuid.UUID) (*models.FundingPaymentInput, error) {
+// transformFundingPayment converts Hyperliquid funding payment format to TransferInput
+func transformFundingPayment(apiPayment hyperliquidFundingPayment, accountUUID uuid.UUID) (*models.TransferInput, error) {
 	// Parse timestamp (Hyperliquid returns Unix timestamp in milliseconds)
 	timestamp := parseTimestamp(apiPayment.Time)
 	if timestamp.IsZero() {
@@ -464,13 +464,16 @@ func transformFundingPayment(apiPayment hyperliquidFundingPayment, accountUUID u
 	// Format: {timestamp_ms}_{coin}
 	paymentID := fmt.Sprintf("%d_%s", timestamp.UnixMilli(), baseAsset)
 
-	return &models.FundingPaymentInput{
+	return &models.TransferInput{
 		ExchangeAccountID: accountUUID,
-		BaseAsset:         baseAsset,
-		QuoteAsset:        quoteAsset,
+		Type:              models.TypeFunding,
+		Asset:             quoteAsset,
 		Amount:            amount,
 		Timestamp:         timestamp,
-		PaymentID:         paymentID,
+		Metadata: map[string]string{
+			"market":     baseAsset,
+			"payment_id": paymentID,
+		},
 	}, nil
 }
 

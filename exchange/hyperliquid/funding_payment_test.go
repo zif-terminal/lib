@@ -96,26 +96,33 @@ func TestHyperliquidClient_FetchFundingPayments_Success(t *testing.T) {
 		t.Fatalf("Expected 2 payments, got %d", len(payments))
 	}
 
+	// Verify all payments have type="funding"
+	for _, p := range payments {
+		if p.Type != models.TypeFunding {
+			t.Errorf("Expected type 'funding', got '%s'", p.Type)
+		}
+	}
+
 	// Verify first payment (should be oldest due to sorting)
-	// PaymentID format: {timestamp_ms}_{coin}
+	// PaymentID format: {timestamp_ms}_{coin} stored in metadata
 	expectedPaymentID1 := fmt.Sprintf("%d_BTC", payments[0].Timestamp.UnixMilli())
-	if payments[0].PaymentID != expectedPaymentID1 {
-		t.Errorf("Expected payment ID '%s', got '%s'", expectedPaymentID1, payments[0].PaymentID)
+	if payments[0].Metadata["payment_id"] != expectedPaymentID1 {
+		t.Errorf("Expected payment ID '%s', got '%s'", expectedPaymentID1, payments[0].Metadata["payment_id"])
 	}
 	if payments[0].Amount != "10.5" {
 		t.Errorf("Expected amount '10.5', got '%s'", payments[0].Amount)
 	}
-	if payments[0].BaseAsset != "BTC" {
-		t.Errorf("Expected base asset 'BTC', got '%s'", payments[0].BaseAsset)
+	if payments[0].Metadata["market"] != "BTC" {
+		t.Errorf("Expected market 'BTC', got '%s'", payments[0].Metadata["market"])
 	}
-	if payments[0].QuoteAsset != "USDC" {
-		t.Errorf("Expected quote asset 'USDC', got '%s'", payments[0].QuoteAsset)
+	if payments[0].Asset != "USDC" {
+		t.Errorf("Expected asset 'USDC', got '%s'", payments[0].Asset)
 	}
 
 	// Verify second payment
 	expectedPaymentID2 := fmt.Sprintf("%d_ETH", payments[1].Timestamp.UnixMilli())
-	if payments[1].PaymentID != expectedPaymentID2 {
-		t.Errorf("Expected payment ID '%s', got '%s'", expectedPaymentID2, payments[1].PaymentID)
+	if payments[1].Metadata["payment_id"] != expectedPaymentID2 {
+		t.Errorf("Expected payment ID '%s', got '%s'", expectedPaymentID2, payments[1].Metadata["payment_id"])
 	}
 	if payments[1].Amount != "-5.25" {
 		t.Errorf("Expected amount '-5.25', got '%s'", payments[1].Amount)
@@ -264,10 +271,10 @@ func TestHyperliquidClient_FetchFundingPayments_FiltersBySince(t *testing.T) {
 		t.Fatalf("Expected 1 payment after filtering, got %d", len(payments))
 	}
 
-	// PaymentID format: {timestamp_ms}_{coin}
+	// PaymentID format: {timestamp_ms}_{coin} stored in metadata
 	expectedPaymentID := fmt.Sprintf("%d_ETH", payments[0].Timestamp.UnixMilli())
-	if payments[0].PaymentID != expectedPaymentID {
-		t.Errorf("Expected payment ID '%s', got '%s'", expectedPaymentID, payments[0].PaymentID)
+	if payments[0].Metadata["payment_id"] != expectedPaymentID {
+		t.Errorf("Expected payment ID '%s', got '%s'", expectedPaymentID, payments[0].Metadata["payment_id"])
 	}
 }
 
@@ -303,7 +310,7 @@ func TestHyperliquidClient_FetchFundingPayments_MissingCoin(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		response := []hyperliquidFundingPayment{
 			{
-				Hash: "0x123", // Hash is no longer required, but we include it for completeness
+				Hash: "0x123",
 				Time: time.Now().UnixMilli(),
 				Delta: struct {
 					Type        string      `json:"type"`
@@ -402,19 +409,19 @@ func TestHyperliquidClient_FetchFundingPayments_AssetParsing(t *testing.T) {
 		t.Fatalf("Expected 2 payments, got %d", len(payments))
 	}
 
-	// First payment: BTC with no separator -> should default to USDC
-	if payments[0].BaseAsset != "BTC" {
-		t.Errorf("Expected base asset 'BTC', got '%s'", payments[0].BaseAsset)
+	// First payment: BTC with no separator -> market=BTC, asset=USDC
+	if payments[0].Metadata["market"] != "BTC" {
+		t.Errorf("Expected market 'BTC', got '%s'", payments[0].Metadata["market"])
 	}
-	if payments[0].QuoteAsset != "USDC" {
-		t.Errorf("Expected quote asset 'USDC', got '%s'", payments[0].QuoteAsset)
+	if payments[0].Asset != "USDC" {
+		t.Errorf("Expected asset 'USDC', got '%s'", payments[0].Asset)
 	}
 
-	// Second payment: ETH-USDT -> should parse correctly
-	if payments[1].BaseAsset != "ETH" {
-		t.Errorf("Expected base asset 'ETH', got '%s'", payments[1].BaseAsset)
+	// Second payment: ETH-USDT -> market=ETH, asset=USDT
+	if payments[1].Metadata["market"] != "ETH" {
+		t.Errorf("Expected market 'ETH', got '%s'", payments[1].Metadata["market"])
 	}
-	if payments[1].QuoteAsset != "USDT" {
-		t.Errorf("Expected quote asset 'USDT', got '%s'", payments[1].QuoteAsset)
+	if payments[1].Asset != "USDT" {
+		t.Errorf("Expected asset 'USDT', got '%s'", payments[1].Asset)
 	}
 }

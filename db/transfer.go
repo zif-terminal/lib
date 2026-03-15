@@ -40,6 +40,7 @@ func (c *Client) ListTransfers(ctx context.Context, filter TransferFilter) ([]*T
 				amount
 				timestamp
 				cost_basis
+				metadata
 			}
 		}
 	`
@@ -78,6 +79,9 @@ func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*
 		if input.CostBasis != "" {
 			obj["cost_basis"] = input.CostBasis
 		}
+		if len(input.Metadata) > 0 {
+			obj["metadata"] = input.Metadata
+		}
 		objects[i] = obj
 	}
 
@@ -92,6 +96,7 @@ func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*
 					amount
 					timestamp
 					cost_basis
+					metadata
 				}
 			}
 		}
@@ -143,4 +148,49 @@ func (c *Client) DeleteTransfersByAccountAndType(ctx context.Context, accountID 
 	}
 
 	return resp.DeleteTransfers.AffectedRows, nil
+}
+
+// GetLatestTransferByType retrieves the most recent transfer of a given type for an account.
+// Returns nil, nil if no matching transfer is found.
+func (c *Client) GetLatestTransferByType(ctx context.Context, accountID uuid.UUID, transferType string) (*Transfer, error) {
+	query := `
+		query GetLatestTransferByType($exchange_account_id: uuid!, $type: String!) {
+			transfers(
+				where: {
+					exchange_account_id: { _eq: $exchange_account_id }
+					type: { _eq: $type }
+				}
+				order_by: { timestamp: desc }
+				limit: 1
+			) {
+				id
+				exchange_account_id
+				type
+				asset
+				amount
+				timestamp
+				cost_basis
+				metadata
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"exchange_account_id": accountID.String(),
+		"type":                transferType,
+	})
+
+	var resp struct {
+		Transfers []*Transfer `json:"transfers"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get latest transfer by type: %w", err)
+	}
+
+	if len(resp.Transfers) == 0 {
+		return nil, nil
+	}
+
+	return resp.Transfers[0], nil
 }

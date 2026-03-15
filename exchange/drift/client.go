@@ -163,7 +163,7 @@ func (c *Client) FetchFundingPayments(
 	ctx context.Context,
 	account *models.ExchangeAccount,
 	since time.Time,
-) ([]*models.FundingPaymentInput, error) {
+) ([]*models.TransferInput, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -185,7 +185,7 @@ func (c *Client) FetchFundingPayments(
 		"fundingPayments",
 		since,
 		c.createFundingPageFetcher(accountUUID),
-		func(p *models.FundingPaymentInput) time.Time { return p.Timestamp },
+		func(p *models.TransferInput) time.Time { return p.Timestamp },
 	)
 	if err != nil {
 		return nil, err
@@ -313,37 +313,37 @@ func (c *Client) createSwapPageFetcher(accountUUID uuid.UUID) pageFetcher[*model
 	}
 }
 
-func (c *Client) createFundingPageFetcher(accountUUID uuid.UUID) pageFetcher[*models.FundingPaymentInput] {
-	return func(ctx context.Context, url string) (pageResult[*models.FundingPaymentInput], error) {
+func (c *Client) createFundingPageFetcher(accountUUID uuid.UUID) pageFetcher[*models.TransferInput] {
+	return func(ctx context.Context, url string) (pageResult[*models.TransferInput], error) {
 		resp, err := c.doRequestWithRetry(ctx, url)
 		if err != nil {
-			return pageResult[*models.FundingPaymentInput]{}, fmt.Errorf("failed to fetch funding payments: %w", err)
+			return pageResult[*models.TransferInput]{}, fmt.Errorf("failed to fetch funding payments: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return pageResult[*models.FundingPaymentInput]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+			return pageResult[*models.TransferInput]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
 		}
 
 		var response driftFundingResponse
 		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			return pageResult[*models.FundingPaymentInput]{}, fmt.Errorf("failed to decode response: %w", err)
+			return pageResult[*models.TransferInput]{}, fmt.Errorf("failed to decode response: %w", err)
 		}
 
 		if !response.Success {
-			return pageResult[*models.FundingPaymentInput]{}, fmt.Errorf("API returned success=false")
+			return pageResult[*models.TransferInput]{}, fmt.Errorf("API returned success=false")
 		}
 
-		payments := make([]*models.FundingPaymentInput, 0, len(response.Records))
+		payments := make([]*models.TransferInput, 0, len(response.Records))
 		for _, record := range response.Records {
 			payment, err := c.transformFundingPayment(ctx, record, accountUUID)
 			if err != nil {
-				return pageResult[*models.FundingPaymentInput]{}, fmt.Errorf("failed to transform funding payment: %w", err)
+				return pageResult[*models.TransferInput]{}, fmt.Errorf("failed to transform funding payment: %w", err)
 			}
 			payments = append(payments, payment)
 		}
 
-		return pageResult[*models.FundingPaymentInput]{
+		return pageResult[*models.TransferInput]{
 			items:    payments,
 			nextPage: extractNextPage(response.Meta),
 		}, nil
@@ -615,7 +615,7 @@ func (c *Client) transformSwap(record driftSwapRecord, accountUUID uuid.UUID) *m
 	}
 }
 
-func (c *Client) transformFundingPayment(ctx context.Context, record driftFundingPayment, accountUUID uuid.UUID) (*models.FundingPaymentInput, error) {
+func (c *Client) transformFundingPayment(ctx context.Context, record driftFundingPayment, accountUUID uuid.UUID) (*models.TransferInput, error) {
 	marketInfo, err := c.getMarketInfo(ctx, record.MarketIndex, "perp")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get market info for index %d: %w", record.MarketIndex, err)
@@ -625,13 +625,16 @@ func (c *Client) transformFundingPayment(ctx context.Context, record driftFundin
 	paymentID := fmt.Sprintf("%s_%d", record.TxSig, record.TxSigIndex)
 	timestamp := time.Unix(record.Ts, 0).UTC()
 
-	return &models.FundingPaymentInput{
+	return &models.TransferInput{
 		ExchangeAccountID: accountUUID,
-		BaseAsset:         marketInfo.BaseAsset,
-		QuoteAsset:        marketInfo.QuoteAsset,
+		Type:              models.TypeFunding,
+		Asset:             marketInfo.QuoteAsset,
 		Amount:            amount,
 		Timestamp:         timestamp,
-		PaymentID:         paymentID,
+		Metadata: map[string]string{
+			"market":     marketInfo.BaseAsset,
+			"payment_id": paymentID,
+		},
 	}, nil
 }
 
