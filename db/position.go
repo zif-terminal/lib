@@ -11,11 +11,11 @@ import (
 // Position type aliases
 type Position = models.Position
 type PositionInput = models.PositionInput
-type PositionTrade = models.PositionTrade
-type PositionTradeInput = models.PositionTradeInput
+type PositionEvent = models.PositionEvent
+type PositionEventInput = models.PositionEventInput
 type PositionFilter = models.PositionFilter
 
-// DeletePositionsForAccount deletes all positions (and cascades to position_trades)
+// DeletePositionsForAccount deletes all positions (and cascades to position_events)
 // for a given account. Returns the number of deleted rows.
 func (c *Client) DeletePositionsForAccount(ctx context.Context, accountID uuid.UUID) (int, error) {
 	query := `
@@ -74,7 +74,7 @@ func (c *Client) DeleteOpenPositionsForAccount(ctx context.Context, accountID uu
 	return resp.DeletePositions.AffectedRows, nil
 }
 
-// DeletePositionsByIDs deletes positions by their specific IDs (and cascades to position_trades).
+// DeletePositionsByIDs deletes positions by their specific IDs (and cascades to position_events).
 // Used by the write-first-then-delete pattern to remove old positions after new ones are inserted.
 func (c *Client) DeletePositionsByIDs(ctx context.Context, ids []uuid.UUID) (int, error) {
 	if len(ids) == 0 {
@@ -212,15 +212,15 @@ func (c *Client) AddPositions(ctx context.Context, inputs []*PositionInput) ([]*
 	return resp.InsertPositions.Returning, nil
 }
 
-// AddPositionTrades batch-inserts position trades.
-func (c *Client) AddPositionTrades(ctx context.Context, inputs []*PositionTradeInput) (int, error) {
+// AddPositionEvents batch-inserts position events.
+func (c *Client) AddPositionEvents(ctx context.Context, inputs []*PositionEventInput) (int, error) {
 	if len(inputs) == 0 {
 		return 0, nil
 	}
 
 	query := `
-		mutation AddPositionTrades($objects: [position_trades_insert_input!]!) {
-			insert_position_trades(objects: $objects) {
+		mutation AddPositionEvents($objects: [position_events_insert_input!]!) {
+			insert_position_events(objects: $objects) {
 				affected_rows
 			}
 		}
@@ -242,16 +242,16 @@ func (c *Client) AddPositionTrades(ctx context.Context, inputs []*PositionTradeI
 	})
 
 	var resp struct {
-		InsertPositionTrades struct {
+		InsertPositionEvents struct {
 			AffectedRows int `json:"affected_rows"`
-		} `json:"insert_position_trades"`
+		} `json:"insert_position_events"`
 	}
 
 	if err := c.execute(ctx, req, &resp); err != nil {
-		return 0, fmt.Errorf("failed to add position trades: %w", err)
+		return 0, fmt.Errorf("failed to add position events: %w", err)
 	}
 
-	return resp.InsertPositionTrades.AffectedRows, nil
+	return resp.InsertPositionEvents.AffectedRows, nil
 }
 
 // GetPositions queries positions with filters.
@@ -325,12 +325,12 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 	return resp.Positions, nil
 }
 
-// GetPositionTradesByPositionID returns all position trades for a given position,
+// GetPositionEventsByPositionID returns all position events for a given position,
 // ordered by created_at ascending (chronological order).
-func (c *Client) GetPositionTradesByPositionID(ctx context.Context, positionID uuid.UUID) ([]*PositionTrade, error) {
+func (c *Client) GetPositionEventsByPositionID(ctx context.Context, positionID uuid.UUID) ([]*PositionEvent, error) {
 	query := `
-		query GetPositionTradesByPositionID($position_id: uuid!) {
-			position_trades(
+		query GetPositionEventsByPositionID($position_id: uuid!) {
+			position_events(
 				where: { position_id: { _eq: $position_id } }
 				order_by: { created_at: asc }
 			) {
@@ -350,13 +350,13 @@ func (c *Client) GetPositionTradesByPositionID(ctx context.Context, positionID u
 	})
 
 	var resp struct {
-		PositionTrades []*PositionTrade `json:"position_trades"`
+		PositionEvents []*PositionEvent `json:"position_events"`
 	}
 
 	if err := c.execute(ctx, req, &resp); err != nil {
-		return nil, fmt.Errorf("failed to get position trades: %w", err)
+		return nil, fmt.Errorf("failed to get position events: %w", err)
 	}
 
-	return resp.PositionTrades, nil
+	return resp.PositionEvents, nil
 }
 

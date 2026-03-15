@@ -118,9 +118,9 @@ type DBClient interface {
 	DeletePositionsByIDs(ctx context.Context, ids []uuid.UUID) (int, error)
 	CountClosedPositions(ctx context.Context, accountID uuid.UUID) (int, error)
 	AddPositions(ctx context.Context, inputs []*PositionInput) ([]*Position, error)
-	AddPositionTrades(ctx context.Context, inputs []*PositionTradeInput) (int, error)
+	AddPositionEvents(ctx context.Context, inputs []*PositionEventInput) (int, error)
 	GetPositions(ctx context.Context, filter PositionFilter) ([]*Position, error)
-	GetPositionTradesByPositionID(ctx context.Context, positionID uuid.UUID) ([]*PositionTrade, error)
+	GetPositionEventsByPositionID(ctx context.Context, positionID uuid.UUID) ([]*PositionEvent, error)
 	// Wallet methods
 	GetWallet(ctx context.Context, id string) (*Wallet, error)
 	GetWalletByAddress(ctx context.Context, address string, chain string) (*Wallet, error)

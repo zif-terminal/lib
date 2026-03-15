@@ -103,8 +103,8 @@ type PositionInput struct {
 	EndTime           int64  // 0 if open
 }
 
-// PositionTrade links a position to a source event (trade, transfer, settlement)
-type PositionTrade struct {
+// PositionEvent links a position to a source event (trade, transfer, funding)
+type PositionEvent struct {
 	ID         uuid.UUID `json:"id"`
 	PositionID uuid.UUID `json:"position_id"`
 	EventID    uuid.UUID `json:"event_id"`
@@ -114,8 +114,8 @@ type PositionTrade struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-// PositionTradeInput for batch inserts
-type PositionTradeInput struct {
+// PositionEventInput for batch inserts
+type PositionEventInput struct {
 	PositionID uuid.UUID
 	EventID    uuid.UUID
 	EventType  string
