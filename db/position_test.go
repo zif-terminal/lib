@@ -76,9 +76,6 @@ func TestClient_AddPositions(t *testing.T) {
 			Side:              "long",
 			Status:            "closed",
 			Quantity:          "100.5",
-			EntryPrice:        "150.25",
-			TotalFees:         "1.5",
-			CumulativeFunding: "0.5",
 		},
 	}
 
@@ -107,10 +104,6 @@ func TestClient_AddPositions(t *testing.T) {
 			Side:              "long",
 			Status:            "closed",
 			Quantity:          "100.5",
-			EntryPrice:        "150.25",
-			ExitPrice:         "160.00",
-			TotalFees:         "1.5",
-			CumulativeFunding: "0.5",
 			QuoteAsset:        "USDC",
 			StartTime:         1700000000000,
 			EndTime:           1700100000000,
@@ -173,9 +166,6 @@ func TestClient_AddPositions_OpenPosition(t *testing.T) {
 							Side:              "short",
 							Status:            "open",
 							Quantity:          "0.5",
-							EntryPrice:        "60000",
-							TotalFees:         "3.0",
-							CumulativeFunding: "1.2",
 						},
 					},
 				},
@@ -190,7 +180,7 @@ func TestClient_AddPositions_OpenPosition(t *testing.T) {
 		AdminSecret: "test-secret",
 	})
 
-	// Open position — no ExitPrice, EndTime, or OrderID
+	// Open position — no EndTime
 	inputs := []*PositionInput{
 		{
 			ExchangeAccountID: accountID,
@@ -199,9 +189,6 @@ func TestClient_AddPositions_OpenPosition(t *testing.T) {
 			Side:              "short",
 			Status:            "open",
 			Quantity:          "0.5",
-			EntryPrice:        "60000",
-			TotalFees:         "3.0",
-			CumulativeFunding: "1.2",
 			QuoteAsset:        "USDC",
 			StartTime:         1700000000000,
 		},
@@ -355,9 +342,6 @@ func TestClient_GetPositions(t *testing.T) {
 			Side:              "long",
 			Status:            "closed",
 			Quantity:          "100",
-			EntryPrice:        "150",
-			TotalFees:         "1.5",
-			CumulativeFunding: "0.5",
 		},
 		{
 			ID:                uuid.New(),
@@ -367,9 +351,6 @@ func TestClient_GetPositions(t *testing.T) {
 			Side:              "short",
 			Status:            "open",
 			Quantity:          "0.5",
-			EntryPrice:        "60000",
-			TotalFees:         "3.0",
-			CumulativeFunding: "1.2",
 		},
 	}
 

@@ -11,6 +11,7 @@ import (
 // Position type aliases
 type Position = models.Position
 type PositionInput = models.PositionInput
+type PositionPnlInput = models.PositionPnlInput
 type PositionEvent = models.PositionEvent
 type PositionEventInput = models.PositionEventInput
 type PositionFilter = models.PositionFilter
@@ -160,10 +161,6 @@ func (c *Client) AddPositions(ctx context.Context, inputs []*PositionInput) ([]*
 					side
 					status
 					quantity
-					entry_price
-					exit_price
-					total_fees
-					cumulative_funding
 					start_time
 					end_time
 				}
@@ -180,14 +177,8 @@ func (c *Client) AddPositions(ctx context.Context, inputs []*PositionInput) ([]*
 			"side":                inp.Side,
 			"status":              inp.Status,
 			"quantity":            inp.Quantity,
-			"entry_price":         inp.EntryPrice,
-			"total_fees":          inp.TotalFees,
-			"cumulative_funding":  inp.CumulativeFunding,
 			"quote_asset":         inp.QuoteAsset,
 			"start_time":          inp.StartTime,
-		}
-		if inp.ExitPrice != "" {
-			obj["exit_price"] = inp.ExitPrice
 		}
 		if inp.EndTime != 0 {
 			obj["end_time"] = inp.EndTime
@@ -285,11 +276,7 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 				side
 				status
 				quantity
-				entry_price
-				exit_price
 				quote_asset
-				total_fees
-				cumulative_funding
 				start_time
 				end_time
 				updated_at
@@ -358,5 +345,44 @@ func (c *Client) GetPositionEventsByPositionID(ctx context.Context, positionID u
 	}
 
 	return resp.PositionEvents, nil
+}
+
+// UpsertPositionPnl batch-upserts position PnL records.
+func (c *Client) UpsertPositionPnl(ctx context.Context, inputs []*PositionPnlInput) (int, error) {
+	if len(inputs) == 0 {
+		return 0, nil
+	}
+	query := `
+		mutation UpsertPositionPnl($objects: [position_pnl_insert_input!]!) {
+			insert_position_pnl(
+				objects: $objects,
+				on_conflict: {
+					constraint: position_pnl_unique,
+					update_columns: [value, updated_at]
+				}
+			) {
+				affected_rows
+			}
+		}
+	`
+	objects := make([]map[string]interface{}, len(inputs))
+	for i, inp := range inputs {
+		objects[i] = map[string]interface{}{
+			"position_id":  inp.PositionID.String(),
+			"denomination": inp.Denomination,
+			"value":        inp.Value,
+			"updated_at":   "now()",
+		}
+	}
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{"objects": objects})
+	var resp struct {
+		InsertPositionPnl struct {
+			AffectedRows int `json:"affected_rows"`
+		} `json:"insert_position_pnl"`
+	}
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return 0, fmt.Errorf("failed to upsert position pnl: %w", err)
+	}
+	return resp.InsertPositionPnl.AffectedRows, nil
 }
 
