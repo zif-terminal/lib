@@ -43,12 +43,9 @@ type AssetState struct {
 type OpenPosition struct {
 	Market             string         `json:"market"`              // e.g., "SOL" or "SOL-PERP"
 	MarketType         string         `json:"market_type"`         // "perp" or "spot"
-	QuoteAsset         string         `json:"quote_asset"`         // What entry_price is denominated in
+	QuoteAsset         string         `json:"quote_asset"`         // What the position is quoted in
 	Side               string         `json:"side"`                // "long" or "short"
 	Quantity           string         `json:"quantity"`            // Current position size
-	AvgEntryPrice      string         `json:"avg_entry_price"`     // Weighted average entry (metadata)
-	TotalEntryValue    string         `json:"total_entry_value"`   // For calculating weighted avg
-	TotalEntryQty      string         `json:"total_entry_qty"`     // Total qty entered
 	TotalFees          string         `json:"total_fees"`          // Accumulated fees
 	CumulativeFunding  string         `json:"cumulative_funding"`  // Funding paid/received for this position
 	ContributingTrades []string       `json:"contributing_trades"` // Exchange trade IDs
@@ -61,11 +58,9 @@ type OpenPosition struct {
 type ClosedPosition struct {
 	Market            string         `json:"market"`
 	MarketType        string         `json:"market_type"` // "perp" or "spot"
-	QuoteAsset        string         `json:"quote_asset"` // What prices are denominated in
+	QuoteAsset        string         `json:"quote_asset"` // What the position is quoted in
 	Side              string         `json:"side"`         // "long" or "short"
 	Quantity          string         `json:"quantity"`     // Total qty that was closed
-	EntryPrice        string         `json:"entry_price"`  // Weighted avg entry (metadata)
-	ExitPrice         string         `json:"exit_price"`   // Exit price (metadata)
 	TotalFees         string         `json:"total_fees"`
 	CumulativeFunding string         `json:"cumulative_funding"`
 	StartTime         int64          `json:"start_time"`
