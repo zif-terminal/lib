@@ -645,11 +645,6 @@ func (c *Client) transformDeposit(ctx context.Context, record driftDepositRecord
 	}
 
 	amount := cleanDecimalString(record.Amount)
-	costBasis := cleanDecimalString(record.OraclePrice)
-	if costBasis == "" {
-		costBasis = "0"
-	}
-
 	timestamp := time.Unix(record.Ts, 0).UTC()
 
 	direction := strings.ToLower(record.Direction)
@@ -663,7 +658,6 @@ func (c *Client) transformDeposit(ctx context.Context, record driftDepositRecord
 		Asset:             marketInfo.BaseAsset,
 		Type:              transferType,
 		Amount:            amount,
-		CostBasis:         costBasis,
 		Timestamp:         timestamp,
 	}, nil
 }
