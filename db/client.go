@@ -148,9 +148,10 @@ type DBClient interface {
 
 	// Snapshot methods
 	GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.UUID) ([]*BalanceSnapshot, error)
+	GetAllBalanceSnapshots(ctx context.Context, accountID uuid.UUID) ([]*BalanceSnapshot, error)
 
 	// Processor checkpoint methods
-	SaveCheckpoint(ctx context.Context, accountID uuid.UUID, state json.RawMessage, lastEventTimestamp int64, eventCounts json.RawMessage) error
+	SaveCheckpoint(ctx context.Context, accountID uuid.UUID, state json.RawMessage, schemaVersion int, lastTradeTs, lastTransferTs, lastSettlementTs, lastSnapshotTs int64) error
 	LoadCheckpoint(ctx context.Context, accountID uuid.UUID) (*ProcessorCheckpoint, error)
 
 	// Sync timestamp methods

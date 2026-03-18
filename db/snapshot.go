@@ -96,6 +96,64 @@ func parseFloat64(s string) (float64, error) {
 	return f, nil
 }
 
+// GetAllBalanceSnapshots returns ALL balance snapshots for an account, sorted
+// by timestamp ascending. Used by the activity processor for multi-point
+// reconciliation — reconciling at every snapshot boundary during event replay.
+// Returns float64-based BalanceSnapshot (same format as GetLatestBalanceSnapshots).
+func (c *Client) GetAllBalanceSnapshots(ctx context.Context, accountID uuid.UUID) ([]*BalanceSnapshot, error) {
+	query := `
+		query GetAllBalanceSnapshots($account_id: uuid!) {
+			spot_balance_snapshots(
+				where: { exchange_account_id: { _eq: $account_id } }
+				order_by: [{ timestamp: asc }, { asset: asc }]
+			) {
+				asset
+				balance
+				oracle_price
+				usd_value
+				timestamp
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"account_id": accountID.String(),
+	})
+
+	var resp struct {
+		Snapshots []*SpotBalanceSnapshot `json:"spot_balance_snapshots"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get all balance snapshots: %w", err)
+	}
+
+	balances := make([]*BalanceSnapshot, 0, len(resp.Snapshots))
+	for _, s := range resp.Snapshots {
+		balance, err := parseFloat64(s.Balance)
+		if err != nil {
+			return nil, fmt.Errorf("invalid balance %q for asset %s: %w", s.Balance, s.Asset, err)
+		}
+		oraclePrice, err := parseFloat64(s.OraclePrice)
+		if err != nil {
+			return nil, fmt.Errorf("invalid oracle_price %q for asset %s: %w", s.OraclePrice, s.Asset, err)
+		}
+		usdValue, err := parseFloat64(s.USDValue)
+		if err != nil {
+			return nil, fmt.Errorf("invalid usd_value %q for asset %s: %w", s.USDValue, s.Asset, err)
+		}
+		balances = append(balances, &BalanceSnapshot{
+			Asset:       s.Asset,
+			Balance:     balance,
+			OraclePrice: oraclePrice,
+			UsdValue:    usdValue,
+			TimestampMs: s.Timestamp.UnixMilli(),
+		})
+	}
+
+	return balances, nil
+}
+
 // ---------------------------------------------------------------------------
 // Snapshot write methods (used by account_sync via SnapshotDBClient)
 // ---------------------------------------------------------------------------
