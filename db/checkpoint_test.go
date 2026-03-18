@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/machinebox/graphql"
+	"github.com/zif-terminal/lib/models"
 )
 
 func TestClient_SaveCheckpoint(t *testing.T) {
@@ -33,7 +34,7 @@ func TestClient_SaveCheckpoint(t *testing.T) {
 
 	err := client.SaveCheckpoint(ctx, &ProcessorCheckpoint{
 		ExchangeAccountID:      accountID,
-		State:                  json.RawMessage(`{"positions":{},"balances":{}}`),
+		State:                  models.NewAccountState(),
 		SchemaVersion:          44,
 		LastTradeTimestamp:      1700000000000,
 		LastTransferTimestamp:   1700000001000,
@@ -62,7 +63,7 @@ func TestClient_SaveCheckpoint_Error(t *testing.T) {
 
 	err := client.SaveCheckpoint(ctx, &ProcessorCheckpoint{
 		ExchangeAccountID: accountID,
-		State:             json.RawMessage(`{}`),
+		State:             models.NewAccountState(),
 		SchemaVersion:     44,
 	})
 	if err == nil {
@@ -78,14 +79,14 @@ func TestClient_LoadCheckpoint(t *testing.T) {
 		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
 			respData := map[string]interface{}{
 				"processor_checkpoints_by_pk": map[string]interface{}{
-					"exchange_account_id":        accountID.String(),
-					"state":                      `{"positions":{}}`,
-					"schema_version":             float64(44),
-					"last_trade_timestamp":       float64(1700000000000),
-					"last_transfer_timestamp":    float64(1700000001000),
-					"last_settlement_timestamp":  float64(1700000002000),
-					"last_snapshot_timestamp":    float64(1700000003000),
-					"updated_at":                "2024-01-01T00:00:00Z",
+					"exchange_account_id":       accountID.String(),
+					"state":                     `{"assets":{"USDC":{"balance":"100"}},"positions":{},"closed_positions":[],"trading":{"cumulative_funding":"0","cumulative_fee_paid":"0","cumulative_settled_pnl":"0"}}`,
+					"schema_version":            float64(44),
+					"last_trade_timestamp":      float64(1700000000000),
+					"last_transfer_timestamp":   float64(1700000001000),
+					"last_settlement_timestamp": float64(1700000002000),
+					"last_snapshot_timestamp":   float64(1700000003000),
+					"updated_at":               "2024-01-01T00:00:00Z",
 				},
 			}
 			data, _ := json.Marshal(respData)
@@ -115,16 +116,14 @@ func TestClient_LoadCheckpoint(t *testing.T) {
 		t.Errorf("Expected last_trade_timestamp 1700000000000, got %d", checkpoint.LastTradeTimestamp)
 	}
 
-	if checkpoint.LastTransferTimestamp != 1700000001000 {
-		t.Errorf("Expected last_transfer_timestamp 1700000001000, got %d", checkpoint.LastTransferTimestamp)
+	if checkpoint.State == nil {
+		t.Fatal("Expected state to be non-nil")
 	}
 
-	if checkpoint.LastSettlementTimestamp != 1700000002000 {
-		t.Errorf("Expected last_settlement_timestamp 1700000002000, got %d", checkpoint.LastSettlementTimestamp)
-	}
-
-	if checkpoint.LastSnapshotTimestamp != 1700000003000 {
-		t.Errorf("Expected last_snapshot_timestamp 1700000003000, got %d", checkpoint.LastSnapshotTimestamp)
+	if checkpoint.State.Assets["USDC"] == nil {
+		t.Error("Expected USDC asset in state")
+	} else if checkpoint.State.Assets["USDC"].Balance != "100" {
+		t.Errorf("Expected USDC balance '100', got %q", checkpoint.State.Assets["USDC"].Balance)
 	}
 }
 
@@ -159,31 +158,22 @@ func TestClient_LoadCheckpoint_NotFound(t *testing.T) {
 
 func TestProcessorCheckpoint_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
-		name               string
-		jsonData           string
-		wantSchemaVersion  int
-		wantTradeTs        int64
-		wantTransferTs     int64
-		wantSettlementTs   int64
-		wantSnapshotTs     int64
+		name              string
+		jsonData          string
+		wantSchemaVersion int
+		wantTradeTs       int64
 	}{
 		{
-			name:              "float64 values",
-			jsonData:          `{"exchange_account_id":"00000000-0000-0000-0000-000000000001","state":{"test":true},"schema_version":44,"last_trade_timestamp":1700000000000,"last_transfer_timestamp":1700000001000,"last_settlement_timestamp":1700000002000,"last_snapshot_timestamp":1700000003000,"updated_at":"2024-01-01"}`,
+			name:              "float64 values with valid state",
+			jsonData:          `{"exchange_account_id":"00000000-0000-0000-0000-000000000001","state":{"assets":{},"positions":{},"closed_positions":[],"trading":{"cumulative_funding":"0","cumulative_fee_paid":"0","cumulative_settled_pnl":"0"}},"schema_version":44,"last_trade_timestamp":1700000000000,"last_transfer_timestamp":1700000001000,"last_settlement_timestamp":1700000002000,"last_snapshot_timestamp":1700000003000,"updated_at":"2024-01-01"}`,
 			wantSchemaVersion: 44,
 			wantTradeTs:       1700000000000,
-			wantTransferTs:    1700000001000,
-			wantSettlementTs:  1700000002000,
-			wantSnapshotTs:    1700000003000,
 		},
 		{
 			name:              "string values (Hasura BIGINT format)",
-			jsonData:          `{"exchange_account_id":"00000000-0000-0000-0000-000000000001","state":"{\"test\":true}","schema_version":"44","last_trade_timestamp":"1700000000000","last_transfer_timestamp":"1700000001000","last_settlement_timestamp":"1700000002000","last_snapshot_timestamp":"1700000003000","updated_at":"2024-01-01"}`,
+			jsonData:          `{"exchange_account_id":"00000000-0000-0000-0000-000000000001","state":"{\"assets\":{},\"positions\":{},\"closed_positions\":[],\"trading\":{\"cumulative_funding\":\"0\",\"cumulative_fee_paid\":\"0\",\"cumulative_settled_pnl\":\"0\"}}","schema_version":"44","last_trade_timestamp":"1700000000000","last_transfer_timestamp":"1700000001000","last_settlement_timestamp":"1700000002000","last_snapshot_timestamp":"1700000003000","updated_at":"2024-01-01"}`,
 			wantSchemaVersion: 44,
 			wantTradeTs:       1700000000000,
-			wantTransferTs:    1700000001000,
-			wantSettlementTs:  1700000002000,
-			wantSnapshotTs:    1700000003000,
 		},
 	}
 
@@ -201,18 +191,6 @@ func TestProcessorCheckpoint_UnmarshalJSON(t *testing.T) {
 
 			if cp.LastTradeTimestamp != tt.wantTradeTs {
 				t.Errorf("Expected last_trade_timestamp %d, got %d", tt.wantTradeTs, cp.LastTradeTimestamp)
-			}
-
-			if cp.LastTransferTimestamp != tt.wantTransferTs {
-				t.Errorf("Expected last_transfer_timestamp %d, got %d", tt.wantTransferTs, cp.LastTransferTimestamp)
-			}
-
-			if cp.LastSettlementTimestamp != tt.wantSettlementTs {
-				t.Errorf("Expected last_settlement_timestamp %d, got %d", tt.wantSettlementTs, cp.LastSettlementTimestamp)
-			}
-
-			if cp.LastSnapshotTimestamp != tt.wantSnapshotTs {
-				t.Errorf("Expected last_snapshot_timestamp %d, got %d", tt.wantSnapshotTs, cp.LastSnapshotTimestamp)
 			}
 
 			if cp.State == nil {

@@ -6,20 +6,21 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/zif-terminal/lib/models"
 )
 
 // ProcessorCheckpoint represents a saved processor state for incremental runs.
 // Validity is determined by comparing per-type timestamps and schema_version
 // against the current DB state.
 type ProcessorCheckpoint struct {
-	ExchangeAccountID      uuid.UUID       `json:"exchange_account_id"`
-	State                  json.RawMessage `json:"state"`                    // Serialized AccountState
-	SchemaVersion          int             `json:"schema_version"`           // Bumped when AccountState shape changes
-	LastTradeTimestamp      int64           `json:"last_trade_timestamp"`     // Unix ms of newest trade
-	LastTransferTimestamp   int64           `json:"last_transfer_timestamp"`  // Unix ms of newest transfer
-	LastSettlementTimestamp int64           `json:"last_settlement_timestamp"` // Unix ms of newest settlement
-	LastSnapshotTimestamp   int64           `json:"last_snapshot_timestamp"`  // Unix ms of newest snapshot
-	UpdatedAt              string          `json:"updated_at"`
+	ExchangeAccountID      uuid.UUID             `json:"exchange_account_id"`
+	State                  *models.AccountState   `json:"state"`                    // Typed account state
+	SchemaVersion          int                    `json:"schema_version"`           // Bumped when AccountState shape changes
+	LastTradeTimestamp      int64                  `json:"last_trade_timestamp"`     // Unix ms of newest trade
+	LastTransferTimestamp   int64                  `json:"last_transfer_timestamp"`  // Unix ms of newest transfer
+	LastSettlementTimestamp int64                  `json:"last_settlement_timestamp"` // Unix ms of newest settlement
+	LastSnapshotTimestamp   int64                  `json:"last_snapshot_timestamp"`  // Unix ms of newest snapshot
+	UpdatedAt              string                 `json:"updated_at"`
 }
 
 // UnmarshalJSON handles Hasura returning BIGINT as string and JSONB as escaped strings.
@@ -43,15 +44,20 @@ func (cp *ProcessorCheckpoint) UnmarshalJSON(data []byte) error {
 
 	// Handle state: Hasura may return JSONB as escaped JSON string
 	if aux.State != nil {
+		var stateBytes []byte
 		switch v := aux.State.(type) {
 		case string:
-			cp.State = json.RawMessage(v)
+			stateBytes = []byte(v)
 		default:
 			b, err := json.Marshal(v)
 			if err != nil {
 				return fmt.Errorf("failed to re-marshal state: %w", err)
 			}
-			cp.State = json.RawMessage(b)
+			stateBytes = b
+		}
+		cp.State = &models.AccountState{}
+		if err := json.Unmarshal(stateBytes, cp.State); err != nil {
+			return fmt.Errorf("failed to unmarshal account state: %w", err)
 		}
 	}
 
@@ -100,6 +106,11 @@ func parseBigintToInt(v interface{}) int {
 // SaveCheckpoint upserts a processor checkpoint for an account.
 // Takes a typed struct — lib handles JSON serialization internally.
 func (c *Client) SaveCheckpoint(ctx context.Context, checkpoint *ProcessorCheckpoint) error {
+	stateJSON, err := json.Marshal(checkpoint.State)
+	if err != nil {
+		return fmt.Errorf("failed to marshal account state: %w", err)
+	}
+
 	query := `
 		mutation SaveCheckpoint($object: processor_checkpoints_insert_input!) {
 			insert_processor_checkpoints_one(
@@ -116,7 +127,7 @@ func (c *Client) SaveCheckpoint(ctx context.Context, checkpoint *ProcessorCheckp
 
 	object := map[string]interface{}{
 		"exchange_account_id":       checkpoint.ExchangeAccountID.String(),
-		"state":                     string(checkpoint.State),
+		"state":                     string(stateJSON),
 		"schema_version":            checkpoint.SchemaVersion,
 		"last_trade_timestamp":      checkpoint.LastTradeTimestamp,
 		"last_transfer_timestamp":   checkpoint.LastTransferTimestamp,
