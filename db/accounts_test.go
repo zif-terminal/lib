@@ -14,7 +14,7 @@ func TestClient_GetAccount(t *testing.T) {
 	ctx := context.Background()
 	expectedAccount := &models.ExchangeAccount{
 		ID:                "test-account-id",
-		Exchange:          &models.Exchange{ID: "test-exchange-id", Name: "hyperliquid", DisplayName: "Hyperliquid"},
+		Exchange:          &models.Exchange{ID: "test-exchange-id", Name: "drift", DisplayName: "Drift"},
 		AccountIdentifier: "0x123",
 		AccountType:       "main",
 		AccountTypeMetadata: json.RawMessage(`{"key": "value"}`),
@@ -102,13 +102,13 @@ func TestClient_ListAccounts(t *testing.T) {
 	expectedAccounts := []*models.ExchangeAccount{
 		{
 			ID:                "id1",
-			Exchange:          &models.Exchange{ID: "exchange1", Name: "hyperliquid", DisplayName: "Hyperliquid"},
+			Exchange:          &models.Exchange{ID: "exchange1", Name: "drift", DisplayName: "Drift"},
 			AccountIdentifier: "0x111",
 			AccountType:       "main",
 		},
 		{
 			ID:                "id2",
-			Exchange:          &models.Exchange{ID: "exchange2", Name: "lighter", DisplayName: "Lighter"},
+			Exchange:          &models.Exchange{ID: "exchange2", Name: "drift", DisplayName: "Drift"},
 			AccountIdentifier: "0x222",
 			AccountType:       "sub_account",
 		},
@@ -176,7 +176,7 @@ func TestClient_CreateAccount(t *testing.T) {
 	}
 	expectedAccount := &models.ExchangeAccount{
 		ID:                "new-account-id",
-		Exchange:          &models.Exchange{ID: input.ExchangeID, Name: "hyperliquid", DisplayName: "Hyperliquid"},
+		Exchange:          &models.Exchange{ID: input.ExchangeID, Name: "drift", DisplayName: "Drift"},
 		AccountIdentifier: input.AccountIdentifier,
 		AccountType:       input.AccountType,
 		AccountTypeMetadata: input.AccountTypeMetadata,
@@ -238,7 +238,7 @@ func TestClient_CreateAccount_WithWalletAndStatus(t *testing.T) {
 	}
 	expectedAccount := &models.ExchangeAccount{
 		ID:                "new-account-id",
-		Exchange:          &models.Exchange{ID: input.ExchangeID, Name: "hyperliquid", DisplayName: "Hyperliquid"},
+		Exchange:          &models.Exchange{ID: input.ExchangeID, Name: "drift", DisplayName: "Drift"},
 		AccountIdentifier: input.AccountIdentifier,
 		AccountType:       input.AccountType,
 		WalletID:          &walletID,
@@ -294,7 +294,7 @@ func TestClient_CreateAccount_WithNeedsTokenStatus(t *testing.T) {
 	ctx := context.Background()
 	walletID := "test-wallet-id"
 	input := &models.ExchangeAccountInput{
-		ExchangeID:        "lighter-exchange-id",
+		ExchangeID:        "drift-exchange-id",
 		AccountIdentifier: "0x456",
 		AccountType:       "main",
 		WalletID:          &walletID,
@@ -302,7 +302,7 @@ func TestClient_CreateAccount_WithNeedsTokenStatus(t *testing.T) {
 	}
 	expectedAccount := &models.ExchangeAccount{
 		ID:                "new-account-id",
-		Exchange:          &models.Exchange{ID: input.ExchangeID, Name: "lighter", DisplayName: "Lighter"},
+		Exchange:          &models.Exchange{ID: input.ExchangeID, Name: "drift", DisplayName: "Drift"},
 		AccountIdentifier: input.AccountIdentifier,
 		AccountType:       input.AccountType,
 		WalletID:          &walletID,
@@ -355,7 +355,7 @@ func TestClient_CreateAccount_WithoutMetadata(t *testing.T) {
 	}
 	expectedAccount := &models.ExchangeAccount{
 		ID:                "new-account-id",
-		Exchange:          &models.Exchange{ID: input.ExchangeID, Name: "hyperliquid", DisplayName: "Hyperliquid"},
+		Exchange:          &models.Exchange{ID: input.ExchangeID, Name: "drift", DisplayName: "Drift"},
 		AccountIdentifier: input.AccountIdentifier,
 		AccountType:       input.AccountType,
 	}
@@ -405,7 +405,7 @@ func TestClient_UpdateAccount(t *testing.T) {
 	}
 	expectedAccount := &models.ExchangeAccount{
 		ID:                id,
-		Exchange:          &models.Exchange{ID: input.ExchangeID, Name: "lighter", DisplayName: "Lighter"},
+		Exchange:          &models.Exchange{ID: input.ExchangeID, Name: "drift", DisplayName: "Drift"},
 		AccountIdentifier: input.AccountIdentifier,
 		AccountType:       input.AccountType,
 		AccountTypeMetadata: input.AccountTypeMetadata,

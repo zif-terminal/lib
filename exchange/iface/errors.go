@@ -1,9 +1,15 @@
 package iface
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
+
+// ErrNotImplemented is returned by exchange methods that are defined in the
+// interface but not yet implemented for a particular exchange. Callers can
+// check for this with errors.Is to distinguish "not supported" from "no data".
+var ErrNotImplemented = errors.New("not implemented for this exchange")
 
 // RateLimitError indicates the exchange API rate limit was exceeded
 type RateLimitError struct {

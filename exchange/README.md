@@ -7,7 +7,7 @@ This package provides a standardized interface for integrating with cryptocurren
 The exchange interface consists of:
 
 - **`ExchangeClient` interface**: Defines the contract all exchange implementations must satisfy
-- **Exchange implementations**: Specific implementations for each exchange (e.g., `hyperliquid`, `lighter`, `drift`)
+- **Exchange implementations**: Specific implementations for each exchange (currently `drift`)
 - **Contract tests**: Automated tests that verify implementations satisfy the interface contract
 - **Error types**: Standardized error types (e.g., `RateLimitError`)
 
@@ -22,13 +22,11 @@ exchange/
 │   ├── client.go          # ExchangeClient interface
 │   ├── errors.go          # Error types (RateLimitError, etc.)
 │   └── contract.go        # Contract test suite
-├── hyperliquid/
-│   ├── client.go          # Hyperliquid implementation
-│   ├── types.go           # Hyperliquid-specific types
-│   ├── client_test.go     # Unit tests (mocked HTTP)
-│   └── integration_test.go # Integration tests (real API)
-├── lighter/               # Future: Lighter implementation
-└── drift/                 # Future: Drift implementation
+└── drift/
+    ├── client.go          # Drift implementation
+    ├── types.go           # Drift-specific types
+    ├── client_test.go     # Unit tests (mocked HTTP)
+    └── integration_test.go # Integration tests (real API)
 ```
 
 ## Interface Contract
@@ -39,7 +37,7 @@ All exchange implementations must implement the `ExchangeClient` interface from 
 import "github.com/zif-terminal/lib/exchange/iface"
 
 type ExchangeClient interface {
-    // Name returns the exchange identifier (e.g., "hyperliquid", "lighter")
+    // Name returns the exchange identifier (e.g., "drift")
     Name() string
 
     // FetchTrades fetches trades for a given account since a specific timestamp
@@ -405,12 +403,12 @@ if account.AccountIdentifier == "" {
 }
 ```
 
-## Example: Hyperliquid Implementation
+## Example: Drift Implementation
 
-See `exchange/hyperliquid/` for a complete reference implementation:
+See `exchange/drift/` for a complete reference implementation:
 
-- `client.go`: Full implementation with error handling
-- `types.go`: Exchange-specific response types
+- `client.go`: Full implementation with error handling and retry logic
+- `types.go`: Drift-specific response types
 - `client_test.go`: Comprehensive unit tests
 - `integration_test.go`: Integration tests with contract tests
 
@@ -463,6 +461,6 @@ func normalizeSide(side string) string {
 
 ## Questions?
 
-- Check `exchange/hyperliquid/` for a complete reference implementation
+- Check `exchange/drift/` for a complete reference implementation
 - Review `exchange/contract_test.go` for contract requirements
 - See `exchange/errors.go` for error type definitions
