@@ -31,9 +31,15 @@ func TestClient_SaveCheckpoint(t *testing.T) {
 		AdminSecret: "test-secret",
 	})
 
-	state := json.RawMessage(`{"positions":{},"balances":{}}`)
-
-	err := client.SaveCheckpoint(ctx, accountID, state, 44, 1700000000000, 1700000001000, 1700000002000, 1700000003000)
+	err := client.SaveCheckpoint(ctx, &ProcessorCheckpoint{
+		ExchangeAccountID:      accountID,
+		State:                  json.RawMessage(`{"positions":{},"balances":{}}`),
+		SchemaVersion:          44,
+		LastTradeTimestamp:      1700000000000,
+		LastTransferTimestamp:   1700000001000,
+		LastSettlementTimestamp: 1700000002000,
+		LastSnapshotTimestamp:   1700000003000,
+	})
 	if err != nil {
 		t.Fatalf("SaveCheckpoint failed: %v", err)
 	}
@@ -54,7 +60,11 @@ func TestClient_SaveCheckpoint_Error(t *testing.T) {
 		AdminSecret: "test-secret",
 	})
 
-	err := client.SaveCheckpoint(ctx, accountID, json.RawMessage(`{}`), 44, 0, 0, 0, 0)
+	err := client.SaveCheckpoint(ctx, &ProcessorCheckpoint{
+		ExchangeAccountID: accountID,
+		State:             json.RawMessage(`{}`),
+		SchemaVersion:     44,
+	})
 	if err == nil {
 		t.Fatal("Expected error")
 	}

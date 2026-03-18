@@ -98,7 +98,8 @@ func parseBigintToInt(v interface{}) int {
 }
 
 // SaveCheckpoint upserts a processor checkpoint for an account.
-func (c *Client) SaveCheckpoint(ctx context.Context, accountID uuid.UUID, state json.RawMessage, schemaVersion int, lastTradeTs, lastTransferTs, lastSettlementTs, lastSnapshotTs int64) error {
+// Takes a typed struct — lib handles JSON serialization internally.
+func (c *Client) SaveCheckpoint(ctx context.Context, checkpoint *ProcessorCheckpoint) error {
 	query := `
 		mutation SaveCheckpoint($object: processor_checkpoints_insert_input!) {
 			insert_processor_checkpoints_one(
@@ -114,14 +115,14 @@ func (c *Client) SaveCheckpoint(ctx context.Context, accountID uuid.UUID, state 
 	`
 
 	object := map[string]interface{}{
-		"exchange_account_id":      accountID.String(),
-		"state":                    string(state),
-		"schema_version":           schemaVersion,
-		"last_trade_timestamp":     lastTradeTs,
-		"last_transfer_timestamp":  lastTransferTs,
-		"last_settlement_timestamp": lastSettlementTs,
-		"last_snapshot_timestamp":  lastSnapshotTs,
-		"updated_at":               "now()",
+		"exchange_account_id":       checkpoint.ExchangeAccountID.String(),
+		"state":                     string(checkpoint.State),
+		"schema_version":            checkpoint.SchemaVersion,
+		"last_trade_timestamp":      checkpoint.LastTradeTimestamp,
+		"last_transfer_timestamp":   checkpoint.LastTransferTimestamp,
+		"last_settlement_timestamp": checkpoint.LastSettlementTimestamp,
+		"last_snapshot_timestamp":   checkpoint.LastSnapshotTimestamp,
+		"updated_at":                "now()",
 	}
 
 	req := c.graphqlRequestWithVars(query, map[string]interface{}{

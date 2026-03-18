@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -148,10 +147,10 @@ type DBClient interface {
 
 	// Snapshot methods
 	GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.UUID) ([]*BalanceSnapshot, error)
-	GetAllBalanceSnapshots(ctx context.Context, accountID uuid.UUID) ([]*BalanceSnapshot, error)
+	GetAllBalanceSnapshots(ctx context.Context, accountID uuid.UUID, afterTimestampMs int64) ([]*BalanceSnapshot, error)
 
 	// Processor checkpoint methods
-	SaveCheckpoint(ctx context.Context, accountID uuid.UUID, state json.RawMessage, schemaVersion int, lastTradeTs, lastTransferTs, lastSettlementTs, lastSnapshotTs int64) error
+	SaveCheckpoint(ctx context.Context, checkpoint *ProcessorCheckpoint) error
 	LoadCheckpoint(ctx context.Context, accountID uuid.UUID) (*ProcessorCheckpoint, error)
 
 	// Sync timestamp methods

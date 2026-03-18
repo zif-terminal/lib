@@ -96,15 +96,19 @@ func parseFloat64(s string) (float64, error) {
 	return f, nil
 }
 
-// GetAllBalanceSnapshots returns ALL balance snapshots for an account, sorted
+// GetAllBalanceSnapshots returns balance snapshots for an account, sorted
 // by timestamp ascending. Used by the activity processor for multi-point
 // reconciliation — reconciling at every snapshot boundary during event replay.
-// Returns float64-based BalanceSnapshot (same format as GetLatestBalanceSnapshots).
-func (c *Client) GetAllBalanceSnapshots(ctx context.Context, accountID uuid.UUID) ([]*BalanceSnapshot, error) {
+// If afterTimestampMs > 0, only returns snapshots with timestamp > afterTimestampMs.
+// Pass 0 to get all snapshots.
+func (c *Client) GetAllBalanceSnapshots(ctx context.Context, accountID uuid.UUID, afterTimestampMs int64) ([]*BalanceSnapshot, error) {
 	query := `
-		query GetAllBalanceSnapshots($account_id: uuid!) {
+		query GetAllBalanceSnapshots($account_id: uuid!, $after_ms: bigint!) {
 			spot_balance_snapshots(
-				where: { exchange_account_id: { _eq: $account_id } }
+				where: {
+					exchange_account_id: { _eq: $account_id }
+					timestamp: { _gt: $after_ms }
+				}
 				order_by: [{ timestamp: asc }, { asset: asc }]
 			) {
 				asset
@@ -118,6 +122,7 @@ func (c *Client) GetAllBalanceSnapshots(ctx context.Context, accountID uuid.UUID
 
 	req := c.graphqlRequestWithVars(query, map[string]interface{}{
 		"account_id": accountID.String(),
+		"after_ms":   afterTimestampMs,
 	})
 
 	var resp struct {
