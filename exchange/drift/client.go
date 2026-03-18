@@ -21,7 +21,7 @@ const (
 	maxRetries       = 5
 	initialBackoff   = 2 * time.Second
 	maxBackoff       = 60 * time.Second
-	backoffMultipler = 2.0
+	backoffMultiplier = 2.0
 )
 
 // Client implements iface.ExchangeClient for Drift
@@ -81,7 +81,7 @@ func (c *Client) doRequestWithRetry(ctx context.Context, url string) (*http.Resp
 			case <-time.After(backoff):
 			}
 
-			backoff = time.Duration(float64(backoff) * backoffMultipler)
+			backoff = time.Duration(float64(backoff) * backoffMultiplier)
 			if backoff > maxBackoff {
 				backoff = maxBackoff
 			}

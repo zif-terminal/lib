@@ -191,7 +191,7 @@ import (
 )
 
 // Get a client for an exchange
-client, err := exchange.GetClient("hyperliquid")
+client, err := exchange.GetClient("drift")
 
 // Fetch trades
 trades, err := client.FetchTrades(ctx, account, &iface.FetchOptions{
@@ -200,9 +200,7 @@ trades, err := client.FetchTrades(ctx, account, &iface.FetchOptions{
 ```
 
 **Supported Exchanges:**
-- Hyperliquid
 - Drift
-- Lighter
 
 ### `logger/` - Structured Logging
 
@@ -229,9 +227,7 @@ lib/
 ├── exchange/                 # Exchange integrations
 │   ├── client.go             # Factory for exchange clients
 │   ├── iface/                # Interfaces
-│   ├── hyperliquid/
-│   ├── drift/
-│   └── lighter/
+│   └── drift/
 ├── models/                   # Data structures
 │   ├── account.go
 │   ├── exchange.go
@@ -255,7 +251,7 @@ go test -v ./...
 
 # Specific package
 go test -v ./db/...
-go test -v ./exchange/hyperliquid/...
+go test -v ./exchange/drift/...
 
 # With coverage
 go test -cover ./...

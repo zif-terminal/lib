@@ -26,8 +26,8 @@ func TestClient_GetExchange(t *testing.T) {
 	ctx := context.Background()
 	expectedExchange := &models.Exchange{
 		ID:          "test-id",
-		Name:        "hyperliquid",
-		DisplayName: "Hyperliquid",
+		Name:        "drift",
+		DisplayName: "Drift",
 	}
 
 	mockClient := &mockGraphQLClient{
@@ -93,9 +93,7 @@ func TestClient_GetExchange_NotFound(t *testing.T) {
 func TestClient_ListExchanges(t *testing.T) {
 	ctx := context.Background()
 	expectedExchanges := []*models.Exchange{
-		{ID: "id1", Name: "hyperliquid", DisplayName: "Hyperliquid"},
-		{ID: "id2", Name: "lighter", DisplayName: "Lighter"},
-		{ID: "id3", Name: "drift", DisplayName: "Drift"},
+		{ID: "id1", Name: "drift", DisplayName: "Drift"},
 	}
 
 	mockClient := &mockGraphQLClient{

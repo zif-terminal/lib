@@ -9,7 +9,7 @@ import (
 
 func TestGetClient(t *testing.T) {
 	t.Run("GetClient with valid exchange name", func(t *testing.T) {
-		client, err := GetClient("hyperliquid")
+		client, err := GetClient("drift")
 		if err != nil {
 			t.Fatalf("GetClient failed: %v", err)
 		}
@@ -18,8 +18,8 @@ func TestGetClient(t *testing.T) {
 			t.Fatal("GetClient returned nil client")
 		}
 
-		if client.Name() != "hyperliquid" {
-			t.Errorf("Expected client name 'hyperliquid', got '%s'", client.Name())
+		if client.Name() != "drift" {
+			t.Errorf("Expected client name 'drift', got '%s'", client.Name())
 		}
 
 		// Verify it implements the interface
@@ -56,21 +56,11 @@ func TestGetClient(t *testing.T) {
 func TestListAvailableExchanges(t *testing.T) {
 	exchanges := ListAvailableExchanges()
 
-	if len(exchanges) == 0 {
-		t.Fatal("ListAvailableExchanges should return at least one exchange")
+	if len(exchanges) != 1 {
+		t.Fatalf("Expected 1 exchange, got %d", len(exchanges))
 	}
 
-	// Check that hyperliquid is in the list
-	found := false
-	for _, name := range exchanges {
-		if name == "hyperliquid" {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		t.Error("ListAvailableExchanges should include 'hyperliquid'")
+	if exchanges[0] != "drift" {
+		t.Errorf("Expected 'drift', got '%s'", exchanges[0])
 	}
 }
-

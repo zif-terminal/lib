@@ -9,10 +9,8 @@ import (
 )
 
 // Settlement represents a PnL settlement event.
-// On exchanges with deferred settlement (e.g., Drift), PnL from trade closes
-// and accrued funding is settled separately by keeper bots.
-// On exchanges with immediate settlement (e.g., Hyperliquid), PnL is settled
-// at trade time and FetchSettlements returns empty.
+// On Drift, PnL from trade closes and accrued funding is settled
+// separately by keeper bots.
 type Settlement struct {
 	ID                uuid.UUID `json:"id"`
 	ExchangeAccountID uuid.UUID `json:"exchange_account_id"`
