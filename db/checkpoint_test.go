@@ -35,7 +35,7 @@ func TestClient_SaveCheckpoint(t *testing.T) {
 	err := client.SaveCheckpoint(ctx, &ProcessorCheckpoint{
 		ExchangeAccountID:      accountID,
 		State:                  models.NewAccountState(),
-		SchemaVersion:          44,
+		SchemaVersion:          7,
 		LastTradeTimestamp:      1700000000000,
 		LastTransferTimestamp:   1700000001000,
 		LastSettlementTimestamp: 1700000002000,
@@ -64,7 +64,7 @@ func TestClient_SaveCheckpoint_Error(t *testing.T) {
 	err := client.SaveCheckpoint(ctx, &ProcessorCheckpoint{
 		ExchangeAccountID: accountID,
 		State:             models.NewAccountState(),
-		SchemaVersion:     44,
+		SchemaVersion:     7,
 	})
 	if err == nil {
 		t.Fatal("Expected error")
@@ -81,7 +81,7 @@ func TestClient_LoadCheckpoint(t *testing.T) {
 				"processor_checkpoints_by_pk": map[string]interface{}{
 					"exchange_account_id":       accountID.String(),
 					"state":                     `{"assets":{"USDC":{"balance":"100"}},"positions":{},"closed_positions":[],"trading":{"cumulative_funding":"0","cumulative_fee_paid":"0","cumulative_settled_pnl":"0"}}`,
-					"schema_version":            float64(44),
+					"schema_version":            float64(7),
 					"last_trade_timestamp":      float64(1700000000000),
 					"last_transfer_timestamp":   float64(1700000001000),
 					"last_settlement_timestamp": float64(1700000002000),
@@ -108,8 +108,8 @@ func TestClient_LoadCheckpoint(t *testing.T) {
 		t.Fatal("Expected checkpoint, got nil")
 	}
 
-	if checkpoint.SchemaVersion != 44 {
-		t.Errorf("Expected schema_version 44, got %d", checkpoint.SchemaVersion)
+	if checkpoint.SchemaVersion != 7 {
+		t.Errorf("Expected schema_version 7, got %d", checkpoint.SchemaVersion)
 	}
 
 	if checkpoint.LastTradeTimestamp != 1700000000000 {
@@ -165,14 +165,14 @@ func TestProcessorCheckpoint_UnmarshalJSON(t *testing.T) {
 	}{
 		{
 			name:              "float64 values with valid state",
-			jsonData:          `{"exchange_account_id":"00000000-0000-0000-0000-000000000001","state":{"assets":{},"positions":{},"closed_positions":[],"trading":{"cumulative_funding":"0","cumulative_fee_paid":"0","cumulative_settled_pnl":"0"}},"schema_version":44,"last_trade_timestamp":1700000000000,"last_transfer_timestamp":1700000001000,"last_settlement_timestamp":1700000002000,"last_snapshot_timestamp":1700000003000,"updated_at":"2024-01-01"}`,
-			wantSchemaVersion: 44,
+			jsonData:          `{"exchange_account_id":"00000000-0000-0000-0000-000000000001","state":{"assets":{},"positions":{},"closed_positions":[],"trading":{"cumulative_funding":"0","cumulative_fee_paid":"0","cumulative_settled_pnl":"0"}},"schema_version":7,"last_trade_timestamp":1700000000000,"last_transfer_timestamp":1700000001000,"last_settlement_timestamp":1700000002000,"last_snapshot_timestamp":1700000003000,"updated_at":"2024-01-01"}`,
+			wantSchemaVersion: 7,
 			wantTradeTs:       1700000000000,
 		},
 		{
 			name:              "string values (Hasura BIGINT format)",
-			jsonData:          `{"exchange_account_id":"00000000-0000-0000-0000-000000000001","state":"{\"assets\":{},\"positions\":{},\"closed_positions\":[],\"trading\":{\"cumulative_funding\":\"0\",\"cumulative_fee_paid\":\"0\",\"cumulative_settled_pnl\":\"0\"}}","schema_version":"44","last_trade_timestamp":"1700000000000","last_transfer_timestamp":"1700000001000","last_settlement_timestamp":"1700000002000","last_snapshot_timestamp":"1700000003000","updated_at":"2024-01-01"}`,
-			wantSchemaVersion: 44,
+			jsonData:          `{"exchange_account_id":"00000000-0000-0000-0000-000000000001","state":"{\"assets\":{},\"positions\":{},\"closed_positions\":[],\"trading\":{\"cumulative_funding\":\"0\",\"cumulative_fee_paid\":\"0\",\"cumulative_settled_pnl\":\"0\"}}","schema_version":"7","last_trade_timestamp":"1700000000000","last_transfer_timestamp":"1700000001000","last_settlement_timestamp":"1700000002000","last_snapshot_timestamp":"1700000003000","updated_at":"2024-01-01"}`,
+			wantSchemaVersion: 7,
 			wantTradeTs:       1700000000000,
 		},
 	}
