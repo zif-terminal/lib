@@ -35,7 +35,6 @@ func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.U
 				asset
 				balance
 				oracle_price
-				usd_value
 				timestamp
 			}
 		}
@@ -63,15 +62,10 @@ func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.U
 		if err != nil {
 			return nil, fmt.Errorf("invalid oracle_price %q for asset %s: %w", s.OraclePrice, s.Asset, err)
 		}
-		usdValue, err := parseFloat64(s.USDValue)
-		if err != nil {
-			return nil, fmt.Errorf("invalid usd_value %q for asset %s: %w", s.USDValue, s.Asset, err)
-		}
 		balances = append(balances, &BalanceSnapshot{
 			Asset:       s.Asset,
 			Balance:     balance,
 			OraclePrice: oraclePrice,
-			UsdValue:    usdValue,
 			TimestampMs: s.Timestamp.UnixMilli(),
 		})
 	}
@@ -114,7 +108,6 @@ func (c *Client) GetAllBalanceSnapshots(ctx context.Context, accountID uuid.UUID
 				asset
 				balance
 				oracle_price
-				usd_value
 				timestamp
 			}
 		}
@@ -143,15 +136,10 @@ func (c *Client) GetAllBalanceSnapshots(ctx context.Context, accountID uuid.UUID
 		if err != nil {
 			return nil, fmt.Errorf("invalid oracle_price %q for asset %s: %w", s.OraclePrice, s.Asset, err)
 		}
-		usdValue, err := parseFloat64(s.USDValue)
-		if err != nil {
-			return nil, fmt.Errorf("invalid usd_value %q for asset %s: %w", s.USDValue, s.Asset, err)
-		}
 		balances = append(balances, &BalanceSnapshot{
 			Asset:       s.Asset,
 			Balance:     balance,
 			OraclePrice: oraclePrice,
-			UsdValue:    usdValue,
 			TimestampMs: s.Timestamp.UnixMilli(),
 		})
 	}
@@ -176,7 +164,6 @@ func (c *Client) AddSpotBalanceSnapshots(ctx context.Context, inputs []*SpotBala
 			"asset":               input.Asset,
 			"balance":             input.Balance,
 			"oracle_price":        input.OraclePrice,
-			"usd_value":           input.USDValue,
 			"timestamp":           input.Timestamp.UnixMilli(),
 		}
 	}
@@ -190,7 +177,6 @@ func (c *Client) AddSpotBalanceSnapshots(ctx context.Context, inputs []*SpotBala
 					asset
 					balance
 					oracle_price
-					usd_value
 					timestamp
 				}
 			}
@@ -231,7 +217,6 @@ func (c *Client) GetLatestSpotBalanceSnapshot(ctx context.Context, accountID uui
 				asset
 				balance
 				oracle_price
-				usd_value
 				timestamp
 			}
 		}
@@ -275,7 +260,6 @@ func (c *Client) GetSpotBalanceSnapshotsBefore(ctx context.Context, accountID uu
 				asset
 				balance
 				oracle_price
-				usd_value
 				timestamp
 			}
 		}
@@ -320,7 +304,6 @@ func (c *Client) ListSpotBalanceSnapshots(ctx context.Context, accountID uuid.UU
 				asset
 				balance
 				oracle_price
-				usd_value
 				timestamp
 			}
 		}

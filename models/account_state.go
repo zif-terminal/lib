@@ -26,7 +26,7 @@ type AccountState struct {
 	Assets          map[string]*AssetState   `json:"assets"`
 	Positions       map[string]*OpenPosition `json:"positions"`        // All positions keyed by "marketType:baseAsset"
 	ClosedPositions []*ClosedPosition        `json:"closed_positions"`
-	Trading         *TradingState            `json:"trading"`
+	Trading         map[string]*TradingState `json:"trading"`          // Keyed by quote asset (e.g., "USDC", "SOL")
 }
 
 // AssetState tracks the state of a single asset (USDC, SOL, etc.)
@@ -70,11 +70,11 @@ type ClosedPosition struct {
 	FundingEntries    []FundingEntry `json:"funding_entries"`     // Funding payments during this position
 }
 
-// TradingState tracks cumulative trading metrics
+// TradingState tracks cumulative trading metrics for a single quote asset
 type TradingState struct {
-	CumulativeFunding    string `json:"cumulative_funding"`      // Net funding all positions
-	CumulativeFeePaid    string `json:"cumulative_fee_paid"`     // Total fees
-	CumulativeSettledPnl string `json:"cumulative_settled_pnl"`  // Total settled PnL (from settlePnl events)
+	CumulativeFunding    string `json:"cumulative_funding"`      // Net funding for positions in this quote asset
+	CumulativeFeePaid    string `json:"cumulative_fee_paid"`     // Total fees in this quote asset
+	CumulativeSettledPnl string `json:"cumulative_settled_pnl"`  // Total settled PnL in this quote asset
 }
 
 // NewAccountState creates a new empty account state
@@ -83,12 +83,20 @@ func NewAccountState() *AccountState {
 		Assets:          make(map[string]*AssetState),
 		Positions:       make(map[string]*OpenPosition),
 		ClosedPositions: []*ClosedPosition{},
-		Trading: &TradingState{
+		Trading:         make(map[string]*TradingState),
+	}
+}
+
+// GetOrCreateTrading returns the trading state for a quote asset, creating it if it doesn't exist
+func (s *AccountState) GetOrCreateTrading(quoteAsset string) *TradingState {
+	if s.Trading[quoteAsset] == nil {
+		s.Trading[quoteAsset] = &TradingState{
 			CumulativeFunding:    "0",
 			CumulativeFeePaid:    "0",
 			CumulativeSettledPnl: "0",
-		},
+		}
 	}
+	return s.Trading[quoteAsset]
 }
 
 // GetOrCreateAsset returns the asset state, creating it if it doesn't exist
