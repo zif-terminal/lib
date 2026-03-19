@@ -31,12 +31,11 @@ type AccountState struct {
 
 // AssetState tracks the state of a single asset (USDC, SOL, etc.)
 type AssetState struct {
-	Balance              string `json:"balance"`               // Current balance
-	CumulativeDeposits   string `json:"cumulative_deposits"`   // Sum of deposits
-	CumulativeWithdraws  string `json:"cumulative_withdraws"`  // Sum of withdrawals
-	CumulativeInterest   string `json:"cumulative_interest"`   // Interest from explicit transfer records (type="interest")
-	CumulativeAdjustment string `json:"cumulative_adjustment"` // Balance corrections from snapshot reconciliation (precision errors)
-	NetSpotInflow        string `json:"net_spot_inflow"`       // Net balance change from spot trades (buys - sells)
+	Balance             string `json:"balance"`              // Current balance
+	CumulativeDeposits  string `json:"cumulative_deposits"`  // Sum of deposits
+	CumulativeWithdraws string `json:"cumulative_withdraws"` // Sum of withdrawals
+	CumulativeInterest  string `json:"cumulative_interest"`  // All interest (explicit transfers + snapshot-derived)
+	NetSpotInflow       string `json:"net_spot_inflow"`      // Net balance change from spot trades (buys - sells)
 }
 
 // PositionState tracks in-memory position state (perp or spot), open or closed.
@@ -95,12 +94,11 @@ func (s *AccountState) GetOrCreateTrading(quoteAsset string) *TradingState {
 func (s *AccountState) GetOrCreateAsset(symbol string) *AssetState {
 	if s.Assets[symbol] == nil {
 		s.Assets[symbol] = &AssetState{
-			Balance:              "0",
-			CumulativeDeposits:   "0",
-			CumulativeWithdraws:  "0",
-			CumulativeInterest:   "0",
-			CumulativeAdjustment: "0",
-			NetSpotInflow:        "0",
+			Balance:             "0",
+			CumulativeDeposits:  "0",
+			CumulativeWithdraws: "0",
+			CumulativeInterest:  "0",
+			NetSpotInflow:       "0",
 		}
 	}
 	return s.Assets[symbol]

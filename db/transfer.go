@@ -145,6 +145,37 @@ func (c *Client) DeleteTransfersByAccountAndType(ctx context.Context, accountID 
 	return resp.DeleteTransfers.AffectedRows, nil
 }
 
+// DeleteDerivedTransfers deletes transfer records with metadata source="derived" for an account.
+// Used by the activity processor to clean up previously-derived interest before full replay.
+func (c *Client) DeleteDerivedTransfers(ctx context.Context, accountID uuid.UUID) (int, error) {
+	query := `
+		mutation DeleteDerivedTransfers($exchange_account_id: uuid!) {
+			delete_transfers(where: {
+				exchange_account_id: { _eq: $exchange_account_id }
+				metadata: { _contains: { source: "derived" } }
+			}) {
+				affected_rows
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"exchange_account_id": accountID.String(),
+	})
+
+	var resp struct {
+		DeleteTransfers struct {
+			AffectedRows int `json:"affected_rows"`
+		} `json:"delete_transfers"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return 0, fmt.Errorf("failed to delete derived transfers: %w", err)
+	}
+
+	return resp.DeleteTransfers.AffectedRows, nil
+}
+
 // GetLatestTransferByType retrieves the most recent transfer of a given type for an account.
 // Returns nil, nil if no matching transfer is found.
 func (c *Client) GetLatestTransferByType(ctx context.Context, accountID uuid.UUID, transferType string) (*Transfer, error) {

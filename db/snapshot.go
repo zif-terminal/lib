@@ -11,7 +11,7 @@ import (
 	"github.com/zif-terminal/lib/models"
 )
 
-// BalanceSnapshot aliased from models (used by activity_processor for reconciliation)
+// BalanceSnapshot aliased from models (used by activity_processor for interest derivation)
 type BalanceSnapshot = models.BalanceSnapshot
 
 // SpotBalanceSnapshot aliased from models (DB record type)
