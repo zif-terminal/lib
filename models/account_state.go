@@ -24,8 +24,8 @@ type FundingEntry struct {
 // Built by processing all transactions chronologically.
 type AccountState struct {
 	Assets          map[string]*AssetState   `json:"assets"`
-	Positions       map[string]*OpenPosition `json:"positions"`        // All positions keyed by "marketType:baseAsset"
-	ClosedPositions []*ClosedPosition        `json:"closed_positions"`
+	Positions       map[string]*PositionState     `json:"positions"`        // Open positions keyed by "marketType:baseAsset"
+	ClosedPositions []*PositionState              `json:"closed_positions"`
 	Trading         map[string]*TradingState `json:"trading"`          // Keyed by quote asset (e.g., "USDC", "SOL")
 }
 
@@ -39,35 +39,27 @@ type AssetState struct {
 	NetSpotInflow        string `json:"net_spot_inflow"`       // Net balance change from spot trades (buys - sells)
 }
 
-// OpenPosition tracks an open position (perp or spot)
-type OpenPosition struct {
+// PositionState tracks in-memory position state (perp or spot), open or closed.
+// A position is closed when EndTime > 0.
+type PositionState struct {
 	Market             string         `json:"market"`              // e.g., "SOL" or "SOL-PERP"
 	MarketType         string         `json:"market_type"`         // "perp" or "spot"
 	QuoteAsset         string         `json:"quote_asset"`         // What the position is quoted in
 	Side               string         `json:"side"`                // "long" or "short"
-	Quantity           string         `json:"quantity"`            // Current position size
+	Quantity           string         `json:"quantity"`            // Current position size (0 when closed)
 	TotalFees          string         `json:"total_fees"`          // Accumulated fees
 	CumulativeFunding  string         `json:"cumulative_funding"`  // Funding paid/received for this position
 	ContributingTrades []string       `json:"contributing_trades"` // Exchange trade IDs
 	TradeEntries       []TradeEntry   `json:"trade_entries"`       // Per-trade qty for FIFO allocation
 	FundingEntries     []FundingEntry `json:"funding_entries"`     // Individual funding payments
 	StartTime          int64          `json:"start_time"`          // Unix ms
+	EndTime            int64          `json:"end_time,omitempty"`  // Unix ms, 0 = still open
+	ExitTradeDBID      uuid.UUID      `json:"exit_trade_db_id,omitempty"` // DB UUID of closing trade
 }
 
-// ClosedPosition represents a fully closed position (perp or spot)
-type ClosedPosition struct {
-	Market            string         `json:"market"`
-	MarketType        string         `json:"market_type"` // "perp" or "spot"
-	QuoteAsset        string         `json:"quote_asset"` // What the position is quoted in
-	Side              string         `json:"side"`         // "long" or "short"
-	Quantity          string         `json:"quantity"`     // Total qty that was closed
-	TotalFees         string         `json:"total_fees"`
-	CumulativeFunding string         `json:"cumulative_funding"`
-	StartTime         int64          `json:"start_time"`
-	EndTime           int64          `json:"end_time"`
-	EntryTradeEntries []TradeEntry   `json:"entry_trade_entries"` // Per-trade qty (FIFO allocated)
-	ExitTradeDBID     uuid.UUID      `json:"exit_trade_db_id"`   // DB UUID of exit trade
-	FundingEntries    []FundingEntry `json:"funding_entries"`     // Funding payments during this position
+// IsClosed returns true if the position has been fully closed
+func (p *PositionState) IsClosed() bool {
+	return p.EndTime > 0
 }
 
 // TradingState tracks cumulative trading metrics for a single quote asset
@@ -81,8 +73,8 @@ type TradingState struct {
 func NewAccountState() *AccountState {
 	return &AccountState{
 		Assets:          make(map[string]*AssetState),
-		Positions:       make(map[string]*OpenPosition),
-		ClosedPositions: []*ClosedPosition{},
+		Positions:       make(map[string]*PositionState),
+		ClosedPositions: []*PositionState{},
 		Trading:         make(map[string]*TradingState),
 	}
 }
