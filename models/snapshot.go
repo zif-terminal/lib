@@ -17,7 +17,6 @@ type PositionSnapshot struct {
 type BalanceSnapshot struct {
 	Asset       string  `json:"asset"`
 	Balance     float64 `json:"balance"`
-	UsdValue    float64 `json:"usd_value"`
 	OraclePrice float64 `json:"oracle_price"`
 	TimestampMs int64   `json:"timestamp_ms"` // Unix milliseconds of the snapshot
 }

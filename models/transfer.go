@@ -28,7 +28,6 @@ type Transfer struct {
 	Asset             string    `json:"asset"`
 	Amount            string    `json:"amount"` // Always positive; direction determined by Type
 	Timestamp         time.Time `json:"timestamp"`
-	CostBasis         string            `json:"cost_basis"`          // USD cost basis per unit (from user_cost_basis on deposits)
 	Metadata          map[string]string `json:"metadata,omitempty"`  // Extensible metadata (e.g., market, payment_id for funding)
 }
 
@@ -44,7 +43,6 @@ type TransferInput struct {
 	Asset             string    `json:"asset"`
 	Amount            string    `json:"amount"`
 	Timestamp         time.Time `json:"timestamp"`
-	CostBasis         string            `json:"cost_basis,omitempty"`
 	Metadata          map[string]string `json:"metadata,omitempty"`
 }
 
@@ -54,7 +52,6 @@ func (t *Transfer) UnmarshalJSON(data []byte) error {
 	aux := &struct {
 		Timestamp interface{} `json:"timestamp"`
 		Amount    interface{} `json:"amount"`
-		CostBasis interface{} `json:"cost_basis"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -87,10 +84,6 @@ func (t *Transfer) UnmarshalJSON(data []byte) error {
 
 	if aux.Amount != nil {
 		t.Amount = convertToString(aux.Amount)
-	}
-
-	if aux.CostBasis != nil {
-		t.CostBasis = convertToString(aux.CostBasis)
 	}
 
 	return nil

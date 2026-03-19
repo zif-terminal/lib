@@ -18,16 +18,14 @@ func TestClient_GetLatestBalanceSnapshots(t *testing.T) {
 			respData := map[string]interface{}{
 				"spot_balance_snapshots": []map[string]interface{}{
 					{
-						"asset":        "USDC",
-						"balance":      "1500.123456",
-						"oracle_price": "1.0",
-						"usd_value":    "1500.123456",
-					},
-					{
 						"asset":        "SOL",
 						"balance":      "25.5",
 						"oracle_price": "150.75",
-						"usd_value":    "3844.125",
+					},
+					{
+						"asset":        "BTC",
+						"balance":      "0.5",
+						"oracle_price": "42000.00",
 					},
 				},
 			}
@@ -50,23 +48,23 @@ func TestClient_GetLatestBalanceSnapshots(t *testing.T) {
 		t.Fatalf("Expected 2 balances, got %d", len(balances))
 	}
 
-	// Check USDC
-	if balances[0].Asset != "USDC" {
-		t.Errorf("Expected first asset USDC, got %s", balances[0].Asset)
+	// Check SOL
+	if balances[0].Asset != "SOL" {
+		t.Errorf("Expected first asset SOL, got %s", balances[0].Asset)
 	}
-	if balances[0].Balance != 1500.123456 {
-		t.Errorf("Expected USDC balance 1500.123456, got %f", balances[0].Balance)
+	if balances[0].Balance != 25.5 {
+		t.Errorf("Expected SOL balance 25.5, got %f", balances[0].Balance)
 	}
-	if balances[0].OraclePrice != 1.0 {
-		t.Errorf("Expected USDC oracle price 1.0, got %f", balances[0].OraclePrice)
+	if balances[0].OraclePrice != 150.75 {
+		t.Errorf("Expected SOL oracle price 150.75, got %f", balances[0].OraclePrice)
 	}
 
-	// Check SOL
-	if balances[1].Asset != "SOL" {
-		t.Errorf("Expected second asset SOL, got %s", balances[1].Asset)
+	// Check BTC
+	if balances[1].Asset != "BTC" {
+		t.Errorf("Expected second asset BTC, got %s", balances[1].Asset)
 	}
-	if balances[1].Balance != 25.5 {
-		t.Errorf("Expected SOL balance 25.5, got %f", balances[1].Balance)
+	if balances[1].Balance != 0.5 {
+		t.Errorf("Expected BTC balance 0.5, got %f", balances[1].Balance)
 	}
 }
 

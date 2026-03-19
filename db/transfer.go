@@ -39,7 +39,6 @@ func (c *Client) ListTransfers(ctx context.Context, filter TransferFilter) ([]*T
 				asset
 				amount
 				timestamp
-				cost_basis
 				metadata
 			}
 		}
@@ -76,9 +75,6 @@ func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*
 			"amount":              input.Amount,
 			"timestamp":           input.Timestamp.UnixMilli(),
 		}
-		if input.CostBasis != "" {
-			obj["cost_basis"] = input.CostBasis
-		}
 		if len(input.Metadata) > 0 {
 			obj["metadata"] = input.Metadata
 		}
@@ -95,7 +91,6 @@ func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*
 					asset
 					amount
 					timestamp
-					cost_basis
 					metadata
 				}
 			}
@@ -169,7 +164,6 @@ func (c *Client) GetLatestTransferByType(ctx context.Context, accountID uuid.UUI
 				asset
 				amount
 				timestamp
-				cost_basis
 				metadata
 			}
 		}

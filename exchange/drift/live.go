@@ -443,7 +443,6 @@ func (c *Client) fetchBalancesFromEarn(ctx context.Context, wallet, accountID st
 			balances = append(balances, &models.BalanceSnapshot{
 				Asset:       symbol,
 				Balance:     balance,
-				UsdValue:    balance * oraclePrice,
 				OraclePrice: oraclePrice,
 			})
 		}

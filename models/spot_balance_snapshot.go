@@ -15,7 +15,6 @@ type SpotBalanceSnapshot struct {
 	Asset             string    `json:"asset"`
 	Balance           string    `json:"balance"`
 	OraclePrice       string    `json:"oracle_price"`
-	USDValue          string    `json:"usd_value"`
 	Timestamp         time.Time `json:"timestamp"`
 }
 
@@ -26,7 +25,6 @@ func (s *SpotBalanceSnapshot) UnmarshalJSON(data []byte) error {
 		Timestamp   interface{} `json:"timestamp"`
 		Balance     interface{} `json:"balance"`
 		OraclePrice interface{} `json:"oracle_price"`
-		USDValue    interface{} `json:"usd_value"`
 		*Alias
 	}{
 		Alias: (*Alias)(s),
@@ -49,9 +47,6 @@ func (s *SpotBalanceSnapshot) UnmarshalJSON(data []byte) error {
 	if aux.OraclePrice != nil {
 		s.OraclePrice = convertToString(aux.OraclePrice)
 	}
-	if aux.USDValue != nil {
-		s.USDValue = convertToString(aux.USDValue)
-	}
 
 	return nil
 }
@@ -62,6 +57,5 @@ type SpotBalanceSnapshotInput struct {
 	Asset             string    `json:"asset"`
 	Balance           string    `json:"balance"`
 	OraclePrice       string    `json:"oracle_price"`
-	USDValue          string    `json:"usd_value"`
 	Timestamp         time.Time `json:"timestamp"`
 }
