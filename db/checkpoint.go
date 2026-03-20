@@ -18,7 +18,7 @@ type ProcessorCheckpoint struct {
 	SchemaVersion          int                    `json:"schema_version"`           // Bumped when AccountState shape changes
 	LastTradeTimestamp      int64                  `json:"last_trade_timestamp"`     // Unix ms of newest trade
 	LastTransferTimestamp   int64                  `json:"last_transfer_timestamp"`  // Unix ms of newest transfer
-	LastSettlementTimestamp int64                  `json:"last_settlement_timestamp"` // Unix ms of newest settlement
+	LastSettlementTimestamp int64                  `json:"last_settlement_timestamp"` // Deprecated: kept for DB compat, no longer used for validation
 	LastSnapshotTimestamp   int64                  `json:"last_snapshot_timestamp"`  // Unix ms of newest snapshot
 	UpdatedAt              string                 `json:"updated_at"`
 }

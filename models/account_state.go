@@ -53,7 +53,8 @@ type PositionState struct {
 	FundingEntries     []FundingEntry `json:"funding_entries"`     // Individual funding payments
 	StartTime          int64          `json:"start_time"`          // Unix ms
 	EndTime            int64          `json:"end_time,omitempty"`  // Unix ms, 0 = still open
-	ExitTradeDBID      uuid.UUID      `json:"exit_trade_db_id,omitempty"` // DB UUID of closing trade
+	ExitTradeDBID      uuid.UUID      `json:"exit_trade_db_id,omitempty"`  // DB UUID of closing event
+	ExitEventType      string         `json:"exit_event_type,omitempty"`  // "trade", "interest", "transfer", etc.
 }
 
 // IsClosed returns true if the position has been fully closed
