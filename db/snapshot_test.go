@@ -18,14 +18,12 @@ func TestClient_GetLatestBalanceSnapshots(t *testing.T) {
 			respData := map[string]interface{}{
 				"spot_balance_snapshots": []map[string]interface{}{
 					{
-						"asset":        "SOL",
-						"balance":      "25.5",
-						"oracle_price": "150.75",
+						"asset":   "SOL",
+						"balance": "25.5",
 					},
 					{
-						"asset":        "BTC",
-						"balance":      "0.5",
-						"oracle_price": "42000.00",
+						"asset":   "BTC",
+						"balance": "0.5",
 					},
 				},
 			}
@@ -54,9 +52,6 @@ func TestClient_GetLatestBalanceSnapshots(t *testing.T) {
 	}
 	if balances[0].Balance != 25.5 {
 		t.Errorf("Expected SOL balance 25.5, got %f", balances[0].Balance)
-	}
-	if balances[0].OraclePrice != 150.75 {
-		t.Errorf("Expected SOL oracle price 150.75, got %f", balances[0].OraclePrice)
 	}
 
 	// Check BTC

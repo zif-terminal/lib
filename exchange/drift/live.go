@@ -438,12 +438,9 @@ func (c *Client) fetchBalancesFromEarn(ctx context.Context, wallet, accountID st
 				continue
 			}
 
-			oraclePrice := toFloat(asset.OraclePrice)
-
 			balances = append(balances, &models.BalanceSnapshot{
-				Asset:       symbol,
-				Balance:     balance,
-				OraclePrice: oraclePrice,
+				Asset:   symbol,
+				Balance: balance,
 			})
 		}
 		return balances, nil
