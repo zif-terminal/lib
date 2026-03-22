@@ -78,13 +78,6 @@ type PositionInput struct {
 	EndTime           int64  // 0 if open
 }
 
-// PositionPnlInput represents input for upserting position PnL records.
-type PositionPnlInput struct {
-	PositionID   uuid.UUID
-	Denomination string
-	Value        string
-}
-
 // PositionEvent links a position to a source event (trade, transfer, funding)
 type PositionEvent struct {
 	ID         uuid.UUID `json:"id"`

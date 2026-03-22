@@ -120,7 +120,6 @@ type DBClient interface {
 	AddPositionEvents(ctx context.Context, inputs []*PositionEventInput) (int, error)
 	GetPositions(ctx context.Context, filter PositionFilter) ([]*Position, error)
 	GetPositionEventsByPositionID(ctx context.Context, positionID uuid.UUID) ([]*PositionEvent, error)
-	UpsertPositionPnl(ctx context.Context, inputs []*PositionPnlInput) (int, error)
 	// Wallet methods
 	GetWallet(ctx context.Context, id string) (*Wallet, error)
 	GetWalletByAddress(ctx context.Context, address string, chain string) (*Wallet, error)
