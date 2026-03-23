@@ -160,7 +160,6 @@ func (c *Client) AddPositions(ctx context.Context, inputs []*PositionInput) ([]*
 					side
 					status
 					quantity
-					quote_asset
 					start_time
 					end_time
 				}
@@ -177,7 +176,6 @@ func (c *Client) AddPositions(ctx context.Context, inputs []*PositionInput) ([]*
 			"side":                inp.Side,
 			"status":              inp.Status,
 			"quantity":            inp.Quantity,
-			"quote_asset":         inp.QuoteAsset,
 			"start_time":          inp.StartTime,
 		}
 		if inp.EndTime != 0 {
@@ -276,7 +274,6 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 				side
 				status
 				quantity
-				quote_asset
 				start_time
 				end_time
 				updated_at

@@ -43,7 +43,6 @@ type AssetState struct {
 type PositionState struct {
 	Market             string         `json:"market"`              // e.g., "SOL" or "SOL-PERP"
 	MarketType         string         `json:"market_type"`         // "perp" or "spot"
-	QuoteAsset         string         `json:"quote_asset"`         // What the position is quoted in
 	Side               string         `json:"side"`                // "long" or "short"
 	Quantity           string         `json:"quantity"`            // Current position size (0 when closed)
 	TotalFees          string         `json:"total_fees"`          // Accumulated fees

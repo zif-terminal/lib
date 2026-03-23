@@ -104,7 +104,6 @@ func TestClient_AddPositions(t *testing.T) {
 			Side:              "long",
 			Status:            "closed",
 			Quantity:          "100.5",
-			QuoteAsset:        "USDC",
 			StartTime:         1700000000000,
 			EndTime:           1700100000000,
 		},
@@ -189,7 +188,6 @@ func TestClient_AddPositions_OpenPosition(t *testing.T) {
 			Side:              "short",
 			Status:            "open",
 			Quantity:          "0.5",
-			QuoteAsset:        "USDC",
 			StartTime:         1700000000000,
 		},
 	}
