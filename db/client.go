@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/machinebox/graphql"
@@ -140,10 +139,6 @@ type DBClient interface {
 	AddSettlements(ctx context.Context, inputs []*SettlementInput) (int, error)
 	ListSettlements(ctx context.Context, filter SettlementFilter) ([]*Settlement, error)
 	GetLatestSettlement(ctx context.Context, exchangeAccountID uuid.UUID) (*Settlement, error)
-
-	// Price cache methods
-	GetCachedPrice(ctx context.Context, asset, denomination string, timestamp time.Time, tolerance time.Duration) (*PriceCache, error)
-	AddPriceCache(ctx context.Context, input *PriceCacheInput) error
 
 	// Snapshot methods
 	GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.UUID) ([]*BalanceSnapshot, error)
