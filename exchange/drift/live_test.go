@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-
 	"github.com/zif-terminal/lib/models"
 )
 
@@ -17,76 +16,6 @@ func newTestDriftClient(handler http.HandlerFunc) (*Client, *httptest.Server) {
 	client.baseURL = server.URL
 	client.httpClient = server.Client()
 	return client, server
-}
-
-func TestDriftClient_FetchPositions_Success(t *testing.T) {
-	client, server := newTestDriftClient(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// Handle user account request
-		if r.URL.Path == "/user/test-account-id" {
-			json.NewEncoder(w).Encode(driftUserResponse{
-				Positions: []driftUserPosition{
-					{
-						Symbol:           "SOL-PERP",
-						MarketIndex:      0,
-						BaseAssetAmount:  "100",
-						QuoteEntryAmount: "-15000",
-					},
-				},
-				Balances: []driftUserBalance{
-					{Symbol: "USDC", MarketIndex: 0, Balance: "5000"},
-				},
-			})
-			return
-		}
-		// Handle DLOB price request
-		if r.URL.Path == "/l2" {
-			json.NewEncoder(w).Encode(dlobL2Response{
-				Oracle:    "150000000", // 150 * QuotePrecision
-				MarkPrice: "151000000",
-			})
-			return
-		}
-		// Handle earn snapshots
-		if r.URL.Path == "/authority/wallet123/snapshots/earn" {
-			json.NewEncoder(w).Encode(driftEarnResponse{Success: true})
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	})
-	defer server.Close()
-
-	// Override DLOB URL too
-	account := &models.ExchangeAccount{
-		ID:                "test-id",
-		AccountIdentifier: "test-account-id",
-	}
-
-	positions, err := client.FetchPositions(context.Background(), account)
-	if err != nil {
-		t.Fatalf("FetchPositions failed: %v", err)
-	}
-
-	if len(positions) != 1 {
-		t.Fatalf("Expected 1 position, got %d", len(positions))
-	}
-
-	if positions[0].Symbol != "SOL-PERP" {
-		t.Errorf("Expected SOL-PERP, got %s", positions[0].Symbol)
-	}
-	if positions[0].MarketType != "perp" {
-		t.Errorf("Expected perp, got %s", positions[0].MarketType)
-	}
-}
-
-func TestDriftClient_FetchPositions_EmptyIdentifier(t *testing.T) {
-	client := NewClient()
-	account := &models.ExchangeAccount{AccountIdentifier: ""}
-
-	_, err := client.FetchPositions(context.Background(), account)
-	if err == nil {
-		t.Fatal("Expected error for empty identifier")
-	}
 }
 
 func TestDriftClient_FetchBalances_Success(t *testing.T) {
@@ -101,7 +30,6 @@ func TestDriftClient_FetchBalances_Success(t *testing.T) {
 			})
 			return
 		}
-		// Earn snapshots
 		json.NewEncoder(w).Encode(driftEarnResponse{Success: true})
 	})
 	defer server.Close()
@@ -131,9 +59,6 @@ func TestDriftClient_FetchBalances_EmptyIdentifier(t *testing.T) {
 	}
 }
 
-// TestDriftClient_FetchBalances_EarnSnapshots verifies that FetchBalances uses
-// TestDriftClient_FetchBalances_LiveEndpoint verifies that FetchBalances
-// uses the /user/{accountId} endpoint for live balances without earn dependency.
 func TestDriftClient_FetchBalances_LiveEndpoint(t *testing.T) {
 	client, server := newTestDriftClient(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -148,21 +73,13 @@ func TestDriftClient_FetchBalances_LiveEndpoint(t *testing.T) {
 			})
 			return
 		}
-
-		// Earn endpoint should NOT be called
-		if r.URL.Path == "/authority/wallet123/snapshots/earn" {
-			t.Error("Earn endpoint should not be called from FetchBalances")
-			return
-		}
 		w.WriteHeader(http.StatusNotFound)
 	})
 	defer server.Close()
 
-	metadata := json.RawMessage(`{"authority":"wallet123"}`)
 	account := &models.ExchangeAccount{
-		ID:                  "test-id",
-		AccountIdentifier:   "test-account",
-		AccountTypeMetadata: metadata,
+		ID:                "test-id",
+		AccountIdentifier: "test-account",
 	}
 
 	balances, err := client.FetchBalances(context.Background(), account)
@@ -189,8 +106,6 @@ func TestDriftClient_FetchBalances_LiveEndpoint(t *testing.T) {
 	}
 }
 
-// TestDriftClient_FetchBalances_NoMetadata verifies FetchBalances works
-// when the account has no wallet metadata.
 func TestDriftClient_FetchBalances_NoMetadata(t *testing.T) {
 	client, server := newTestDriftClient(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -207,7 +122,6 @@ func TestDriftClient_FetchBalances_NoMetadata(t *testing.T) {
 	})
 	defer server.Close()
 
-	// No metadata → no wallet → earn endpoint not called → fallback to user
 	account := &models.ExchangeAccount{
 		ID:                "test-id",
 		AccountIdentifier: "test-account",
@@ -220,75 +134,6 @@ func TestDriftClient_FetchBalances_NoMetadata(t *testing.T) {
 
 	if len(balances) != 2 {
 		t.Fatalf("Expected 2 balances from fallback, got %d", len(balances))
-	}
-}
-
-func TestDriftClient_FetchOpenOrders_Success(t *testing.T) {
-	client, server := newTestDriftClient(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(driftUserResponse{
-			Orders: []driftUserOrder{
-				{
-					Symbol:          "SOL-PERP",
-					Direction:       "long",
-					Price:           "150.5",
-					BaseAssetAmount: "10",
-					OrderType:       "limit",
-					ReduceOnly:      false,
-					Status:          "open",
-				},
-				{
-					Symbol: "BTC-PERP",
-					Status: "filled", // Not open, should be filtered
-				},
-			},
-		})
-	})
-	defer server.Close()
-
-	account := &models.ExchangeAccount{
-		ID:                "test-id",
-		AccountIdentifier: "test-account",
-	}
-
-	orders, err := client.FetchOpenOrders(context.Background(), account)
-	if err != nil {
-		t.Fatalf("FetchOpenOrders failed: %v", err)
-	}
-
-	if len(orders) != 1 {
-		t.Fatalf("Expected 1 order (filtered non-open), got %d", len(orders))
-	}
-
-	if orders[0].Symbol != "SOL-PERP" {
-		t.Errorf("Expected SOL-PERP, got %s", orders[0].Symbol)
-	}
-}
-
-func TestDriftClient_FetchOpenOrders_EmptyIdentifier(t *testing.T) {
-	client := NewClient()
-	account := &models.ExchangeAccount{AccountIdentifier: ""}
-
-	_, err := client.FetchOpenOrders(context.Background(), account)
-	if err == nil {
-		t.Fatal("Expected error for empty identifier")
-	}
-}
-
-func TestDriftClient_FetchAccountValue_NoWallet(t *testing.T) {
-	client := NewClient()
-	account := &models.ExchangeAccount{
-		ID:                "test-id",
-		AccountIdentifier: "test-account",
-	}
-
-	value, err := client.FetchAccountValue(context.Background(), account)
-	if err != nil {
-		t.Fatalf("FetchAccountValue failed: %v", err)
-	}
-
-	if value == nil {
-		t.Fatal("Expected non-nil value")
 	}
 }
 

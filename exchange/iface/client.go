@@ -49,29 +49,19 @@ type ExchangeClient interface {
 		since time.Time,
 	) ([]*models.TransferInput, error)
 
-	// FetchPositions fetches current open positions (perp + spot) for a given account
-	FetchPositions(
-		ctx context.Context,
-		account *models.ExchangeAccount,
-	) ([]*models.PositionSnapshot, error)
-
 	// FetchBalances fetches current spot balances for a given account
 	FetchBalances(
 		ctx context.Context,
 		account *models.ExchangeAccount,
 	) ([]*models.BalanceSnapshot, error)
 
-	// FetchOpenOrders fetches currently active orders for a given account
-	FetchOpenOrders(
+	// FetchHistoricalBalanceSnapshots fetches historical balance snapshots for backfill.
+	// Returns snapshots sorted by timestamp ascending (oldest first).
+	// Exchanges that don't support historical snapshots should return nil, nil.
+	FetchHistoricalBalanceSnapshots(
 		ctx context.Context,
 		account *models.ExchangeAccount,
-	) ([]*models.OpenOrder, error)
-
-	// FetchAccountValue fetches total equity/account value for a given account
-	FetchAccountValue(
-		ctx context.Context,
-		account *models.ExchangeAccount,
-	) (*models.AccountValueSnapshot, error)
+	) ([]*models.HistoricalBalanceSnapshots, error)
 
 	// FetchSettlements fetches PnL settlement events for a given account since a specific timestamp.
 	// On Drift, this returns actual settlement records from keeper bots that move

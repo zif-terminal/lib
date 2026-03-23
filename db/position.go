@@ -11,7 +11,6 @@ import (
 // Position type aliases
 type Position = models.Position
 type PositionInput = models.PositionInput
-type PositionPnlInput = models.PositionPnlInput
 type PositionEvent = models.PositionEvent
 type PositionEventInput = models.PositionEventInput
 type PositionFilter = models.PositionFilter
@@ -348,42 +347,4 @@ func (c *Client) GetPositionEventsByPositionID(ctx context.Context, positionID u
 	return resp.PositionEvents, nil
 }
 
-// UpsertPositionPnl batch-upserts position PnL records.
-func (c *Client) UpsertPositionPnl(ctx context.Context, inputs []*PositionPnlInput) (int, error) {
-	if len(inputs) == 0 {
-		return 0, nil
-	}
-	query := `
-		mutation UpsertPositionPnl($objects: [position_pnl_insert_input!]!) {
-			insert_position_pnl(
-				objects: $objects,
-				on_conflict: {
-					constraint: position_pnl_unique,
-					update_columns: [value, updated_at]
-				}
-			) {
-				affected_rows
-			}
-		}
-	`
-	objects := make([]map[string]interface{}, len(inputs))
-	for i, inp := range inputs {
-		objects[i] = map[string]interface{}{
-			"position_id":  inp.PositionID.String(),
-			"denomination": inp.Denomination,
-			"value":        inp.Value,
-			"updated_at":   "now()",
-		}
-	}
-	req := c.graphqlRequestWithVars(query, map[string]interface{}{"objects": objects})
-	var resp struct {
-		InsertPositionPnl struct {
-			AffectedRows int `json:"affected_rows"`
-		} `json:"insert_position_pnl"`
-	}
-	if err := c.execute(ctx, req, &resp); err != nil {
-		return 0, fmt.Errorf("failed to upsert position pnl: %w", err)
-	}
-	return resp.InsertPositionPnl.AffectedRows, nil
-}
 

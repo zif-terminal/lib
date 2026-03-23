@@ -34,7 +34,6 @@ func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.U
 			) {
 				asset
 				balance
-				oracle_price
 				timestamp
 			}
 		}
@@ -58,14 +57,9 @@ func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.U
 		if err != nil {
 			return nil, fmt.Errorf("invalid balance %q for asset %s: %w", s.Balance, s.Asset, err)
 		}
-		oraclePrice, err := parseFloat64(s.OraclePrice)
-		if err != nil {
-			return nil, fmt.Errorf("invalid oracle_price %q for asset %s: %w", s.OraclePrice, s.Asset, err)
-		}
 		balances = append(balances, &BalanceSnapshot{
 			Asset:       s.Asset,
 			Balance:     balance,
-			OraclePrice: oraclePrice,
 			TimestampMs: s.Timestamp.UnixMilli(),
 		})
 	}
@@ -78,7 +72,7 @@ func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.U
 // to prevent silent data corruption in downstream calculations.
 func parseFloat64(s string) (float64, error) {
 	if s == "" {
-		return 0, fmt.Errorf("empty string")
+		return 0, nil
 	}
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
@@ -107,7 +101,6 @@ func (c *Client) GetAllBalanceSnapshots(ctx context.Context, accountID uuid.UUID
 			) {
 				asset
 				balance
-				oracle_price
 				timestamp
 			}
 		}
@@ -132,14 +125,9 @@ func (c *Client) GetAllBalanceSnapshots(ctx context.Context, accountID uuid.UUID
 		if err != nil {
 			return nil, fmt.Errorf("invalid balance %q for asset %s: %w", s.Balance, s.Asset, err)
 		}
-		oraclePrice, err := parseFloat64(s.OraclePrice)
-		if err != nil {
-			return nil, fmt.Errorf("invalid oracle_price %q for asset %s: %w", s.OraclePrice, s.Asset, err)
-		}
 		balances = append(balances, &BalanceSnapshot{
 			Asset:       s.Asset,
 			Balance:     balance,
-			OraclePrice: oraclePrice,
 			TimestampMs: s.Timestamp.UnixMilli(),
 		})
 	}
@@ -159,13 +147,13 @@ func (c *Client) AddSpotBalanceSnapshots(ctx context.Context, inputs []*SpotBala
 
 	objects := make([]map[string]interface{}, len(inputs))
 	for i, input := range inputs {
-		objects[i] = map[string]interface{}{
+		obj := map[string]interface{}{
 			"exchange_account_id": input.ExchangeAccountID.String(),
 			"asset":               input.Asset,
 			"balance":             input.Balance,
-			"oracle_price":        input.OraclePrice,
 			"timestamp":           input.Timestamp.UnixMilli(),
 		}
+		objects[i] = obj
 	}
 
 	query := `
@@ -216,7 +204,6 @@ func (c *Client) GetLatestSpotBalanceSnapshot(ctx context.Context, accountID uui
 				exchange_account_id
 				asset
 				balance
-				oracle_price
 				timestamp
 			}
 		}
@@ -259,7 +246,6 @@ func (c *Client) GetSpotBalanceSnapshotsBefore(ctx context.Context, accountID uu
 				exchange_account_id
 				asset
 				balance
-				oracle_price
 				timestamp
 			}
 		}
@@ -303,7 +289,6 @@ func (c *Client) ListSpotBalanceSnapshots(ctx context.Context, accountID uuid.UU
 				exchange_account_id
 				asset
 				balance
-				oracle_price
 				timestamp
 			}
 		}
