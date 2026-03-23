@@ -164,7 +164,6 @@ func (c *Client) AddSpotBalanceSnapshots(ctx context.Context, inputs []*SpotBala
 					exchange_account_id
 					asset
 					balance
-					oracle_price
 					timestamp
 				}
 			}
