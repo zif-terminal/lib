@@ -18,7 +18,6 @@ type Position struct {
 	Side              string           `json:"side"`         // "long" or "short"
 	Status            string           `json:"status"`       // "open" or "closed"
 	Quantity          string           `json:"quantity"`     // NUMERIC as string
-	QuoteAsset        string           `json:"quote_asset"`  // what entry/exit prices are denominated in
 	StartTime         time.Time        `json:"start_time"`
 	EndTime           *time.Time       `json:"end_time"`  // nil if open
 	CreatedAt         time.Time        `json:"created_at"`
@@ -73,7 +72,6 @@ type PositionInput struct {
 	Side              string
 	Status            string // "open" or "closed"
 	Quantity          string
-	QuoteAsset        string // What the entry/exit prices are denominated in
 	StartTime         int64  // Unix ms
 	EndTime           int64  // 0 if open
 }
