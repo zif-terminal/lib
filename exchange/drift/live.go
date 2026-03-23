@@ -11,65 +11,19 @@ import (
 	"github.com/zif-terminal/lib/models"
 )
 
-const dlobBaseURL = "https://dlob.drift.trade"
-
 // Drift /user/{accountId} response types
 
 type driftUserResponse struct {
-	Positions []driftUserPosition `json:"positions"`
-	Balances  []driftUserBalance  `json:"balances"`
-	Orders    []driftUserOrder    `json:"orders"`
-}
-
-type driftUserPosition struct {
-	Symbol           string `json:"symbol"`
-	MarketIndex      int    `json:"marketIndex"`
-	BaseAssetAmount  string `json:"baseAssetAmount"`
-	QuoteEntryAmount string `json:"quoteEntryAmount"`
-	LiquidationPrice string `json:"liquidationPrice"`
+	Balances []driftUserBalance `json:"balances"`
 }
 
 type driftUserBalance struct {
-	Symbol           string `json:"symbol"`
-	MarketIndex      int    `json:"marketIndex"`
-	Balance          string `json:"balance"`
-	LiquidationPrice string `json:"liquidationPrice"`
+	Symbol      string `json:"symbol"`
+	MarketIndex int    `json:"marketIndex"`
+	Balance     string `json:"balance"`
 }
 
-type driftUserOrder struct {
-	Symbol          string `json:"symbol"`
-	Direction       string `json:"direction"`
-	Price           string `json:"price"`
-	BaseAssetAmount string `json:"baseAssetAmount"`
-	OrderType       string `json:"orderType"`
-	ReduceOnly      bool   `json:"reduceOnly"`
-	Status          string `json:"status"`
-}
-
-// DLOB /l2 response
-
-type dlobL2Response struct {
-	Oracle    interface{} `json:"oracle"`
-	MarkPrice interface{} `json:"markPrice"`
-}
-
-// Snapshots response types
-
-type driftSnapshotResponse struct {
-	Success  bool                     `json:"success"`
-	Accounts []driftSnapshotAccountV2 `json:"accounts"`
-}
-
-type driftSnapshotAccountV2 struct {
-	AccountID string                  `json:"accountId"`
-	Snapshots []driftOverviewSnapshot `json:"snapshots"`
-}
-
-type driftOverviewSnapshot struct {
-	EpochTs           int64  `json:"ts"`
-	TotalAccountValue string `json:"totalAccountValue"`
-	AccountBalance    string `json:"accountBalance"`
-}
+// Earn snapshots response types (used by FetchHistoricalBalanceSnapshots)
 
 type driftEarnSnapshot struct {
 	EpochTs int64            `json:"ts"`
@@ -80,7 +34,6 @@ type driftEarnAsset struct {
 	Symbol      string `json:"symbol"`
 	MarketIndex int    `json:"marketIndex"`
 	Balance     string `json:"balance"`
-	OraclePrice string `json:"oraclePrice"`
 }
 
 type driftEarnAccountSnapshot struct {
@@ -93,40 +46,7 @@ type driftEarnResponse struct {
 	Accounts []driftEarnAccountSnapshot `json:"accounts"`
 }
 
-// stablecoins that should be treated as collateral, not positions
-var stablecoins = map[string]bool{
-	"USDC": true, "USDT": true, "DAI": true, "BUSD": true,
-}
-
-// fetchDLOBPrice fetches oracle/mark price for a perp market from DLOB
-func (c *Client) fetchDLOBPrice(ctx context.Context, marketIndex int) (oracle, mark float64) {
-	url := fmt.Sprintf("%s/l2?marketIndex=%d&marketType=perp&depth=1", dlobBaseURL, marketIndex)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return 0, 0
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, 0
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, 0
-	}
-
-	var result dlobL2Response
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, 0
-	}
-
-	oracle = toFloat(result.Oracle) / float64(QuotePrecision)
-	mark = toFloat(result.MarkPrice) / float64(QuotePrecision)
-	return oracle, mark
-}
-
-// fetchUserAccount fetches per-account position/balance/order data
+// fetchUserAccount fetches per-account balance data
 func (c *Client) fetchUserAccount(ctx context.Context, accountID string) (*driftUserResponse, error) {
 	url := fmt.Sprintf("%s/user/%s", c.baseURL, accountID)
 	resp, err := c.doRequestWithRetry(ctx, url)
@@ -149,41 +69,6 @@ func (c *Client) fetchUserAccount(ctx context.Context, accountID string) (*drift
 	}
 
 	return &result, nil
-}
-
-// fetchEarnSnapshots fetches spot oracle prices from earn snapshots
-func (c *Client) fetchEarnSnapshots(ctx context.Context, wallet string) (map[int]float64, error) {
-	url := fmt.Sprintf("%s/authority/%s/snapshots/earn", c.baseURL, wallet)
-	resp, err := c.doRequestWithRetry(ctx, url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return map[int]float64{}, nil
-	}
-
-	var result driftEarnResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return map[int]float64{}, nil
-	}
-
-	prices := make(map[int]float64)
-	for _, acct := range result.Accounts {
-		if len(acct.Snapshots) == 0 {
-			continue
-		}
-		latest := acct.Snapshots[0]
-		for _, asset := range latest.Assets {
-			price := toFloat(asset.OraclePrice)
-			if price > 0 {
-				prices[asset.MarketIndex] = price
-			}
-		}
-	}
-
-	return prices, nil
 }
 
 // discoverAccountIDs discovers subaccount IDs for a wallet
@@ -210,7 +95,6 @@ func (c *Client) discoverAccountIDs(ctx context.Context, wallet string) ([]drift
 // getWalletFromAccount extracts the wallet address from the account
 // For Drift, the AccountIdentifier is the subaccount pubkey, but we need the wallet authority
 func (c *Client) getWalletFromAccount(account *models.ExchangeAccount) string {
-	// Try to get wallet from metadata
 	if account.AccountTypeMetadata != nil {
 		var metadata map[string]interface{}
 		if err := json.Unmarshal(account.AccountTypeMetadata, &metadata); err == nil {
@@ -225,124 +109,7 @@ func (c *Client) getWalletFromAccount(account *models.ExchangeAccount) string {
 	return ""
 }
 
-// FetchPositions fetches current open positions from Drift
-func (c *Client) FetchPositions(
-	ctx context.Context,
-	account *models.ExchangeAccount,
-) ([]*models.PositionSnapshot, error) {
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-
-	accountID := account.AccountIdentifier
-	if accountID == "" {
-		return nil, fmt.Errorf("account identifier (subaccount public key) is required")
-	}
-
-	userData, err := c.fetchUserAccount(ctx, accountID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch user data: %w", err)
-	}
-	if userData == nil {
-		return []*models.PositionSnapshot{}, nil
-	}
-
-	// Collect unique perp market indices for DLOB price fetching
-	perpPrices := make(map[int][2]float64) // marketIndex -> [oracle, mark]
-	for _, p := range userData.Positions {
-		if _, exists := perpPrices[p.MarketIndex]; !exists {
-			oracle, mark := c.fetchDLOBPrice(ctx, p.MarketIndex)
-			perpPrices[p.MarketIndex] = [2]float64{oracle, mark}
-		}
-	}
-
-	// Get spot oracle prices
-	wallet := c.getWalletFromAccount(account)
-	spotOraclePrices := map[int]float64{}
-	if wallet != "" {
-		spotOraclePrices, _ = c.fetchEarnSnapshots(ctx, wallet)
-	}
-
-	var positions []*models.PositionSnapshot
-
-	// Parse perp positions
-	for _, p := range userData.Positions {
-		baseAmount := toFloat(p.BaseAssetAmount)
-		if baseAmount == 0 {
-			continue
-		}
-
-		quoteEntry := toFloat(p.QuoteEntryAmount)
-		entryPrice := 0.0
-		if baseAmount != 0 {
-			entryPrice = math.Abs(quoteEntry / baseAmount)
-		}
-
-		prices := perpPrices[p.MarketIndex]
-		markPrice := prices[0] // oracle
-		if markPrice == 0 {
-			markPrice = prices[1] // mark
-		}
-		if markPrice == 0 {
-			markPrice = entryPrice
-		}
-
-		liqPrice := toFloat(p.LiquidationPrice)
-		side := "long"
-		if baseAmount < 0 {
-			side = "short"
-		}
-
-		positions = append(positions, &models.PositionSnapshot{
-			Symbol:           p.Symbol,
-			Side:             side,
-			Size:             baseAmount,
-			EntryPrice:       entryPrice,
-			MarkPrice:        markPrice,
-			LiquidationPrice: liqPrice,
-			UnrealizedPnl:    (markPrice - entryPrice) * baseAmount,
-			MarketType:       "perp",
-		})
-	}
-
-	// Parse non-stablecoin spot balances as positions
-	for _, b := range userData.Balances {
-		balance := toFloat(b.Balance)
-		if math.Abs(balance) < 0.000001 {
-			continue
-		}
-		if stablecoins[b.Symbol] {
-			continue
-		}
-
-		oraclePrice := spotOraclePrices[b.MarketIndex]
-		liqPrice := toFloat(b.LiquidationPrice)
-
-		side := "long"
-		if balance < 0 {
-			side = "short"
-		}
-
-		positions = append(positions, &models.PositionSnapshot{
-			Symbol:           b.Symbol,
-			Side:             side,
-			Size:             balance,
-			EntryPrice:       oraclePrice,
-			MarkPrice:        oraclePrice,
-			LiquidationPrice: liqPrice,
-			MarketType:       "spot",
-		})
-	}
-
-	return positions, nil
-}
-
 // FetchBalances fetches current spot balances from Drift.
-//
-// Uses the earn snapshots endpoint as the primary source because it returns
-// ALL spot assets (including bSOL, mSOL, JUP, etc.) with oracle prices.
-// The /user/{accountID} endpoint only returns a subset of assets.
-// Falls back to the user endpoint if earn snapshots are unavailable.
 func (c *Client) FetchBalances(
 	ctx context.Context,
 	account *models.ExchangeAccount,
@@ -356,9 +123,6 @@ func (c *Client) FetchBalances(
 		return nil, fmt.Errorf("account identifier (subaccount public key) is required")
 	}
 
-	// Use /user/{accountID} — returns live spot balances.
-	// Oracle prices are not available from this endpoint; a separate price
-	// service will provide them.
 	userData, err := c.fetchUserAccount(ctx, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch user data: %w", err)
@@ -383,9 +147,24 @@ func (c *Client) FetchBalances(
 	return balances, nil
 }
 
-// fetchBalancesFromEarn extracts balance snapshots from the earn endpoint for a
-// specific account. Returns all non-zero balances with oracle prices.
-func (c *Client) fetchBalancesFromEarn(ctx context.Context, wallet, accountID string) ([]*models.BalanceSnapshot, error) {
+// FetchHistoricalBalanceSnapshots returns all historical earn snapshots from Drift.
+// Each entry represents a point-in-time snapshot of all asset balances.
+// Returns snapshots sorted by timestamp ascending (oldest first).
+func (c *Client) FetchHistoricalBalanceSnapshots(
+	ctx context.Context,
+	account *models.ExchangeAccount,
+) ([]*models.HistoricalBalanceSnapshots, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
+	wallet := c.getWalletFromAccount(account)
+	if wallet == "" {
+		return nil, fmt.Errorf("wallet address required for historical snapshots")
+	}
+
+	accountID := account.AccountIdentifier
+
 	url := fmt.Sprintf("%s/authority/%s/snapshots/earn", c.baseURL, wallet)
 	resp, err := c.doRequestWithRetry(ctx, url)
 	if err != nil {
@@ -406,137 +185,52 @@ func (c *Client) fetchBalancesFromEarn(ctx context.Context, wallet, accountID st
 		return nil, fmt.Errorf("earn snapshots returned success=false")
 	}
 
-	// Ensure market cache is populated so we can resolve marketIndex → symbol.
-	// The earn API returns marketIndex but not the symbol name.
 	_ = c.fetchMarkets(ctx)
 
-	// Find the matching account and extract balances from the latest snapshot
 	for _, acct := range result.Accounts {
 		if acct.AccountID != accountID {
 			continue
 		}
-		if len(acct.Snapshots) == 0 {
-			return nil, nil
-		}
 
-		latest := acct.Snapshots[0]
-		var balances []*models.BalanceSnapshot
-		for _, asset := range latest.Assets {
-			balance := toFloat(asset.Balance)
-			if math.Abs(balance) < 0.000001 {
-				continue
-			}
-
-			// Resolve symbol: earn API only has marketIndex, not symbol
-			symbol := asset.Symbol
-			if symbol == "" {
-				if info, ok := c.marketCache.getMarket(asset.MarketIndex, "spot"); ok {
-					symbol = info.BaseAsset
+		var snapshots []*models.HistoricalBalanceSnapshots
+		// Iterate in reverse so we return oldest-first
+		for i := len(acct.Snapshots) - 1; i >= 0; i-- {
+			snap := acct.Snapshots[i]
+			var balances []*models.BalanceSnapshot
+			for _, asset := range snap.Assets {
+				balance := toFloat(asset.Balance)
+				if math.Abs(balance) < 0.000001 {
+					continue
 				}
-			}
-			if symbol == "" {
-				continue
+
+				symbol := asset.Symbol
+				if symbol == "" {
+					if info, ok := c.marketCache.getMarket(asset.MarketIndex, "spot"); ok {
+						symbol = info.BaseAsset
+					}
+				}
+				if symbol == "" {
+					continue
+				}
+
+				balances = append(balances, &models.BalanceSnapshot{
+					Asset:   symbol,
+					Balance: balance,
+				})
 			}
 
-			oraclePrice := toFloat(asset.OraclePrice)
-
-			balances = append(balances, &models.BalanceSnapshot{
-				Asset:       symbol,
-				Balance:     balance,
-				OraclePrice: oraclePrice,
-			})
+			if len(balances) > 0 {
+				snapshots = append(snapshots, &models.HistoricalBalanceSnapshots{
+					TimestampMs: snap.EpochTs * 1000, // earn API returns epoch seconds
+					Balances:    balances,
+				})
+			}
 		}
-		return balances, nil
+
+		return snapshots, nil
 	}
 
 	return nil, nil
-}
-
-// FetchOpenOrders fetches currently active orders from Drift
-func (c *Client) FetchOpenOrders(
-	ctx context.Context,
-	account *models.ExchangeAccount,
-) ([]*models.OpenOrder, error) {
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-
-	accountID := account.AccountIdentifier
-	if accountID == "" {
-		return nil, fmt.Errorf("account identifier (subaccount public key) is required")
-	}
-
-	userData, err := c.fetchUserAccount(ctx, accountID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch user data: %w", err)
-	}
-	if userData == nil {
-		return []*models.OpenOrder{}, nil
-	}
-
-	var orders []*models.OpenOrder
-	for _, o := range userData.Orders {
-		if o.Status != "open" {
-			continue
-		}
-
-		orders = append(orders, &models.OpenOrder{
-			Symbol:     o.Symbol,
-			Side:       o.Direction,
-			Size:       toFloat(o.BaseAssetAmount),
-			Price:      toFloat(o.Price),
-			OrderType:  o.OrderType,
-			ReduceOnly: o.ReduceOnly,
-		})
-	}
-
-	return orders, nil
-}
-
-// FetchAccountValue fetches total account value from Drift
-func (c *Client) FetchAccountValue(
-	ctx context.Context,
-	account *models.ExchangeAccount,
-) (*models.AccountValueSnapshot, error) {
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-
-	wallet := c.getWalletFromAccount(account)
-	if wallet == "" {
-		// Fall back: just use the account identifier and try direct user query
-		return &models.AccountValueSnapshot{}, nil
-	}
-
-	// Try overview snapshot first
-	url := fmt.Sprintf("%s/authority/%s/snapshots/overview", c.baseURL, wallet)
-	resp, err := c.doRequestWithRetry(ctx, url)
-	if err == nil {
-		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			var result driftSnapshotResponse
-			if err := json.NewDecoder(resp.Body).Decode(&result); err == nil && result.Success {
-				totalValue := 0.0
-				for _, acct := range result.Accounts {
-					if len(acct.Snapshots) > 0 {
-						latest := acct.Snapshots[0]
-						v := toFloat(latest.TotalAccountValue)
-						if v == 0 {
-							v = toFloat(latest.AccountBalance)
-						}
-						totalValue += v
-					}
-				}
-				if totalValue > 0 {
-					return &models.AccountValueSnapshot{
-						TotalEquity: totalValue,
-					}, nil
-				}
-			}
-		}
-	}
-
-	return &models.AccountValueSnapshot{}, nil
 }
 
 // toFloat converts various types to float64

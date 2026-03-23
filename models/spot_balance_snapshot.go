@@ -14,7 +14,6 @@ type SpotBalanceSnapshot struct {
 	ExchangeAccountID uuid.UUID `json:"exchange_account_id"`
 	Asset             string    `json:"asset"`
 	Balance           string    `json:"balance"`
-	OraclePrice       string    `json:"oracle_price"`
 	Timestamp         time.Time `json:"timestamp"`
 }
 
@@ -22,9 +21,8 @@ type SpotBalanceSnapshot struct {
 func (s *SpotBalanceSnapshot) UnmarshalJSON(data []byte) error {
 	type Alias SpotBalanceSnapshot
 	aux := &struct {
-		Timestamp   interface{} `json:"timestamp"`
-		Balance     interface{} `json:"balance"`
-		OraclePrice interface{} `json:"oracle_price"`
+		Timestamp interface{} `json:"timestamp"`
+		Balance   interface{} `json:"balance"`
 		*Alias
 	}{
 		Alias: (*Alias)(s),
@@ -44,9 +42,6 @@ func (s *SpotBalanceSnapshot) UnmarshalJSON(data []byte) error {
 	if aux.Balance != nil {
 		s.Balance = convertToString(aux.Balance)
 	}
-	if aux.OraclePrice != nil {
-		s.OraclePrice = convertToString(aux.OraclePrice)
-	}
 
 	return nil
 }
@@ -56,6 +51,5 @@ type SpotBalanceSnapshotInput struct {
 	ExchangeAccountID uuid.UUID `json:"exchange_account_id"`
 	Asset             string    `json:"asset"`
 	Balance           string    `json:"balance"`
-	OraclePrice       string    `json:"oracle_price"`
 	Timestamp         time.Time `json:"timestamp"`
 }

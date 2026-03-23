@@ -49,6 +49,10 @@ func (c *Client) doRequestWithRetry(ctx context.Context, url string) (*http.Resp
 			return nil, ctx.Err()
 		}
 
+		if err := globalLimiter.Wait(ctx); err != nil {
+			return nil, err
+		}
+
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
@@ -387,8 +391,8 @@ func (c *Client) createDepositPageFetcher(accountUUID uuid.UUID) pageFetcher[*mo
 	}
 }
 
-// SettlePnlRecord represents a PnL settlement event from Drift (internal type)
-type SettlePnlRecord struct {
+// settlePnlRecord represents a PnL settlement event from Drift (internal type)
+type settlePnlRecord struct {
 	Timestamp   time.Time
 	Pnl         string // Settled PnL amount (signed)
 	MarketIndex int
@@ -407,7 +411,7 @@ func (c *Client) FetchSettlements(
 		return nil, fmt.Errorf("invalid account ID: %w", err)
 	}
 
-	records, err := c.FetchSettlePnl(ctx, account, since)
+	records, err := c.fetchSettlePnl(ctx, account, since)
 	if err != nil {
 		return nil, err
 	}
@@ -434,12 +438,12 @@ func (c *Client) FetchSettlements(
 	return settlements, nil
 }
 
-// FetchSettlePnl fetches raw PnL settlement records from the Drift API (Drift-specific)
-func (c *Client) FetchSettlePnl(
+// fetchSettlePnl fetches raw PnL settlement records from the Drift API
+func (c *Client) fetchSettlePnl(
 	ctx context.Context,
 	account *models.ExchangeAccount,
 	since time.Time,
-) ([]SettlePnlRecord, error) {
+) ([]settlePnlRecord, error) {
 	accountID := account.AccountIdentifier
 	if accountID == "" {
 		return nil, fmt.Errorf("account identifier is required")
@@ -452,7 +456,7 @@ func (c *Client) FetchSettlePnl(
 		"settlePnl",
 		since,
 		c.createSettlePnlPageFetcher(),
-		func(r SettlePnlRecord) time.Time { return r.Timestamp },
+		func(r settlePnlRecord) time.Time { return r.Timestamp },
 	)
 	if err != nil {
 		return nil, err
@@ -465,37 +469,37 @@ func (c *Client) FetchSettlePnl(
 	return records, nil
 }
 
-func (c *Client) createSettlePnlPageFetcher() pageFetcher[SettlePnlRecord] {
-	return func(ctx context.Context, url string) (pageResult[SettlePnlRecord], error) {
+func (c *Client) createSettlePnlPageFetcher() pageFetcher[settlePnlRecord] {
+	return func(ctx context.Context, url string) (pageResult[settlePnlRecord], error) {
 		resp, err := c.doRequestWithRetry(ctx, url)
 		if err != nil {
-			return pageResult[SettlePnlRecord]{}, fmt.Errorf("failed to fetch settlePnl: %w", err)
+			return pageResult[settlePnlRecord]{}, fmt.Errorf("failed to fetch settlePnl: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return pageResult[SettlePnlRecord]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+			return pageResult[settlePnlRecord]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
 		}
 
 		var response driftSettlePnlResponse
 		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			return pageResult[SettlePnlRecord]{}, fmt.Errorf("failed to decode response: %w", err)
+			return pageResult[settlePnlRecord]{}, fmt.Errorf("failed to decode response: %w", err)
 		}
 
 		if !response.Success {
-			return pageResult[SettlePnlRecord]{}, fmt.Errorf("API returned success=false")
+			return pageResult[settlePnlRecord]{}, fmt.Errorf("API returned success=false")
 		}
 
-		records := make([]SettlePnlRecord, 0, len(response.Records))
+		records := make([]settlePnlRecord, 0, len(response.Records))
 		for _, r := range response.Records {
-			records = append(records, SettlePnlRecord{
+			records = append(records, settlePnlRecord{
 				Timestamp:   time.Unix(r.Ts, 0).UTC(),
 				Pnl:         cleanDecimalString(r.Pnl),
 				MarketIndex: r.MarketIndex,
 			})
 		}
 
-		return pageResult[SettlePnlRecord]{
+		return pageResult[settlePnlRecord]{
 			items:    records,
 			nextPage: extractNextPage(response.Meta),
 		}, nil

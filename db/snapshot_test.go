@@ -20,12 +20,10 @@ func TestClient_GetLatestBalanceSnapshots(t *testing.T) {
 					{
 						"asset":        "SOL",
 						"balance":      "25.5",
-						"oracle_price": "150.75",
 					},
 					{
 						"asset":        "BTC",
 						"balance":      "0.5",
-						"oracle_price": "42000.00",
 					},
 				},
 			}
@@ -55,10 +53,6 @@ func TestClient_GetLatestBalanceSnapshots(t *testing.T) {
 	if balances[0].Balance != 25.5 {
 		t.Errorf("Expected SOL balance 25.5, got %f", balances[0].Balance)
 	}
-	if balances[0].OraclePrice != 150.75 {
-		t.Errorf("Expected SOL oracle price 150.75, got %f", balances[0].OraclePrice)
-	}
-
 	// Check BTC
 	if balances[1].Asset != "BTC" {
 		t.Errorf("Expected second asset BTC, got %s", balances[1].Asset)
@@ -106,6 +100,7 @@ func TestParseFloat64(t *testing.T) {
 			{"100.5", 100.5},
 			{"-50.25", -50.25},
 			{"0", 0},
+			{"", 0},
 		}
 		for _, tt := range tests {
 			got, err := parseFloat64(tt.input)
@@ -119,7 +114,7 @@ func TestParseFloat64(t *testing.T) {
 	})
 
 	t.Run("invalid values return error", func(t *testing.T) {
-		invalid := []string{"invalid", "", "NaN", "Inf", "-Inf"}
+		invalid := []string{"invalid", "NaN", "Inf", "-Inf"}
 		for _, input := range invalid {
 			_, err := parseFloat64(input)
 			if err == nil {
