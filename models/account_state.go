@@ -4,14 +4,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// TradeEntry tracks a single event's contribution to a position (for FIFO allocation).
-// Despite the name, this tracks trades, transfers, interest, and rewards — any event
+// EventEntry tracks a single event's contribution to a position (for FIFO allocation).
+// This covers trades, transfers, interest, settlements, and rewards — any event
 // that changes position quantity. The EventType field distinguishes them.
-type TradeEntry struct {
-	TradeDBID uuid.UUID `json:"trade_db_id"`
-	EventType string    `json:"event_type,omitempty"` // "trade", "transfer", "interest", "reward" (empty = "trade" for backward compat)
+type EventEntry struct {
+	EventID   uuid.UUID `json:"event_id"`
+	EventType string    `json:"event_type,omitempty"` // "trade", "transfer", "interest", "settlement", "reward"
 	Quantity  string    `json:"quantity"`              // How much this event contributed
 }
+
+// TradeEntry is a deprecated alias for EventEntry. Use EventEntry instead.
+type TradeEntry = EventEntry
 
 // FundingEntry tracks a single funding payment linked to a position
 type FundingEntry struct {
@@ -48,11 +51,11 @@ type PositionState struct {
 	TotalFees          string         `json:"total_fees"`          // Accumulated fees
 	CumulativeFunding  string         `json:"cumulative_funding"`  // Funding paid/received for this position
 	ContributingTrades []string       `json:"contributing_trades"` // Exchange trade IDs
-	TradeEntries       []TradeEntry   `json:"trade_entries"`       // Per-trade qty for FIFO allocation
+	EventEntries       []EventEntry   `json:"event_entries"`       // Per-event qty for FIFO allocation
 	FundingEntries     []FundingEntry `json:"funding_entries"`     // Individual funding payments
 	StartTime          int64          `json:"start_time"`          // Unix ms
 	EndTime            int64          `json:"end_time,omitempty"`  // Unix ms, 0 = still open
-	ExitTradeDBID      uuid.UUID      `json:"exit_trade_db_id,omitempty"`  // DB UUID of closing event
+	ExitEventID        uuid.UUID      `json:"exit_event_id,omitempty"`    // DB UUID of closing event
 	ExitEventType      string         `json:"exit_event_type,omitempty"`  // "trade", "interest", "transfer", etc.
 }
 
