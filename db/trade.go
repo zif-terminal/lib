@@ -398,6 +398,51 @@ func (c *Client) DeleteTrade(ctx context.Context, id string) error {
 	return nil
 }
 
+// GetTradesByIDs retrieves trades by their IDs.
+func (c *Client) GetTradesByIDs(ctx context.Context, ids []uuid.UUID) ([]*Trade, error) {
+	if len(ids) == 0 {
+		return []*Trade{}, nil
+	}
+
+	query := `
+		query GetTradesByIDs($ids: [uuid!]!) {
+			trades(where: { id: { _in: $ids } }) {
+				id
+				base_asset
+				quote_asset
+				side
+				price
+				quantity
+				timestamp
+				fee
+				order_id
+				trade_id
+				exchange_account_id
+				market_type
+			}
+		}
+	`
+
+	idStrings := make([]string, len(ids))
+	for i, id := range ids {
+		idStrings[i] = id.String()
+	}
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"ids": idStrings,
+	})
+
+	var resp struct {
+		Trades []*Trade `json:"trades"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get trades by IDs: %w", err)
+	}
+
+	return resp.Trades, nil
+}
+
 // LatestTrade retrieves the latest trade for each specified exchange account
 // Returns a map of exchange_account_id -> latest trade
 func (c *Client) LatestTrade(ctx context.Context, exchangeAccountIDs []uuid.UUID) (map[uuid.UUID]*Trade, error) {
