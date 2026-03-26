@@ -104,6 +104,7 @@ type DBClient interface {
 
 	// Trade methods
 	GetTrade(ctx context.Context, id string) (*Trade, error)
+	GetTradesByIDs(ctx context.Context, ids []uuid.UUID) ([]*Trade, error)
 	ListTrades(ctx context.Context, filter TradeFilter) ([]*Trade, error)
 	CreateTrade(ctx context.Context, input *TradeInput) (*Trade, error)
 	UpdateTrade(ctx context.Context, id string, input *TradeInput) (*Trade, error)
@@ -129,6 +130,7 @@ type DBClient interface {
 	UpdateWalletLastDetected(ctx context.Context, walletID string) error
 
 	// Transfer methods
+	GetTransfersByIDs(ctx context.Context, ids []uuid.UUID) ([]*Transfer, error)
 	ListTransfers(ctx context.Context, filter TransferFilter) ([]*Transfer, error)
 	AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*Transfer, error)
 	DeleteTransfersByAccountAndType(ctx context.Context, accountID uuid.UUID, transferType string) (int, error)
@@ -137,6 +139,7 @@ type DBClient interface {
 
 	// Settlement methods
 	AddSettlements(ctx context.Context, inputs []*SettlementInput) (int, error)
+	GetSettlementsByIDs(ctx context.Context, ids []uuid.UUID) ([]*Settlement, error)
 	ListSettlements(ctx context.Context, filter SettlementFilter) ([]*Settlement, error)
 	GetLatestSettlement(ctx context.Context, exchangeAccountID uuid.UUID) (*Settlement, error)
 
@@ -150,6 +153,11 @@ type DBClient interface {
 
 	// Sync timestamp methods
 	UpdateAccountLastSynced(ctx context.Context, accountID string) error
+
+	// Event value methods
+	ListSupportedDenominations(ctx context.Context) ([]string, error)
+	ListMissingEventValues(ctx context.Context, limit int) ([]*MissingEventValue, error)
+	AddEventValues(ctx context.Context, inputs []*EventValueInput) (int, error)
 }
 
 // Ensure Client implements DBClient

@@ -59,6 +59,46 @@ func (c *Client) ListTransfers(ctx context.Context, filter TransferFilter) ([]*T
 	return resp.Transfers, nil
 }
 
+// GetTransfersByIDs retrieves transfers by their IDs.
+func (c *Client) GetTransfersByIDs(ctx context.Context, ids []uuid.UUID) ([]*Transfer, error) {
+	if len(ids) == 0 {
+		return []*Transfer{}, nil
+	}
+
+	query := `
+		query GetTransfersByIDs($ids: [uuid!]!) {
+			transfers(where: { id: { _in: $ids } }) {
+				id
+				exchange_account_id
+				type
+				asset
+				amount
+				timestamp
+				metadata
+			}
+		}
+	`
+
+	idStrings := make([]string, len(ids))
+	for i, id := range ids {
+		idStrings[i] = id.String()
+	}
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"ids": idStrings,
+	})
+
+	var resp struct {
+		Transfers []*Transfer `json:"transfers"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get transfers by IDs: %w", err)
+	}
+
+	return resp.Transfers, nil
+}
+
 // AddTransfers inserts transfer records into the transfers table.
 // Uses ON CONFLICT DO NOTHING to avoid duplicates.
 func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*Transfer, error) {

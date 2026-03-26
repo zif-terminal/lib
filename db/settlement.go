@@ -66,6 +66,46 @@ func (c *Client) AddSettlements(ctx context.Context, inputs []*SettlementInput) 
 	return resp.InsertSettlements.AffectedRows, nil
 }
 
+// GetSettlementsByIDs retrieves settlements by their IDs.
+func (c *Client) GetSettlementsByIDs(ctx context.Context, ids []uuid.UUID) ([]*Settlement, error) {
+	if len(ids) == 0 {
+		return []*Settlement{}, nil
+	}
+
+	query := `
+		query GetSettlementsByIDs($ids: [uuid!]!) {
+			settlements(where: { id: { _in: $ids } }) {
+				id
+				exchange_account_id
+				asset
+				amount
+				market
+				timestamp
+				settlement_id
+			}
+		}
+	`
+
+	idStrings := make([]string, len(ids))
+	for i, id := range ids {
+		idStrings[i] = id.String()
+	}
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"ids": idStrings,
+	})
+
+	var resp struct {
+		Settlements []*Settlement `json:"settlements"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get settlements by IDs: %w", err)
+	}
+
+	return resp.Settlements, nil
+}
+
 // ListSettlements retrieves settlements for given accounts, ordered by timestamp ascending.
 func (c *Client) ListSettlements(ctx context.Context, filter SettlementFilter) ([]*Settlement, error) {
 	vars := make(map[string]interface{})
