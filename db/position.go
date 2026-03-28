@@ -143,11 +143,13 @@ func (c *Client) CountClosedPositions(ctx context.Context, accountID uuid.UUID) 
 	return resp.PositionsAggregate.Aggregate.Count, nil
 }
 
-// AddPositions batch-inserts positions and returns the created records (with IDs).
+// AddPositions batch-inserts positions in chunks and returns the created records (with IDs).
 func (c *Client) AddPositions(ctx context.Context, inputs []*PositionInput) ([]*Position, error) {
 	if len(inputs) == 0 {
 		return nil, nil
 	}
+
+	const batchSize = 500
 
 	query := `
 		mutation AddPositions($objects: [positions_insert_input!]!) {
@@ -167,45 +169,58 @@ func (c *Client) AddPositions(ctx context.Context, inputs []*PositionInput) ([]*
 		}
 	`
 
-	objects := make([]map[string]interface{}, len(inputs))
-	for i, inp := range inputs {
-		obj := map[string]interface{}{
-			"exchange_account_id": inp.ExchangeAccountID.String(),
-			"market":              inp.Market,
-			"market_type":         inp.MarketType,
-			"side":                inp.Side,
-			"status":              inp.Status,
-			"quantity":            inp.Quantity,
-			"start_time":          inp.StartTime,
+	var allPositions []*Position
+	for start := 0; start < len(inputs); start += batchSize {
+		end := start + batchSize
+		if end > len(inputs) {
+			end = len(inputs)
 		}
-		if inp.EndTime != 0 {
-			obj["end_time"] = inp.EndTime
+		batch := inputs[start:end]
+
+		objects := make([]map[string]interface{}, len(batch))
+		for i, inp := range batch {
+			obj := map[string]interface{}{
+				"exchange_account_id": inp.ExchangeAccountID.String(),
+				"market":              inp.Market,
+				"market_type":         inp.MarketType,
+				"side":                inp.Side,
+				"status":              inp.Status,
+				"quantity":            inp.Quantity,
+				"start_time":          inp.StartTime,
+			}
+			if inp.EndTime != 0 {
+				obj["end_time"] = inp.EndTime
+			}
+			objects[i] = obj
 		}
-		objects[i] = obj
+
+		req := c.graphqlRequestWithVars(query, map[string]interface{}{
+			"objects": objects,
+		})
+
+		var resp struct {
+			InsertPositions struct {
+				Returning []*Position `json:"returning"`
+			} `json:"insert_positions"`
+		}
+
+		if err := c.execute(ctx, req, &resp); err != nil {
+			return allPositions, fmt.Errorf("failed to add positions (batch %d-%d of %d): %w", start, end, len(inputs), err)
+		}
+
+		allPositions = append(allPositions, resp.InsertPositions.Returning...)
 	}
 
-	req := c.graphqlRequestWithVars(query, map[string]interface{}{
-		"objects": objects,
-	})
-
-	var resp struct {
-		InsertPositions struct {
-			Returning []*Position `json:"returning"`
-		} `json:"insert_positions"`
-	}
-
-	if err := c.execute(ctx, req, &resp); err != nil {
-		return nil, fmt.Errorf("failed to add positions: %w", err)
-	}
-
-	return resp.InsertPositions.Returning, nil
+	return allPositions, nil
 }
 
-// AddPositionEvents batch-inserts position events.
+// AddPositionEvents batch-inserts position events in chunks to avoid overwhelming Hasura.
 func (c *Client) AddPositionEvents(ctx context.Context, inputs []*PositionEventInput) (int, error) {
 	if len(inputs) == 0 {
 		return 0, nil
 	}
+
+	const batchSize = 500
 
 	query := `
 		mutation AddPositionEvents($objects: [position_events_insert_input!]!) {
@@ -215,32 +230,43 @@ func (c *Client) AddPositionEvents(ctx context.Context, inputs []*PositionEventI
 		}
 	`
 
-	objects := make([]map[string]interface{}, len(inputs))
-	for i, inp := range inputs {
-		objects[i] = map[string]interface{}{
-			"position_id": inp.PositionID.String(),
-			"event_id":    inp.EventID.String(),
-			"event_type":  inp.EventType,
-			"direction":   inp.Direction,
-			"quantity":    inp.Quantity,
+	totalAffected := 0
+	for start := 0; start < len(inputs); start += batchSize {
+		end := start + batchSize
+		if end > len(inputs) {
+			end = len(inputs)
 		}
+		batch := inputs[start:end]
+
+		objects := make([]map[string]interface{}, len(batch))
+		for i, inp := range batch {
+			objects[i] = map[string]interface{}{
+				"position_id": inp.PositionID.String(),
+				"event_id":    inp.EventID.String(),
+				"event_type":  inp.EventType,
+				"direction":   inp.Direction,
+				"quantity":    inp.Quantity,
+			}
+		}
+
+		req := c.graphqlRequestWithVars(query, map[string]interface{}{
+			"objects": objects,
+		})
+
+		var resp struct {
+			InsertPositionEvents struct {
+				AffectedRows int `json:"affected_rows"`
+			} `json:"insert_position_events"`
+		}
+
+		if err := c.execute(ctx, req, &resp); err != nil {
+			return totalAffected, fmt.Errorf("failed to add position events (batch %d-%d of %d): %w", start, end, len(inputs), err)
+		}
+
+		totalAffected += resp.InsertPositionEvents.AffectedRows
 	}
 
-	req := c.graphqlRequestWithVars(query, map[string]interface{}{
-		"objects": objects,
-	})
-
-	var resp struct {
-		InsertPositionEvents struct {
-			AffectedRows int `json:"affected_rows"`
-		} `json:"insert_position_events"`
-	}
-
-	if err := c.execute(ctx, req, &resp); err != nil {
-		return 0, fmt.Errorf("failed to add position events: %w", err)
-	}
-
-	return resp.InsertPositionEvents.AffectedRows, nil
+	return totalAffected, nil
 }
 
 // GetPositions queries positions with filters.
