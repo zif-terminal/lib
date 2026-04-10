@@ -24,6 +24,10 @@ const (
 	backoffMultiplier = 2.0
 )
 
+// oracleDenomination is the denomination used by Drift's oracle prices.
+// Drift oracles report prices in USDC. Other exchanges may use different denominations.
+const oracleDenomination = "USDC"
+
 // Client implements iface.ExchangeClient for Drift
 type Client struct {
 	baseURL     string
@@ -103,63 +107,77 @@ func (c *Client) Name() string {
 	return "drift"
 }
 
+// tradeWithPrices pairs a trade with its oracle price records
+type tradeWithPrices struct {
+	trade  *models.TradeInput
+	prices []*models.PriceRecord
+}
+
 // FetchTrades fetches trades and swaps from Drift API
 func (c *Client) FetchTrades(
 	ctx context.Context,
 	account *models.ExchangeAccount,
 	since time.Time,
-) ([]*models.TradeInput, error) {
+) ([]*models.TradeInput, []*models.PriceRecord, error) {
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	}
 
 	accountUUID, err := uuid.Parse(account.ID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid account ID: %w", err)
+		return nil, nil, fmt.Errorf("invalid account ID: %w", err)
 	}
 
 	accountID := account.AccountIdentifier
 	if accountID == "" {
-		return nil, fmt.Errorf("account identifier (subaccount public key) is required")
+		return nil, nil, fmt.Errorf("account identifier (subaccount public key) is required")
 	}
 
 	// Fetch trades using generic pagination
-	trades, err := fetchWithHistory(
+	tradeResults, err := fetchWithHistory(
 		ctx,
 		c.baseURL,
 		accountID,
 		"trades",
 		since,
 		c.createTradePageFetcher(accountUUID),
-		func(t *models.TradeInput) time.Time { return t.Timestamp },
+		func(t tradeWithPrices) time.Time { return t.trade.Timestamp },
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Fetch swaps using generic pagination
-	swaps, err := fetchWithHistory(
+	swapResults, err := fetchWithHistory(
 		ctx,
 		c.baseURL,
 		accountID,
 		"swaps",
 		since,
 		c.createSwapPageFetcher(accountUUID),
-		func(t *models.TradeInput) time.Time { return t.Timestamp },
+		func(t tradeWithPrices) time.Time { return t.trade.Timestamp },
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Combine trades and swaps
-	allTrades := append(trades, swaps...)
+	allResults := append(tradeResults, swapResults...)
 
 	// Sort by timestamp (oldest first)
-	sort.Slice(allTrades, func(i, j int) bool {
-		return allTrades[i].Timestamp.Before(allTrades[j].Timestamp)
+	sort.Slice(allResults, func(i, j int) bool {
+		return allResults[i].trade.Timestamp.Before(allResults[j].trade.Timestamp)
 	})
 
-	return allTrades, nil
+	// Separate into trades and prices
+	allTrades := make([]*models.TradeInput, 0, len(allResults))
+	var allPrices []*models.PriceRecord
+	for _, r := range allResults {
+		allTrades = append(allTrades, r.trade)
+		allPrices = append(allPrices, r.prices...)
+	}
+
+	return allTrades, allPrices, nil
 }
 
 // FetchFundingPayments fetches funding payments from Drift API
@@ -203,115 +221,135 @@ func (c *Client) FetchFundingPayments(
 	return payments, nil
 }
 
+// depositWithPrice pairs a transfer with its oracle price record
+type depositWithPrice struct {
+	transfer *models.TransferInput
+	price    *models.PriceRecord
+}
+
 // FetchDeposits fetches deposits and withdrawals from Drift API
 func (c *Client) FetchDeposits(
 	ctx context.Context,
 	account *models.ExchangeAccount,
 	since time.Time,
-) ([]*models.TransferInput, error) {
+) ([]*models.TransferInput, []*models.PriceRecord, error) {
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	}
 
 	accountUUID, err := uuid.Parse(account.ID)
 	if err != nil {
-		return nil, fmt.Errorf("invalid account ID: %w", err)
+		return nil, nil, fmt.Errorf("invalid account ID: %w", err)
 	}
 
 	accountID := account.AccountIdentifier
 	if accountID == "" {
-		return nil, fmt.Errorf("account identifier (subaccount public key) is required")
+		return nil, nil, fmt.Errorf("account identifier (subaccount public key) is required")
 	}
 
-	deposits, err := fetchWithHistory(
+	results, err := fetchWithHistory(
 		ctx,
 		c.baseURL,
 		accountID,
 		"deposits",
 		since,
 		c.createDepositPageFetcher(accountUUID),
-		func(d *models.TransferInput) time.Time { return d.Timestamp },
+		func(d depositWithPrice) time.Time { return d.transfer.Timestamp },
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Sort by timestamp (oldest first)
-	sort.Slice(deposits, func(i, j int) bool {
-		return deposits[i].Timestamp.Before(deposits[j].Timestamp)
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].transfer.Timestamp.Before(results[j].transfer.Timestamp)
 	})
 
-	return deposits, nil
+	// Separate into transfers and prices
+	deposits := make([]*models.TransferInput, 0, len(results))
+	var prices []*models.PriceRecord
+	for _, r := range results {
+		deposits = append(deposits, r.transfer)
+		if r.price != nil {
+			prices = append(prices, r.price)
+		}
+	}
+
+	return deposits, prices, nil
 }
 
 // Page fetcher factories - these create page fetchers for each data type
 
-func (c *Client) createTradePageFetcher(accountUUID uuid.UUID) pageFetcher[*models.TradeInput] {
-	return func(ctx context.Context, url string) (pageResult[*models.TradeInput], error) {
+func (c *Client) createTradePageFetcher(accountUUID uuid.UUID) pageFetcher[tradeWithPrices] {
+	return func(ctx context.Context, url string) (pageResult[tradeWithPrices], error) {
 		resp, err := c.doRequestWithRetry(ctx, url)
 		if err != nil {
-			return pageResult[*models.TradeInput]{}, fmt.Errorf("failed to fetch trades: %w", err)
+			return pageResult[tradeWithPrices]{}, fmt.Errorf("failed to fetch trades: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return pageResult[*models.TradeInput]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+			return pageResult[tradeWithPrices]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
 		}
 
 		var response driftTradesResponse
 		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			return pageResult[*models.TradeInput]{}, fmt.Errorf("failed to decode response: %w", err)
+			return pageResult[tradeWithPrices]{}, fmt.Errorf("failed to decode response: %w", err)
 		}
 
 		if !response.Success {
-			return pageResult[*models.TradeInput]{}, fmt.Errorf("API returned success=false")
+			return pageResult[tradeWithPrices]{}, fmt.Errorf("API returned success=false")
 		}
 
-		trades := make([]*models.TradeInput, 0, len(response.Records))
+		results := make([]tradeWithPrices, 0, len(response.Records))
 		for _, record := range response.Records {
-			trade, err := c.transformTrade(ctx, record, accountUUID)
+			trade, price, err := c.transformTrade(ctx, record, accountUUID)
 			if err != nil {
-				return pageResult[*models.TradeInput]{}, fmt.Errorf("failed to transform trade: %w", err)
+				return pageResult[tradeWithPrices]{}, fmt.Errorf("failed to transform trade: %w", err)
 			}
-			trades = append(trades, trade)
+			var prices []*models.PriceRecord
+			if price != nil {
+				prices = []*models.PriceRecord{price}
+			}
+			results = append(results, tradeWithPrices{trade: trade, prices: prices})
 		}
 
-		return pageResult[*models.TradeInput]{
-			items:    trades,
+		return pageResult[tradeWithPrices]{
+			items:    results,
 			nextPage: extractNextPage(response.Meta),
 		}, nil
 	}
 }
 
-func (c *Client) createSwapPageFetcher(accountUUID uuid.UUID) pageFetcher[*models.TradeInput] {
-	return func(ctx context.Context, url string) (pageResult[*models.TradeInput], error) {
+func (c *Client) createSwapPageFetcher(accountUUID uuid.UUID) pageFetcher[tradeWithPrices] {
+	return func(ctx context.Context, url string) (pageResult[tradeWithPrices], error) {
 		resp, err := c.doRequestWithRetry(ctx, url)
 		if err != nil {
-			return pageResult[*models.TradeInput]{}, fmt.Errorf("failed to fetch swaps: %w", err)
+			return pageResult[tradeWithPrices]{}, fmt.Errorf("failed to fetch swaps: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return pageResult[*models.TradeInput]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+			return pageResult[tradeWithPrices]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
 		}
 
 		var response driftSwapsResponse
 		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			return pageResult[*models.TradeInput]{}, fmt.Errorf("failed to decode response: %w", err)
+			return pageResult[tradeWithPrices]{}, fmt.Errorf("failed to decode response: %w", err)
 		}
 
 		if !response.Success {
-			return pageResult[*models.TradeInput]{}, fmt.Errorf("API returned success=false")
+			return pageResult[tradeWithPrices]{}, fmt.Errorf("API returned success=false")
 		}
 
-		swaps := make([]*models.TradeInput, 0, len(response.Records))
+		results := make([]tradeWithPrices, 0, len(response.Records))
 		for _, record := range response.Records {
-			swap := c.transformSwap(record, accountUUID)
-			swaps = append(swaps, swap)
+			swap, prices := c.transformSwap(record, accountUUID)
+			results = append(results, tradeWithPrices{trade: swap, prices: prices})
 		}
 
-		return pageResult[*models.TradeInput]{
-			items:    swaps,
+		return pageResult[tradeWithPrices]{
+			items:    results,
 			nextPage: extractNextPage(response.Meta),
 		}, nil
 	}
@@ -354,38 +392,38 @@ func (c *Client) createFundingPageFetcher(accountUUID uuid.UUID) pageFetcher[*mo
 	}
 }
 
-func (c *Client) createDepositPageFetcher(accountUUID uuid.UUID) pageFetcher[*models.TransferInput] {
-	return func(ctx context.Context, url string) (pageResult[*models.TransferInput], error) {
+func (c *Client) createDepositPageFetcher(accountUUID uuid.UUID) pageFetcher[depositWithPrice] {
+	return func(ctx context.Context, url string) (pageResult[depositWithPrice], error) {
 		resp, err := c.doRequestWithRetry(ctx, url)
 		if err != nil {
-			return pageResult[*models.TransferInput]{}, fmt.Errorf("failed to fetch deposits: %w", err)
+			return pageResult[depositWithPrice]{}, fmt.Errorf("failed to fetch deposits: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return pageResult[*models.TransferInput]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+			return pageResult[depositWithPrice]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
 		}
 
 		var response driftDepositsResponse
 		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			return pageResult[*models.TransferInput]{}, fmt.Errorf("failed to decode response: %w", err)
+			return pageResult[depositWithPrice]{}, fmt.Errorf("failed to decode response: %w", err)
 		}
 
 		if !response.Success {
-			return pageResult[*models.TransferInput]{}, fmt.Errorf("API returned success=false")
+			return pageResult[depositWithPrice]{}, fmt.Errorf("API returned success=false")
 		}
 
-		deposits := make([]*models.TransferInput, 0, len(response.Records))
+		results := make([]depositWithPrice, 0, len(response.Records))
 		for _, record := range response.Records {
-			deposit, err := c.transformDeposit(ctx, record, accountUUID)
+			transfer, price, err := c.transformDeposit(ctx, record, accountUUID)
 			if err != nil {
-				return pageResult[*models.TransferInput]{}, fmt.Errorf("failed to transform deposit: %w", err)
+				return pageResult[depositWithPrice]{}, fmt.Errorf("failed to transform deposit: %w", err)
 			}
-			deposits = append(deposits, deposit)
+			results = append(results, depositWithPrice{transfer: transfer, price: price})
 		}
 
-		return pageResult[*models.TransferInput]{
-			items:    deposits,
+		return pageResult[depositWithPrice]{
+			items:    results,
 			nextPage: extractNextPage(response.Meta),
 		}, nil
 	}
@@ -522,7 +560,7 @@ func extractNextPage(meta driftMeta) string {
 
 // Transform functions - convert API records to model types
 
-func (c *Client) transformTrade(ctx context.Context, record driftTradeRecord, accountUUID uuid.UUID) (*models.TradeInput, error) {
+func (c *Client) transformTrade(ctx context.Context, record driftTradeRecord, accountUUID uuid.UUID) (*models.TradeInput, *models.PriceRecord, error) {
 	isTaker := record.User == record.Taker
 
 	var direction string
@@ -559,7 +597,7 @@ func (c *Client) transformTrade(ctx context.Context, record driftTradeRecord, ac
 		marketType = "perp"
 	}
 
-	return &models.TradeInput{
+	trade := &models.TradeInput{
 		TradeID:           record.FillRecordID,
 		OrderID:           orderID,
 		BaseAsset:         baseAsset,
@@ -571,10 +609,24 @@ func (c *Client) transformTrade(ctx context.Context, record driftTradeRecord, ac
 		Timestamp:         timestamp,
 		ExchangeAccountID: accountUUID,
 		MarketType:        marketType,
-	}, nil
+	}
+
+	// Extract oracle price if available
+	var priceRecord *models.PriceRecord
+	if record.OraclePrice != "" && record.OraclePrice != "0" {
+		priceRecord = &models.PriceRecord{
+			Asset:        baseAsset,
+			Denomination: quoteAsset,
+			Timestamp:    timestamp,
+			Price:        record.OraclePrice,
+			Source:       "oracle",
+		}
+	}
+
+	return trade, priceRecord, nil
 }
 
-func (c *Client) transformSwap(record driftSwapRecord, accountUUID uuid.UUID) *models.TradeInput {
+func (c *Client) transformSwap(record driftSwapRecord, accountUUID uuid.UUID) (*models.TradeInput, []*models.PriceRecord) {
 	amountIn := cleanDecimalString(record.AmountIn)
 	amountOut := cleanDecimalString(record.AmountOut)
 	fee := cleanDecimalString(record.Fee)
@@ -604,7 +656,7 @@ func (c *Client) transformSwap(record driftSwapRecord, accountUUID uuid.UUID) *m
 	timestamp := time.Unix(record.Ts, 0).UTC()
 	tradeID := fmt.Sprintf("swap_%s_%d", record.TxSig, record.TxSigIndex)
 
-	return &models.TradeInput{
+	trade := &models.TradeInput{
 		TradeID:           tradeID,
 		OrderID:           record.TxSig,
 		BaseAsset:         baseAsset,
@@ -617,6 +669,29 @@ func (c *Client) transformSwap(record driftSwapRecord, accountUUID uuid.UUID) *m
 		ExchangeAccountID: accountUUID,
 		MarketType:        "swap",
 	}
+
+	// Extract oracle prices for both sides of the swap
+	var prices []*models.PriceRecord
+	if record.OutOraclePrice != "" && record.OutOraclePrice != "0" {
+		prices = append(prices, &models.PriceRecord{
+			Asset:        record.OutSymbol,
+			Denomination: oracleDenomination,
+			Timestamp:    timestamp,
+			Price:        record.OutOraclePrice,
+			Source:       "oracle",
+		})
+	}
+	if record.InOraclePrice != "" && record.InOraclePrice != "0" {
+		prices = append(prices, &models.PriceRecord{
+			Asset:        record.InSymbol,
+			Denomination: oracleDenomination,
+			Timestamp:    timestamp,
+			Price:        record.InOraclePrice,
+			Source:       "oracle",
+		})
+	}
+
+	return trade, prices
 }
 
 func (c *Client) transformFundingPayment(ctx context.Context, record driftFundingPayment, accountUUID uuid.UUID) (*models.TransferInput, error) {
@@ -642,10 +717,10 @@ func (c *Client) transformFundingPayment(ctx context.Context, record driftFundin
 	}, nil
 }
 
-func (c *Client) transformDeposit(ctx context.Context, record driftDepositRecord, accountUUID uuid.UUID) (*models.TransferInput, error) {
+func (c *Client) transformDeposit(ctx context.Context, record driftDepositRecord, accountUUID uuid.UUID) (*models.TransferInput, *models.PriceRecord, error) {
 	marketInfo, err := c.getMarketInfo(ctx, record.MarketIndex, "spot")
 	if err != nil {
-		return nil, fmt.Errorf("failed to get market info for index %d: %w", record.MarketIndex, err)
+		return nil, nil, fmt.Errorf("failed to get market info for index %d: %w", record.MarketIndex, err)
 	}
 
 	amount := cleanDecimalString(record.Amount)
@@ -657,13 +732,27 @@ func (c *Client) transformDeposit(ctx context.Context, record driftDepositRecord
 		transferType = models.TypeWithdraw
 	}
 
-	return &models.TransferInput{
+	transfer := &models.TransferInput{
 		ExchangeAccountID: accountUUID,
 		Asset:             marketInfo.BaseAsset,
 		Type:              transferType,
 		Amount:            amount,
 		Timestamp:         timestamp,
-	}, nil
+	}
+
+	// Extract oracle price if available
+	var priceRecord *models.PriceRecord
+	if record.OraclePrice != "" && record.OraclePrice != "0" {
+		priceRecord = &models.PriceRecord{
+			Asset:        marketInfo.BaseAsset,
+			Denomination: oracleDenomination,
+			Timestamp:    timestamp,
+			Price:        record.OraclePrice,
+			Source:       "oracle",
+		}
+	}
+
+	return transfer, priceRecord, nil
 }
 
 // Helper functions

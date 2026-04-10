@@ -14,12 +14,13 @@ type ExchangeClient interface {
 
 	// FetchTrades fetches trades for a given account since a specific timestamp
 	// Returns trades as TradeInput (ready for database insertion), sorted by timestamp (oldest first)
+	// Also returns oracle PriceRecords observed at trade/swap time (may be nil if exchange has no oracle data)
 	// ctx can be cancelled or have a timeout set by the caller (sync service)
 	FetchTrades(
 		ctx context.Context,
 		account *models.ExchangeAccount,
 		since time.Time,
-	) ([]*models.TradeInput, error)
+	) ([]*models.TradeInput, []*models.PriceRecord, error)
 
 	// FetchFundingPayments fetches funding payments for a given account since a specific timestamp
 	// Returns funding payments as TransferInput with type="funding", sorted by timestamp (oldest first)
@@ -42,12 +43,13 @@ type ExchangeClient interface {
 
 	// FetchDeposits fetches deposits and withdrawals for a given account since a specific timestamp
 	// Returns transfers as TransferInput (ready for database insertion), sorted by timestamp (oldest first)
+	// Also returns oracle PriceRecords observed at deposit/withdraw time (may be nil if exchange has no oracle data)
 	// ctx can be cancelled or have a timeout set by the caller (sync service)
 	FetchDeposits(
 		ctx context.Context,
 		account *models.ExchangeAccount,
 		since time.Time,
-	) ([]*models.TransferInput, error)
+	) ([]*models.TransferInput, []*models.PriceRecord, error)
 
 	// FetchBalances fetches current spot balances for a given account
 	FetchBalances(

@@ -62,6 +62,7 @@ func TestDriftClient_FetchTrades_Success(t *testing.T) {
 					Symbol:                 "SOL-PERP",
 					MarketIndex:            0,
 					MarketType:             "perp",
+					OraclePrice:            "50.123456",
 				},
 				{
 					Ts:                     time.Now().Unix() - 5,
@@ -81,6 +82,7 @@ func TestDriftClient_FetchTrades_Success(t *testing.T) {
 					Symbol:                 "BTC-PERP",
 					MarketIndex:            1,
 					MarketType:             "perp",
+					OraclePrice:            "68131.590312",
 				},
 			},
 			Meta: driftMeta{NextPage: nil},
@@ -106,7 +108,7 @@ func TestDriftClient_FetchTrades_Success(t *testing.T) {
 	// Use a recent since time (within 31 days) to avoid historical month fetching
 	// which would hit the mock server multiple times
 	since := time.Now().AddDate(0, 0, -30)
-	trades, err := client.FetchTrades(ctx, account, since)
+	trades, _, err := client.FetchTrades(ctx, account, since)
 	if err != nil {
 		t.Fatalf("FetchTrades failed: %v", err)
 	}
@@ -224,7 +226,7 @@ func TestDriftClient_FetchTrades_Pagination(t *testing.T) {
 	ctx := context.Background()
 	// Use a recent since time (within last 31 days) to avoid historical backfilling
 	recentSince := time.Now().Add(-7 * 24 * time.Hour)
-	trades, err := client.FetchTrades(ctx, account, recentSince)
+	trades, _, err := client.FetchTrades(ctx, account, recentSince)
 	if err != nil {
 		t.Fatalf("FetchTrades failed: %v", err)
 	}
@@ -262,7 +264,7 @@ func TestDriftClient_FetchTrades_RateLimit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err := client.FetchTrades(ctx, account, time.Now().Add(-24*time.Hour)) // Recent since to avoid historical fetch
+	_, _, err := client.FetchTrades(ctx, account, time.Now().Add(-24*time.Hour)) // Recent since to avoid historical fetch
 	if err == nil {
 		t.Fatal("Expected error")
 	}
@@ -295,7 +297,7 @@ func TestDriftClient_FetchTrades_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	_, err := client.FetchTrades(ctx, account, time.Time{})
+	_, _, err := client.FetchTrades(ctx, account, time.Time{})
 	if err == nil {
 		t.Fatal("Expected error due to context cancellation")
 	}
@@ -365,7 +367,7 @@ func TestDriftClient_FetchTrades_FiltersBySince(t *testing.T) {
 
 	ctx := context.Background()
 	since := now.Add(-10 * time.Second)
-	trades, err := client.FetchTrades(ctx, account, since)
+	trades, _, err := client.FetchTrades(ctx, account, since)
 	if err != nil {
 		t.Fatalf("FetchTrades failed: %v", err)
 	}
@@ -388,7 +390,7 @@ func TestDriftClient_FetchTrades_InvalidAccountID(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, err := client.FetchTrades(ctx, account, time.Time{})
+	_, _, err := client.FetchTrades(ctx, account, time.Time{})
 	if err == nil {
 		t.Fatal("Expected error for invalid account ID")
 	}
@@ -402,7 +404,7 @@ func TestDriftClient_FetchTrades_EmptyAccountIdentifier(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, err := client.FetchTrades(ctx, account, time.Time{})
+	_, _, err := client.FetchTrades(ctx, account, time.Time{})
 	if err == nil {
 		t.Fatal("Expected error for empty account identifier")
 	}
@@ -758,7 +760,7 @@ func TestDriftClient_FetchTrades_WithSwaps(t *testing.T) {
 	ctx := context.Background()
 	// Use a recent since time (within 31 days) to avoid historical month fetching
 	since := time.Now().AddDate(0, 0, -30)
-	trades, err := client.FetchTrades(ctx, account, since)
+	trades, prices, err := client.FetchTrades(ctx, account, since)
 	if err != nil {
 		t.Fatalf("FetchTrades failed: %v", err)
 	}
@@ -813,6 +815,40 @@ func TestDriftClient_FetchTrades_WithSwaps(t *testing.T) {
 	if trades[0].MarketType != "swap" {
 		t.Error("Expected swap trade to be first (oldest)")
 	}
+
+	// Verify oracle prices from swap
+	// Swap has OutOraclePrice="100.000000" (SOL) and InOraclePrice="1.000000" (USDC)
+	if len(prices) != 2 {
+		t.Fatalf("Expected 2 oracle prices from swap, got %d", len(prices))
+	}
+	// Find SOL price
+	var solPrice, usdcPrice *models.PriceRecord
+	for _, p := range prices {
+		if p.Asset == "SOL" {
+			solPrice = p
+		}
+		if p.Asset == "USDC" {
+			usdcPrice = p
+		}
+	}
+	if solPrice == nil {
+		t.Fatal("Expected SOL oracle price")
+	}
+	if solPrice.Price != "100.000000" {
+		t.Errorf("Expected SOL oracle price '100.000000', got '%s'", solPrice.Price)
+	}
+	if solPrice.Denomination != "USDC" {
+		t.Errorf("Expected denomination 'USDC', got '%s'", solPrice.Denomination)
+	}
+	if solPrice.Source != "oracle" {
+		t.Errorf("Expected source 'oracle', got '%s'", solPrice.Source)
+	}
+	if usdcPrice == nil {
+		t.Fatal("Expected USDC oracle price")
+	}
+	if usdcPrice.Price != "1.000000" {
+		t.Errorf("Expected USDC oracle price '1.000000', got '%s'", usdcPrice.Price)
+	}
 }
 
 func TestTransformSwap(t *testing.T) {
@@ -838,7 +874,7 @@ func TestTransformSwap(t *testing.T) {
 			InSymbol:       "USDC", // User spends USDC
 		}
 
-		trade := client.transformSwap(record, accountUUID)
+		trade, _ := client.transformSwap(record, accountUUID)
 
 		if trade.BaseAsset != "SOL" {
 			t.Errorf("Expected base asset 'SOL', got '%s'", trade.BaseAsset)
@@ -879,7 +915,7 @@ func TestTransformSwap(t *testing.T) {
 			InSymbol:       "SOL",  // User spends SOL
 		}
 
-		trade := client.transformSwap(record, accountUUID)
+		trade, _ := client.transformSwap(record, accountUUID)
 
 		if trade.BaseAsset != "SOL" {
 			t.Errorf("Expected base asset 'SOL', got '%s'", trade.BaseAsset)
@@ -920,7 +956,7 @@ func TestTransformSwap(t *testing.T) {
 			InSymbol:       "SOL",  // User spends SOL
 		}
 
-		trade := client.transformSwap(record, accountUUID)
+		trade, _ := client.transformSwap(record, accountUUID)
 
 		// For non-USDC swaps, outSymbol (received) is base, inSymbol (spent) is quote
 		if trade.BaseAsset != "mSOL" {
@@ -1015,7 +1051,7 @@ func TestDriftClient_FetchDeposits_Success(t *testing.T) {
 
 	// Use a recent since time (within 31 days) to avoid historical month fetching
 	since := time.Now().AddDate(0, 0, -30)
-	transfers, err := client.FetchDeposits(context.Background(), account, since)
+	transfers, _, err := client.FetchDeposits(context.Background(), account, since)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1049,7 +1085,7 @@ func TestDriftClient_FetchDeposits_InvalidAccountID(t *testing.T) {
 		AccountIdentifier: "test-account",
 	}
 
-	_, err := client.FetchDeposits(context.Background(), account, time.Time{})
+	_, _, err := client.FetchDeposits(context.Background(), account, time.Time{})
 	if err == nil {
 		t.Error("Expected error for invalid account ID")
 	}
@@ -1063,7 +1099,7 @@ func TestDriftClient_FetchDeposits_EmptyAccountIdentifier(t *testing.T) {
 		AccountIdentifier: "",
 	}
 
-	_, err := client.FetchDeposits(context.Background(), account, time.Time{})
+	_, _, err := client.FetchDeposits(context.Background(), account, time.Time{})
 	if err == nil {
 		t.Error("Expected error for empty account identifier")
 	}
@@ -1142,7 +1178,7 @@ func TestDriftClient_FetchDeposits_FiltersBySince(t *testing.T) {
 
 	// Filter to only get deposits after sinceTimestamp
 	since := time.Unix(sinceTimestamp, 0)
-	transfers, err := client.FetchDeposits(context.Background(), account, since)
+	transfers, _, err := client.FetchDeposits(context.Background(), account, since)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1167,7 +1203,7 @@ func TestDriftClient_FetchDeposits_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	_, err := client.FetchDeposits(ctx, account, time.Time{})
+	_, _, err := client.FetchDeposits(ctx, account, time.Time{})
 	if err == nil {
 		t.Error("Expected error for cancelled context")
 	}
@@ -1255,7 +1291,7 @@ func TestDriftClient_HistoricalFetchFiltersOverlap(t *testing.T) {
 
 	// Request data from before the 31-day window to trigger historical fetch
 	since := thirtyOneDaysAgo.Add(-72 * time.Hour) // 3 days before the 31-day window
-	deposits, err := client.FetchDeposits(context.Background(), account, since)
+	deposits, _, err := client.FetchDeposits(context.Background(), account, since)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1306,5 +1342,294 @@ func TestDriftClient_HistoricalFetchFiltersOverlap(t *testing.T) {
 	}
 	if hasOverlap {
 		t.Error("Overlapping transfer should have been filtered out")
+	}
+}
+
+func TestDriftClient_FetchTrades_OraclePrices(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if strings.Contains(r.URL.Path, "/swaps") {
+			json.NewEncoder(w).Encode(driftSwapsResponse{
+				Success: true,
+				Records: []driftSwapRecord{},
+				Meta:    driftMeta{NextPage: nil},
+			})
+			return
+		}
+
+		response := driftTradesResponse{
+			Success: true,
+			Records: []driftTradeRecord{
+				{
+					Ts:                     time.Now().Unix() - 10,
+					FillRecordID:           "fill-with-oracle",
+					BaseAssetAmountFilled:  "1.000000000",
+					QuoteAssetAmountFilled: "50.000000",
+					TakerFee:               "0.050000",
+					TakerOrderDirection:    "long",
+					Taker:                  "test-account",
+					User:                   "test-account",
+					Symbol:                 "SOL-PERP",
+					MarketType:             "perp",
+					OraclePrice:            "50.123456",
+				},
+				{
+					Ts:                     time.Now().Unix() - 5,
+					FillRecordID:           "fill-no-oracle",
+					BaseAssetAmountFilled:  "2.000000000",
+					QuoteAssetAmountFilled: "100.000000",
+					TakerFee:               "0.100000",
+					TakerOrderDirection:    "short",
+					Taker:                  "test-account",
+					User:                   "test-account",
+					Symbol:                 "BTC-PERP",
+					MarketType:             "perp",
+					OraclePrice:            "", // Empty oracle price
+				},
+				{
+					Ts:                     time.Now().Unix() - 3,
+					FillRecordID:           "fill-zero-oracle",
+					BaseAssetAmountFilled:  "0.500000000",
+					QuoteAssetAmountFilled: "25.000000",
+					TakerFee:               "0.025000",
+					TakerOrderDirection:    "long",
+					Taker:                  "test-account",
+					User:                   "test-account",
+					Symbol:                 "ETH-PERP",
+					MarketType:             "perp",
+					OraclePrice:            "0", // Zero oracle price
+				},
+			},
+			Meta: driftMeta{NextPage: nil},
+		}
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		baseURL:     server.URL,
+		httpClient:  &http.Client{Timeout: 5 * time.Second},
+		marketCache: newMarketCache(1 * time.Hour),
+	}
+
+	account := &models.ExchangeAccount{
+		ID:                uuid.New().String(),
+		AccountIdentifier: "test-account",
+	}
+
+	ctx := context.Background()
+	since := time.Now().AddDate(0, 0, -30)
+	trades, prices, err := client.FetchTrades(ctx, account, since)
+	if err != nil {
+		t.Fatalf("FetchTrades failed: %v", err)
+	}
+
+	if len(trades) != 3 {
+		t.Fatalf("Expected 3 trades, got %d", len(trades))
+	}
+
+	// Only one trade has a valid oracle price
+	if len(prices) != 1 {
+		t.Fatalf("Expected 1 oracle price (empty and zero should be skipped), got %d", len(prices))
+	}
+
+	p := prices[0]
+	if p.Asset != "SOL" {
+		t.Errorf("Expected oracle price asset 'SOL', got '%s'", p.Asset)
+	}
+	if p.Denomination != "USDC" {
+		t.Errorf("Expected oracle price denomination 'USDC', got '%s'", p.Denomination)
+	}
+	if p.Price != "50.123456" {
+		t.Errorf("Expected oracle price '50.123456', got '%s'", p.Price)
+	}
+	if p.Source != "oracle" {
+		t.Errorf("Expected source 'oracle', got '%s'", p.Source)
+	}
+	if p.Timestamp.IsZero() {
+		t.Error("Expected non-zero timestamp on oracle price")
+	}
+}
+
+func TestTransformSwap_OraclePrices(t *testing.T) {
+	client := NewClient()
+	accountUUID := uuid.New()
+
+	t.Run("swap with oracle prices", func(t *testing.T) {
+		record := driftSwapRecord{
+			Ts:             1700000000,
+			TxSig:          "test-tx",
+			TxSigIndex:     0,
+			OutSymbol:      "SOL",
+			InSymbol:       "USDC",
+			AmountOut:      "2.500000",
+			AmountIn:       "200.000000",
+			OutOraclePrice: "80.000000",
+			InOraclePrice:  "1.000000",
+			Fee:            "0.200000",
+		}
+
+		_, prices := client.transformSwap(record, accountUUID)
+		if len(prices) != 2 {
+			t.Fatalf("Expected 2 oracle prices, got %d", len(prices))
+		}
+
+		// Both prices should use the oracleDenomination constant
+		for _, p := range prices {
+			if p.Denomination != oracleDenomination {
+				t.Errorf("Expected denomination '%s', got '%s'", oracleDenomination, p.Denomination)
+			}
+			if p.Source != "oracle" {
+				t.Errorf("Expected source 'oracle', got '%s'", p.Source)
+			}
+		}
+	})
+
+	t.Run("swap with empty oracle prices", func(t *testing.T) {
+		record := driftSwapRecord{
+			Ts:             1700000000,
+			TxSig:          "test-tx-2",
+			TxSigIndex:     0,
+			OutSymbol:      "SOL",
+			InSymbol:       "USDC",
+			AmountOut:      "1.000000",
+			AmountIn:       "100.000000",
+			OutOraclePrice: "",
+			InOraclePrice:  "",
+			Fee:            "0.100000",
+		}
+
+		_, prices := client.transformSwap(record, accountUUID)
+		if len(prices) != 0 {
+			t.Errorf("Expected 0 oracle prices for empty values, got %d", len(prices))
+		}
+	})
+
+	t.Run("swap with zero oracle prices", func(t *testing.T) {
+		record := driftSwapRecord{
+			Ts:             1700000000,
+			TxSig:          "test-tx-3",
+			TxSigIndex:     0,
+			OutSymbol:      "SOL",
+			InSymbol:       "USDC",
+			AmountOut:      "1.000000",
+			AmountIn:       "100.000000",
+			OutOraclePrice: "0",
+			InOraclePrice:  "0",
+			Fee:            "0.100000",
+		}
+
+		_, prices := client.transformSwap(record, accountUUID)
+		if len(prices) != 0 {
+			t.Errorf("Expected 0 oracle prices for zero values, got %d", len(prices))
+		}
+	})
+
+	t.Run("swap with partial oracle prices", func(t *testing.T) {
+		record := driftSwapRecord{
+			Ts:             1700000000,
+			TxSig:          "test-tx-4",
+			TxSigIndex:     0,
+			OutSymbol:      "SOL",
+			InSymbol:       "USDC",
+			AmountOut:      "1.000000",
+			AmountIn:       "100.000000",
+			OutOraclePrice: "80.000000",
+			InOraclePrice:  "", // Missing
+			Fee:            "0.100000",
+		}
+
+		_, prices := client.transformSwap(record, accountUUID)
+		if len(prices) != 1 {
+			t.Fatalf("Expected 1 oracle price, got %d", len(prices))
+		}
+		if prices[0].Asset != "SOL" {
+			t.Errorf("Expected asset 'SOL', got '%s'", prices[0].Asset)
+		}
+	})
+}
+
+func TestDriftClient_FetchDeposits_OraclePrices(t *testing.T) {
+	now := time.Now()
+	depositTs := now.Add(-10 * 24 * time.Hour).Unix()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/stats/markets") {
+			response := `{
+				"success": true,
+				"markets": [
+					{"marketIndex": 1, "symbol": "SOL", "baseAsset": "SOL", "quoteAsset": "USDC", "marketType": "spot"}
+				]
+			}`
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(response))
+			return
+		}
+
+		if strings.Contains(r.URL.Path, "/deposits") {
+			response := fmt.Sprintf(`{
+				"success": true,
+				"records": [
+					{
+						"ts": %d,
+						"txSig": "test-tx-1",
+						"slot": 12345,
+						"amount": "10.000000",
+						"marketIndex": 1,
+						"depositRecordId": "deposit-1",
+						"direction": "deposit",
+						"oraclePrice": "145.678900",
+						"user": "test-user"
+					}
+				],
+				"meta": {"nextPage": null}
+			}`, depositTs)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(response))
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		baseURL:     server.URL,
+		httpClient:  &http.Client{Timeout: 10 * time.Second},
+		marketCache: newMarketCache(1 * time.Hour),
+	}
+
+	account := &models.ExchangeAccount{
+		ID:                uuid.New().String(),
+		AccountIdentifier: "test-account",
+	}
+
+	since := time.Now().AddDate(0, 0, -30)
+	transfers, prices, err := client.FetchDeposits(context.Background(), account, since)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(transfers) != 1 {
+		t.Fatalf("Expected 1 transfer, got %d", len(transfers))
+	}
+
+	if len(prices) != 1 {
+		t.Fatalf("Expected 1 oracle price, got %d", len(prices))
+	}
+
+	p := prices[0]
+	if p.Asset != "SOL" {
+		t.Errorf("Expected asset 'SOL', got '%s'", p.Asset)
+	}
+	if p.Denomination != "USDC" {
+		t.Errorf("Expected denomination 'USDC', got '%s'", p.Denomination)
+	}
+	if p.Price != "145.678900" {
+		t.Errorf("Expected price '145.678900', got '%s'", p.Price)
+	}
+	if p.Source != "oracle" {
+		t.Errorf("Expected source 'oracle', got '%s'", p.Source)
 	}
 }
