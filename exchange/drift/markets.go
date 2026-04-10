@@ -143,8 +143,19 @@ func (c *Client) fetchMarkets(ctx context.Context) error {
 	return nil
 }
 
-// getMarketInfo returns market information for the given market index and type
-// It will fetch from API if cache is expired or missing
+// ensureMarketCache pre-warms the market cache if it's empty or expired.
+// Call this before processing a batch of records to avoid per-record API calls.
+func (c *Client) ensureMarketCache(ctx context.Context) error {
+	if c.marketCache.isExpired() {
+		return c.fetchMarkets(ctx)
+	}
+	return nil
+}
+
+// getMarketInfo returns market information for the given market index and type.
+// It will fetch from API if cache is expired or missing.
+// Returns an error if the market cannot be resolved — callers should skip the
+// record rather than persist UNKNOWN data.
 func (c *Client) getMarketInfo(ctx context.Context, marketIndex int, marketType string) (MarketInfo, error) {
 	// Try cache first
 	if info, ok := c.marketCache.getMarket(marketIndex, marketType); ok {
@@ -153,15 +164,7 @@ func (c *Client) getMarketInfo(ctx context.Context, marketIndex int, marketType 
 
 	// Fetch markets if cache miss or expired
 	if err := c.fetchMarkets(ctx); err != nil {
-		// Return a fallback if we can't fetch markets
-		// This allows the system to continue working even if markets API is down
-		return MarketInfo{
-			MarketIndex: marketIndex,
-			Symbol:      fmt.Sprintf("UNKNOWN-%d", marketIndex),
-			BaseAsset:   fmt.Sprintf("UNKNOWN-%d", marketIndex),
-			QuoteAsset:  "USDC",
-			MarketType:  marketType,
-		}, nil
+		return MarketInfo{}, fmt.Errorf("failed to resolve market %s index %d: %w", marketType, marketIndex, err)
 	}
 
 	// Try cache again after fetch
@@ -169,12 +172,6 @@ func (c *Client) getMarketInfo(ctx context.Context, marketIndex int, marketType 
 		return info, nil
 	}
 
-	// Market not found even after fetch - return fallback
-	return MarketInfo{
-		MarketIndex: marketIndex,
-		Symbol:      fmt.Sprintf("UNKNOWN-%d", marketIndex),
-		BaseAsset:   fmt.Sprintf("UNKNOWN-%d", marketIndex),
-		QuoteAsset:  "USDC",
-		MarketType:  marketType,
-	}, nil
+	// Market not found even after fetch
+	return MarketInfo{}, fmt.Errorf("market %s index %d not found in Drift markets API", marketType, marketIndex)
 }

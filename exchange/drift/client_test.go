@@ -14,6 +14,21 @@ import (
 	"github.com/zif-terminal/lib/models"
 )
 
+// marketsJSON is a minimal valid response for /stats/markets used by tests.
+const marketsJSON = `{"success":true,"markets":[{"marketIndex":0,"symbol":"SOL-PERP","baseAsset":"SOL","marketType":"perp"},{"marketIndex":1,"symbol":"BTC-PERP","baseAsset":"BTC","marketType":"perp"},{"marketIndex":2,"symbol":"ETH-PERP","baseAsset":"ETH","marketType":"perp"},{"marketIndex":0,"symbol":"USDC","baseAsset":"USDC","marketType":"spot"},{"marketIndex":1,"symbol":"SOL","baseAsset":"SOL","marketType":"spot"},{"marketIndex":2,"symbol":"mSOL","baseAsset":"mSOL","marketType":"spot"},{"marketIndex":3,"symbol":"wBTC","baseAsset":"wBTC","marketType":"spot"},{"marketIndex":4,"symbol":"wETH","baseAsset":"wETH","marketType":"spot"},{"marketIndex":5,"symbol":"USDT","baseAsset":"USDT","marketType":"spot"},{"marketIndex":13,"symbol":"bSOL","baseAsset":"bSOL","marketType":"spot"},{"marketIndex":19,"symbol":"JUP","baseAsset":"JUP","marketType":"spot"},{"marketIndex":27,"symbol":"FARTCOIN","baseAsset":"FARTCOIN","marketType":"spot"}]}`
+
+// withMarkets wraps an http.Handler to also serve /stats/markets.
+func withMarkets(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/stats/markets" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(marketsJSON))
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
 func TestDriftClient_Name(t *testing.T) {
 	client := NewClient()
 	if client.Name() != "drift" {
@@ -23,7 +38,7 @@ func TestDriftClient_Name(t *testing.T) {
 
 func TestDriftClient_FetchTrades_Success(t *testing.T) {
 	// Mock Drift API server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withMarkets(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			t.Errorf("Expected GET, got %s", r.Method)
 		}
@@ -89,7 +104,7 @@ func TestDriftClient_FetchTrades_Success(t *testing.T) {
 		}
 
 		json.NewEncoder(w).Encode(response)
-	}))
+	})))
 	defer server.Close()
 
 	// Create client with test server URL
@@ -150,7 +165,7 @@ func TestDriftClient_FetchTrades_Success(t *testing.T) {
 
 func TestDriftClient_FetchTrades_Pagination(t *testing.T) {
 	tradeCallCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withMarkets(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		// Handle swaps endpoint - return empty response
@@ -209,7 +224,7 @@ func TestDriftClient_FetchTrades_Pagination(t *testing.T) {
 		}
 
 		json.NewEncoder(w).Encode(response)
-	}))
+	})))
 	defer server.Close()
 
 	client := &Client{
@@ -242,11 +257,11 @@ func TestDriftClient_FetchTrades_Pagination(t *testing.T) {
 
 func TestDriftClient_FetchTrades_RateLimit(t *testing.T) {
 	retryCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withMarkets(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		retryCount++
 		w.Header().Set("Retry-After", "1")
 		w.WriteHeader(http.StatusTooManyRequests)
-	}))
+	})))
 	defer server.Close()
 
 	client := &Client{
@@ -276,11 +291,11 @@ func TestDriftClient_FetchTrades_RateLimit(t *testing.T) {
 }
 
 func TestDriftClient_FetchTrades_ContextCancellation(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withMarkets(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(2 * time.Second)
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(driftTradesResponse{Success: true})
-	}))
+	})))
 	defer server.Close()
 
 	client := &Client{
@@ -306,7 +321,7 @@ func TestDriftClient_FetchTrades_ContextCancellation(t *testing.T) {
 func TestDriftClient_FetchTrades_FiltersBySince(t *testing.T) {
 	now := time.Now()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withMarkets(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		// Handle swaps endpoint - return empty response
@@ -351,7 +366,7 @@ func TestDriftClient_FetchTrades_FiltersBySince(t *testing.T) {
 		}
 
 		json.NewEncoder(w).Encode(response)
-	}))
+	})))
 	defer server.Close()
 
 	client := &Client{
@@ -413,7 +428,7 @@ func TestDriftClient_FetchTrades_EmptyAccountIdentifier(t *testing.T) {
 func TestDriftClient_FetchFundingPayments_Success(t *testing.T) {
 	// First call will be for markets, second for funding
 	callCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withMarkets(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 
 		if r.URL.Path == "/stats/markets" {
@@ -456,7 +471,7 @@ func TestDriftClient_FetchFundingPayments_Success(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
-	}))
+	})))
 	defer server.Close()
 
 	client := &Client{
@@ -685,7 +700,7 @@ func TestDriftClient_Contract(t *testing.T) {
 func TestDriftClient_FetchTrades_WithSwaps(t *testing.T) {
 	now := time.Now()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withMarkets(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		// Handle swaps endpoint
@@ -743,7 +758,7 @@ func TestDriftClient_FetchTrades_WithSwaps(t *testing.T) {
 			Meta: driftMeta{NextPage: nil},
 		}
 		json.NewEncoder(w).Encode(response)
-	}))
+	})))
 	defer server.Close()
 
 	client := &Client{
@@ -981,7 +996,7 @@ func TestDriftClient_FetchDeposits_Success(t *testing.T) {
 	withdrawTs := now.Add(-5 * 24 * time.Hour).Unix() // 5 days ago
 
 	// Create a mock server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withMarkets(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Handle spot markets request for market info lookup
 		if strings.Contains(r.URL.Path, "/spotMarkets") {
 			response := `{
@@ -1034,7 +1049,7 @@ func TestDriftClient_FetchDeposits_Success(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusNotFound)
-	}))
+	})))
 	defer server.Close()
 
 	// Create client with mock server URL
@@ -1113,7 +1128,7 @@ func TestDriftClient_FetchDeposits_FiltersBySince(t *testing.T) {
 	sinceTimestamp := now.Add(-15 * 24 * time.Hour).Unix() // 15 days ago (filters out old)
 
 	// Create a mock server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withMarkets(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/spotMarkets") {
 			response := `{
 				"success": true,
@@ -1162,7 +1177,7 @@ func TestDriftClient_FetchDeposits_FiltersBySince(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusNotFound)
-	}))
+	})))
 	defer server.Close()
 
 	client := &Client{
@@ -1223,7 +1238,7 @@ func TestDriftClient_HistoricalFetchFiltersOverlap(t *testing.T) {
 
 	var historicalCalled, recentCalled bool
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withMarkets(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		// Handle spot markets
@@ -1275,7 +1290,7 @@ func TestDriftClient_HistoricalFetchFiltersOverlap(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusNotFound)
-	}))
+	})))
 	defer server.Close()
 
 	client := &Client{
@@ -1346,7 +1361,7 @@ func TestDriftClient_HistoricalFetchFiltersOverlap(t *testing.T) {
 }
 
 func TestDriftClient_FetchTrades_OraclePrices(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withMarkets(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		if strings.Contains(r.URL.Path, "/swaps") {
@@ -1404,7 +1419,7 @@ func TestDriftClient_FetchTrades_OraclePrices(t *testing.T) {
 			Meta: driftMeta{NextPage: nil},
 		}
 		json.NewEncoder(w).Encode(response)
-	}))
+	})))
 	defer server.Close()
 
 	client := &Client{
@@ -1554,7 +1569,7 @@ func TestDriftClient_FetchDeposits_OraclePrices(t *testing.T) {
 	now := time.Now()
 	depositTs := now.Add(-10 * 24 * time.Hour).Unix()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(withMarkets(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/stats/markets") {
 			response := `{
 				"success": true,
@@ -1591,7 +1606,7 @@ func TestDriftClient_FetchDeposits_OraclePrices(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusNotFound)
-	}))
+	})))
 	defer server.Close()
 
 	client := &Client{

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/big"
 	"net/http"
 	"sort"
@@ -301,11 +302,15 @@ func (c *Client) createTradePageFetcher(accountUUID uuid.UUID) pageFetcher[trade
 			return pageResult[tradeWithPrices]{}, fmt.Errorf("API returned success=false")
 		}
 
+		// Pre-warm market cache before processing the batch
+		_ = c.ensureMarketCache(ctx)
+
 		results := make([]tradeWithPrices, 0, len(response.Records))
 		for _, record := range response.Records {
 			trade, price, err := c.transformTrade(ctx, record, accountUUID)
 			if err != nil {
-				return pageResult[tradeWithPrices]{}, fmt.Errorf("failed to transform trade: %w", err)
+				log.Printf("drift/trades: skipping trade %s (market resolution failed): %v", record.FillRecordID, err)
+				continue
 			}
 			var prices []*models.PriceRecord
 			if price != nil {
@@ -376,11 +381,15 @@ func (c *Client) createFundingPageFetcher(accountUUID uuid.UUID) pageFetcher[*mo
 			return pageResult[*models.TransferInput]{}, fmt.Errorf("API returned success=false")
 		}
 
+		// Pre-warm market cache before processing the batch
+		_ = c.ensureMarketCache(ctx)
+
 		payments := make([]*models.TransferInput, 0, len(response.Records))
 		for _, record := range response.Records {
 			payment, err := c.transformFundingPayment(ctx, record, accountUUID)
 			if err != nil {
-				return pageResult[*models.TransferInput]{}, fmt.Errorf("failed to transform funding payment: %w", err)
+				log.Printf("drift/funding: skipping payment at ts=%d (market resolution failed): %v", record.Ts, err)
+				continue
 			}
 			payments = append(payments, payment)
 		}
@@ -413,11 +422,15 @@ func (c *Client) createDepositPageFetcher(accountUUID uuid.UUID) pageFetcher[dep
 			return pageResult[depositWithPrice]{}, fmt.Errorf("API returned success=false")
 		}
 
+		// Pre-warm market cache before processing the batch
+		_ = c.ensureMarketCache(ctx)
+
 		results := make([]depositWithPrice, 0, len(response.Records))
 		for _, record := range response.Records {
 			transfer, price, err := c.transformDeposit(ctx, record, accountUUID)
 			if err != nil {
-				return pageResult[depositWithPrice]{}, fmt.Errorf("failed to transform deposit: %w", err)
+				log.Printf("drift/deposits: skipping deposit %s (market resolution failed): %v", record.DepositRecordID, err)
+				continue
 			}
 			results = append(results, depositWithPrice{transfer: transfer, price: price})
 		}
