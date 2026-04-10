@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -85,6 +86,31 @@ type PositionEvent struct {
 	Direction  string    `json:"direction"`   // "entry", "exit", "received", "paid"
 	Quantity   string    `json:"quantity"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+// UnmarshalJSON handles Hasura returning NUMERIC fields as JSON numbers.
+func (pe *PositionEvent) UnmarshalJSON(data []byte) error {
+	type Alias PositionEvent
+	aux := &struct {
+		Quantity interface{} `json:"quantity"`
+		*Alias
+	}{
+		Alias: (*Alias)(pe),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.Quantity != nil {
+		switch val := aux.Quantity.(type) {
+		case string:
+			pe.Quantity = val
+		case float64:
+			pe.Quantity = strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.18f", val), "0"), ".")
+		default:
+			pe.Quantity = fmt.Sprintf("%v", val)
+		}
+	}
+	return nil
 }
 
 // PositionEventInput for batch inserts
