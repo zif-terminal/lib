@@ -35,7 +35,7 @@ func RunExchangeClientContractTests(t *testing.T, contract ExchangeClientContrac
 		defer cancel()
 
 		// Should not error with valid account (even if no trades)
-		trades, err := client.FetchTrades(ctx, contract.ValidAccount, time.Time{})
+		trades, _, err := client.FetchTrades(ctx, contract.ValidAccount, time.Time{})
 		if err != nil {
 			t.Errorf("FetchTrades with valid account should not error: %v", err)
 		}
@@ -53,7 +53,7 @@ func RunExchangeClientContractTests(t *testing.T, contract ExchangeClientContrac
 			defer cancel()
 
 			// Should error with invalid account
-			_, err := client.FetchTrades(ctx, contract.InvalidAccount, time.Time{})
+			_, _, err := client.FetchTrades(ctx, contract.InvalidAccount, time.Time{})
 			if err == nil {
 				t.Error("FetchTrades with invalid account should error")
 			}
@@ -66,7 +66,7 @@ func RunExchangeClientContractTests(t *testing.T, contract ExchangeClientContrac
 		cancel() // Cancel immediately
 
 		// Should respect context cancellation
-		_, err := client.FetchTrades(ctx, contract.ValidAccount, time.Time{})
+		_, _, err := client.FetchTrades(ctx, contract.ValidAccount, time.Time{})
 		if err == nil {
 			t.Error("FetchTrades should respect context cancellation")
 		}
@@ -81,7 +81,7 @@ func RunExchangeClientContractTests(t *testing.T, contract ExchangeClientContrac
 		defer cancel()
 
 		// Should timeout (or return error quickly)
-		_, err := client.FetchTrades(ctx, contract.ValidAccount, time.Time{})
+		_, _, err := client.FetchTrades(ctx, contract.ValidAccount, time.Time{})
 		if err == nil {
 			t.Error("FetchTrades should respect timeout")
 		}
@@ -93,7 +93,7 @@ func RunExchangeClientContractTests(t *testing.T, contract ExchangeClientContrac
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		trades, err := client.FetchTrades(ctx, contract.ValidAccount, time.Time{})
+		trades, _, err := client.FetchTrades(ctx, contract.ValidAccount, time.Time{})
 		if err != nil {
 			t.Skip("Skipping sort test due to error:", err)
 		}
@@ -116,7 +116,7 @@ func RunExchangeClientContractTests(t *testing.T, contract ExchangeClientContrac
 		defer cancel()
 
 		// Fetch all trades
-		allTrades, err := client.FetchTrades(ctx, contract.ValidAccount, time.Time{})
+		allTrades, _, err := client.FetchTrades(ctx, contract.ValidAccount, time.Time{})
 		if err != nil {
 			t.Skip("Skipping filter test due to error:", err)
 		}
@@ -130,7 +130,7 @@ func RunExchangeClientContractTests(t *testing.T, contract ExchangeClientContrac
 		since := allTrades[middleIdx].Timestamp
 
 		// Fetch trades since that timestamp
-		filteredTrades, err := client.FetchTrades(ctx, contract.ValidAccount, since)
+		filteredTrades, _, err := client.FetchTrades(ctx, contract.ValidAccount, since)
 		if err != nil {
 			t.Fatalf("Failed to fetch filtered trades: %v", err)
 		}

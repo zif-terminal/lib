@@ -119,7 +119,13 @@ type DBClient interface {
 	AddPositions(ctx context.Context, inputs []*PositionInput) ([]*Position, error)
 	AddPositionEvents(ctx context.Context, inputs []*PositionEventInput) (int, error)
 	GetPositions(ctx context.Context, filter PositionFilter) ([]*Position, error)
+	GetPositionsByIDs(ctx context.Context, ids []uuid.UUID) ([]*Position, error)
 	GetPositionEventsByPositionID(ctx context.Context, positionID uuid.UUID) ([]*PositionEvent, error)
+
+	// Position PnL methods
+	ListMissingPositionPnL(ctx context.Context, limit int) ([]*MissingPositionPnL, error)
+	AddPositionPnL(ctx context.Context, inputs []*PositionPnLInput) (int, error)
+
 	// Wallet methods
 	GetWallet(ctx context.Context, id string) (*Wallet, error)
 	GetWalletByAddress(ctx context.Context, address string, chain string) (*Wallet, error)
@@ -158,6 +164,11 @@ type DBClient interface {
 	ListSupportedDenominations(ctx context.Context) ([]string, error)
 	ListMissingEventValues(ctx context.Context, limit int) ([]*MissingEventValue, error)
 	AddEventValues(ctx context.Context, inputs []*EventValueInput) (int, error)
+	GetEventValuesByEventIDs(ctx context.Context, eventIDs []uuid.UUID, denomination string) ([]*EventValue, error)
+
+	// Price cache methods
+	AddPrices(ctx context.Context, inputs []*PriceInput) (int, error)
+	GetNearestPrice(ctx context.Context, asset string, denomination string, timestampMs int64, toleranceMs int64) (*Price, error)
 }
 
 // Ensure Client implements DBClient
