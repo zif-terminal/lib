@@ -11,6 +11,7 @@ type EventEntry struct {
 	EventID   uuid.UUID `json:"event_id"`
 	EventType string    `json:"event_type,omitempty"` // "trade", "transfer", "interest", "settlement", "reward"
 	Quantity  string    `json:"quantity"`              // How much this event contributed
+	Price     string    `json:"price,omitempty"`       // Entry price for PnL computation
 }
 
 // TradeEntry is a deprecated alias for EventEntry. Use EventEntry instead.

@@ -185,3 +185,30 @@ func (c *Client) LoadCheckpoint(ctx context.Context, accountID uuid.UUID) (*Proc
 
 	return resp.Checkpoint, nil
 }
+
+// DeleteCheckpoint removes the processor checkpoint for an account.
+func (c *Client) DeleteCheckpoint(ctx context.Context, accountID uuid.UUID) error {
+	query := `
+		mutation DeleteCheckpoint($id: uuid!) {
+			delete_processor_checkpoints_by_pk(exchange_account_id: $id) {
+				exchange_account_id
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id": accountID.String(),
+	})
+
+	var resp struct {
+		Delete *struct {
+			ExchangeAccountID string `json:"exchange_account_id"`
+		} `json:"delete_processor_checkpoints_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to delete checkpoint: %w", err)
+	}
+
+	return nil
+}

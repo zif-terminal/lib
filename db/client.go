@@ -121,6 +121,7 @@ type DBClient interface {
 	GetPositions(ctx context.Context, filter PositionFilter) ([]*Position, error)
 	GetPositionsByIDs(ctx context.Context, ids []uuid.UUID) ([]*Position, error)
 	GetPositionEventsByPositionID(ctx context.Context, positionID uuid.UUID) ([]*PositionEvent, error)
+	DeletePositionEventsByPositionIDs(ctx context.Context, positionIDs []uuid.UUID) (int, error)
 
 	// Position PnL methods
 	ListMissingPositionPnL(ctx context.Context, limit int) ([]*MissingPositionPnL, error)
@@ -156,6 +157,7 @@ type DBClient interface {
 	// Processor checkpoint methods
 	SaveCheckpoint(ctx context.Context, checkpoint *ProcessorCheckpoint) error
 	LoadCheckpoint(ctx context.Context, accountID uuid.UUID) (*ProcessorCheckpoint, error)
+	DeleteCheckpoint(ctx context.Context, accountID uuid.UUID) error
 
 	// Sync timestamp methods
 	UpdateAccountLastSynced(ctx context.Context, accountID string) error
@@ -169,6 +171,14 @@ type DBClient interface {
 	// Price cache methods
 	AddPrices(ctx context.Context, inputs []*PriceInput) (int, error)
 	GetNearestPrice(ctx context.Context, asset string, denomination string, timestampMs int64, toleranceMs int64) (*Price, error)
+
+	// System flags methods
+	GetFlag(ctx context.Context, name string) (*SystemFlag, error)
+	SetFlag(ctx context.Context, name string, value interface{}) error
+	CompareAndSetFlag(ctx context.Context, name string, value interface{}, flag *SystemFlag) (bool, error)
+
+	// Upsert positions (stable IDs via natural key)
+	UpsertPositions(ctx context.Context, inputs []*PositionInput) ([]*Position, error)
 }
 
 // Ensure Client implements DBClient

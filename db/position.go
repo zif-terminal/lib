@@ -269,6 +269,107 @@ func (c *Client) AddPositionEvents(ctx context.Context, inputs []*PositionEventI
 	return totalAffected, nil
 }
 
+// UpsertPositions batch-upserts positions using the natural key constraint
+// (exchange_account_id, market, market_type, side, start_time).
+// Existing positions are updated (status, quantity, end_time); new ones are inserted.
+// Returns all positions with their stable IDs.
+func (c *Client) UpsertPositions(ctx context.Context, inputs []*PositionInput) ([]*Position, error) {
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+
+	// Deduplicate: PostgreSQL ON CONFLICT cannot affect the same row twice in one INSERT.
+	// Keep the last position for each natural key (including end_time).
+	type posKey struct {
+		AccountID string
+		Market    string
+		Type      string
+		Side      string
+		StartTime int64
+		EndTime   int64
+	}
+	seen := make(map[posKey]int, len(inputs))
+	deduped := make([]*PositionInput, 0, len(inputs))
+	for _, inp := range inputs {
+		key := posKey{inp.ExchangeAccountID.String(), inp.Market, inp.MarketType, inp.Side, inp.StartTime, inp.EndTime}
+		if idx, ok := seen[key]; ok {
+			deduped[idx] = inp // overwrite with latest
+		} else {
+			seen[key] = len(deduped)
+			deduped = append(deduped, inp)
+		}
+	}
+	inputs = deduped
+
+	const batchSize = 500
+
+	query := `
+		mutation UpsertPositions($objects: [positions_insert_input!]!) {
+			insert_positions(
+				objects: $objects
+				on_conflict: {
+					constraint: positions_natural_key_unique
+					update_columns: [status, quantity, updated_at]
+				}
+			) {
+				returning {
+					id
+					exchange_account_id
+					market
+					market_type
+					side
+					status
+					quantity
+					start_time
+					end_time
+				}
+			}
+		}
+	`
+
+	var allPositions []*Position
+	for start := 0; start < len(inputs); start += batchSize {
+		end := start + batchSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		batch := inputs[start:end]
+
+		objects := make([]map[string]interface{}, len(batch))
+		for i, inp := range batch {
+			obj := map[string]interface{}{
+				"exchange_account_id": inp.ExchangeAccountID.String(),
+				"market":              inp.Market,
+				"market_type":         inp.MarketType,
+				"side":                inp.Side,
+				"status":              inp.Status,
+				"quantity":            inp.Quantity,
+				"start_time":          inp.StartTime,
+				"end_time":            inp.EndTime, // Always send (0 for open positions)
+			}
+			objects[i] = obj
+		}
+
+		req := c.graphqlRequestWithVars(query, map[string]interface{}{
+			"objects": objects,
+		})
+
+		var resp struct {
+			InsertPositions struct {
+				Returning []*Position `json:"returning"`
+			} `json:"insert_positions"`
+		}
+
+		if err := c.execute(ctx, req, &resp); err != nil {
+			return allPositions, fmt.Errorf("failed to upsert positions (batch %d-%d of %d): %w", start, end, len(inputs), err)
+		}
+
+		allPositions = append(allPositions, resp.InsertPositions.Returning...)
+	}
+
+	return allPositions, nil
+}
+
 // GetPositions queries positions with filters.
 func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Position, error) {
 	where := make(map[string]interface{})
@@ -333,6 +434,42 @@ func (c *Client) GetPositions(ctx context.Context, filter PositionFilter) ([]*Po
 	}
 
 	return resp.Positions, nil
+}
+
+// DeletePositionEventsByPositionIDs deletes all position events for the given position IDs.
+func (c *Client) DeletePositionEventsByPositionIDs(ctx context.Context, positionIDs []uuid.UUID) (int, error) {
+	if len(positionIDs) == 0 {
+		return 0, nil
+	}
+
+	query := `
+		mutation DeletePositionEventsByPositionIDs($ids: [uuid!]!) {
+			delete_position_events(where: { position_id: { _in: $ids } }) {
+				affected_rows
+			}
+		}
+	`
+
+	idStrs := make([]string, len(positionIDs))
+	for i, id := range positionIDs {
+		idStrs[i] = id.String()
+	}
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"ids": idStrs,
+	})
+
+	var resp struct {
+		DeletePositionEvents struct {
+			AffectedRows int `json:"affected_rows"`
+		} `json:"delete_position_events"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return 0, fmt.Errorf("failed to delete position events: %w", err)
+	}
+
+	return resp.DeletePositionEvents.AffectedRows, nil
 }
 
 // GetPositionEventsByPositionID returns all position events for a given position,
