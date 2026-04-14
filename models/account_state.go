@@ -27,10 +27,11 @@ type FundingEntry struct {
 // AccountState represents the in-memory state of an account.
 // Built by processing all transactions chronologically.
 type AccountState struct {
-	Assets          map[string]*AssetState   `json:"assets"`
+	Assets          map[string]*AssetState        `json:"assets"`
 	Positions       map[string]*PositionState     `json:"positions"`        // Open positions keyed by "marketType:baseAsset"
 	ClosedPositions []*PositionState              `json:"closed_positions"`
-	Trading         map[string]*TradingState `json:"trading"`          // Keyed by quote asset (e.g., "USDC", "SOL")
+	Trading         map[string]*TradingState      `json:"trading"`          // Keyed by quote asset (e.g., "USDC", "SOL")
+	HasSeenSnapshot bool                          `json:"has_seen_snapshot"` // True after first snapshot baseline applied
 }
 
 // AssetState tracks the state of a single asset (USDC, SOL, etc.)

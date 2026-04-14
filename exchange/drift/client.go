@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"math/big"
 	"net/http"
 	"sort"
@@ -309,8 +308,7 @@ func (c *Client) createTradePageFetcher(accountUUID uuid.UUID) pageFetcher[trade
 		for _, record := range response.Records {
 			trade, price, err := c.transformTrade(ctx, record, accountUUID)
 			if err != nil {
-				log.Printf("drift/trades: skipping trade %s (market resolution failed): %v", record.FillRecordID, err)
-				continue
+				return pageResult[tradeWithPrices]{}, fmt.Errorf("drift/trades: failed to process trade %s: %w", record.FillRecordID, err)
 			}
 			var prices []*models.PriceRecord
 			if price != nil {
@@ -347,9 +345,15 @@ func (c *Client) createSwapPageFetcher(accountUUID uuid.UUID) pageFetcher[tradeW
 			return pageResult[tradeWithPrices]{}, fmt.Errorf("API returned success=false")
 		}
 
+		// Pre-warm market cache before processing the batch
+		_ = c.ensureMarketCache(ctx)
+
 		results := make([]tradeWithPrices, 0, len(response.Records))
 		for _, record := range response.Records {
-			swap, prices := c.transformSwap(record, accountUUID)
+			swap, prices, err := c.transformSwap(ctx, record, accountUUID)
+			if err != nil {
+				return pageResult[tradeWithPrices]{}, fmt.Errorf("drift/swaps: failed to process swap %s_%d: %w", record.TxSig, record.TxSigIndex, err)
+			}
 			results = append(results, tradeWithPrices{trade: swap, prices: prices})
 		}
 
@@ -388,8 +392,7 @@ func (c *Client) createFundingPageFetcher(accountUUID uuid.UUID) pageFetcher[*mo
 		for _, record := range response.Records {
 			payment, err := c.transformFundingPayment(ctx, record, accountUUID)
 			if err != nil {
-				log.Printf("drift/funding: skipping payment at ts=%d (market resolution failed): %v", record.Ts, err)
-				continue
+				return pageResult[*models.TransferInput]{}, fmt.Errorf("drift/funding: failed to process payment at ts=%d: %w", record.Ts, err)
 			}
 			payments = append(payments, payment)
 		}
@@ -429,8 +432,7 @@ func (c *Client) createDepositPageFetcher(accountUUID uuid.UUID) pageFetcher[dep
 		for _, record := range response.Records {
 			transfer, price, err := c.transformDeposit(ctx, record, accountUUID)
 			if err != nil {
-				log.Printf("drift/deposits: skipping deposit %s (market resolution failed): %v", record.DepositRecordID, err)
-				continue
+				return pageResult[depositWithPrice]{}, fmt.Errorf("drift/deposits: failed to process deposit %s: %w", record.DepositRecordID, err)
 			}
 			results = append(results, depositWithPrice{transfer: transfer, price: price})
 		}
@@ -599,16 +601,23 @@ func (c *Client) transformTrade(ctx context.Context, record driftTradeRecord, ac
 	}
 	fee = cleanDecimalString(fee)
 
-	baseAsset, quoteAsset := parseSymbol(record.Symbol)
-	baseAmount := cleanDecimalString(record.BaseAssetAmountFilled)
-	quoteAmount := cleanDecimalString(record.QuoteAssetAmountFilled)
-	price := calculatePrice(quoteAmount, baseAmount)
-	timestamp := time.Unix(record.Ts, 0).UTC()
-
 	marketType := strings.ToLower(record.MarketType)
 	if marketType == "" {
 		marketType = "perp"
 	}
+
+	// Resolve market via index — never trust record.Symbol (Drift renames markets)
+	marketInfo, err := c.getMarketInfo(ctx, record.MarketIndex, marketType)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to resolve market index %d (%s): %w", record.MarketIndex, marketType, err)
+	}
+
+	baseAsset := marketInfo.BaseAsset
+	quoteAsset := marketInfo.QuoteAsset
+	baseAmount := cleanDecimalString(record.BaseAssetAmountFilled)
+	quoteAmount := cleanDecimalString(record.QuoteAssetAmountFilled)
+	price := calculatePrice(quoteAmount, baseAmount)
+	timestamp := time.Unix(record.Ts, 0).UTC()
 
 	trade := &models.TradeInput{
 		TradeID:           record.FillRecordID,
@@ -639,28 +648,38 @@ func (c *Client) transformTrade(ctx context.Context, record driftTradeRecord, ac
 	return trade, priceRecord, nil
 }
 
-func (c *Client) transformSwap(record driftSwapRecord, accountUUID uuid.UUID) (*models.TradeInput, []*models.PriceRecord) {
+func (c *Client) transformSwap(ctx context.Context, record driftSwapRecord, accountUUID uuid.UUID) (*models.TradeInput, []*models.PriceRecord, error) {
+	// Resolve both sides via market index — never trust record symbols
+	outMarket, err := c.getMarketInfo(ctx, record.OutMarketIndex, "spot")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to resolve out market index %d: %w", record.OutMarketIndex, err)
+	}
+	inMarket, err := c.getMarketInfo(ctx, record.InMarketIndex, "spot")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to resolve in market index %d: %w", record.InMarketIndex, err)
+	}
+
 	amountIn := cleanDecimalString(record.AmountIn)
 	amountOut := cleanDecimalString(record.AmountOut)
 	fee := cleanDecimalString(record.Fee)
 
 	var baseAsset, quoteAsset, side, quantity, price string
 
-	if record.OutSymbol == "USDC" {
-		baseAsset = record.InSymbol
+	if outMarket.BaseAsset == "USDC" {
+		baseAsset = inMarket.BaseAsset
 		quoteAsset = "USDC"
 		side = "sell"
 		quantity = amountIn
 		price = calculatePrice(amountOut, amountIn)
-	} else if record.InSymbol == "USDC" {
-		baseAsset = record.OutSymbol
+	} else if inMarket.BaseAsset == "USDC" {
+		baseAsset = outMarket.BaseAsset
 		quoteAsset = "USDC"
 		side = "buy"
 		quantity = amountOut
 		price = calculatePrice(amountIn, amountOut)
 	} else {
-		baseAsset = record.OutSymbol
-		quoteAsset = record.InSymbol
+		baseAsset = outMarket.BaseAsset
+		quoteAsset = inMarket.BaseAsset
 		side = "buy"
 		quantity = amountOut
 		price = calculatePrice(amountIn, amountOut)
@@ -687,7 +706,7 @@ func (c *Client) transformSwap(record driftSwapRecord, accountUUID uuid.UUID) (*
 	var prices []*models.PriceRecord
 	if record.OutOraclePrice != "" && record.OutOraclePrice != "0" {
 		prices = append(prices, &models.PriceRecord{
-			Asset:        record.OutSymbol,
+			Asset:        outMarket.BaseAsset,
 			Denomination: oracleDenomination,
 			Timestamp:    timestamp,
 			Price:        record.OutOraclePrice,
@@ -696,7 +715,7 @@ func (c *Client) transformSwap(record driftSwapRecord, accountUUID uuid.UUID) (*
 	}
 	if record.InOraclePrice != "" && record.InOraclePrice != "0" {
 		prices = append(prices, &models.PriceRecord{
-			Asset:        record.InSymbol,
+			Asset:        inMarket.BaseAsset,
 			Denomination: oracleDenomination,
 			Timestamp:    timestamp,
 			Price:        record.InOraclePrice,
@@ -704,7 +723,7 @@ func (c *Client) transformSwap(record driftSwapRecord, accountUUID uuid.UUID) (*
 		})
 	}
 
-	return trade, prices
+	return trade, prices, nil
 }
 
 func (c *Client) transformFundingPayment(ctx context.Context, record driftFundingPayment, accountUUID uuid.UUID) (*models.TransferInput, error) {

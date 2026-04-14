@@ -889,7 +889,7 @@ func TestTransformSwap(t *testing.T) {
 			InSymbol:       "USDC", // User spends USDC
 		}
 
-		trade, _ := client.transformSwap(record, accountUUID)
+		trade, _, _ := client.transformSwap(context.Background(), record, accountUUID)
 
 		if trade.BaseAsset != "SOL" {
 			t.Errorf("Expected base asset 'SOL', got '%s'", trade.BaseAsset)
@@ -930,7 +930,7 @@ func TestTransformSwap(t *testing.T) {
 			InSymbol:       "SOL",  // User spends SOL
 		}
 
-		trade, _ := client.transformSwap(record, accountUUID)
+		trade, _, _ := client.transformSwap(context.Background(), record, accountUUID)
 
 		if trade.BaseAsset != "SOL" {
 			t.Errorf("Expected base asset 'SOL', got '%s'", trade.BaseAsset)
@@ -971,7 +971,7 @@ func TestTransformSwap(t *testing.T) {
 			InSymbol:       "SOL",  // User spends SOL
 		}
 
-		trade, _ := client.transformSwap(record, accountUUID)
+		trade, _, _ := client.transformSwap(context.Background(), record, accountUUID)
 
 		// For non-USDC swaps, outSymbol (received) is base, inSymbol (spent) is quote
 		if trade.BaseAsset != "mSOL" {
@@ -1476,6 +1476,8 @@ func TestTransformSwap_OraclePrices(t *testing.T) {
 			Ts:             1700000000,
 			TxSig:          "test-tx",
 			TxSigIndex:     0,
+			OutMarketIndex: 1,
+			InMarketIndex:  0,
 			OutSymbol:      "SOL",
 			InSymbol:       "USDC",
 			AmountOut:      "2.500000",
@@ -1485,7 +1487,7 @@ func TestTransformSwap_OraclePrices(t *testing.T) {
 			Fee:            "0.200000",
 		}
 
-		_, prices := client.transformSwap(record, accountUUID)
+		_, prices, _ := client.transformSwap(context.Background(), record, accountUUID)
 		if len(prices) != 2 {
 			t.Fatalf("Expected 2 oracle prices, got %d", len(prices))
 		}
@@ -1506,6 +1508,8 @@ func TestTransformSwap_OraclePrices(t *testing.T) {
 			Ts:             1700000000,
 			TxSig:          "test-tx-2",
 			TxSigIndex:     0,
+			OutMarketIndex: 1,
+			InMarketIndex:  0,
 			OutSymbol:      "SOL",
 			InSymbol:       "USDC",
 			AmountOut:      "1.000000",
@@ -1515,7 +1519,7 @@ func TestTransformSwap_OraclePrices(t *testing.T) {
 			Fee:            "0.100000",
 		}
 
-		_, prices := client.transformSwap(record, accountUUID)
+		_, prices, _ := client.transformSwap(context.Background(), record, accountUUID)
 		if len(prices) != 0 {
 			t.Errorf("Expected 0 oracle prices for empty values, got %d", len(prices))
 		}
@@ -1526,6 +1530,8 @@ func TestTransformSwap_OraclePrices(t *testing.T) {
 			Ts:             1700000000,
 			TxSig:          "test-tx-3",
 			TxSigIndex:     0,
+			OutMarketIndex: 1,
+			InMarketIndex:  0,
 			OutSymbol:      "SOL",
 			InSymbol:       "USDC",
 			AmountOut:      "1.000000",
@@ -1535,7 +1541,7 @@ func TestTransformSwap_OraclePrices(t *testing.T) {
 			Fee:            "0.100000",
 		}
 
-		_, prices := client.transformSwap(record, accountUUID)
+		_, prices, _ := client.transformSwap(context.Background(), record, accountUUID)
 		if len(prices) != 0 {
 			t.Errorf("Expected 0 oracle prices for zero values, got %d", len(prices))
 		}
@@ -1546,6 +1552,8 @@ func TestTransformSwap_OraclePrices(t *testing.T) {
 			Ts:             1700000000,
 			TxSig:          "test-tx-4",
 			TxSigIndex:     0,
+			OutMarketIndex: 1,
+			InMarketIndex:  0,
 			OutSymbol:      "SOL",
 			InSymbol:       "USDC",
 			AmountOut:      "1.000000",
@@ -1555,7 +1563,7 @@ func TestTransformSwap_OraclePrices(t *testing.T) {
 			Fee:            "0.100000",
 		}
 
-		_, prices := client.transformSwap(record, accountUUID)
+		_, prices, _ := client.transformSwap(context.Background(), record, accountUUID)
 		if len(prices) != 1 {
 			t.Fatalf("Expected 1 oracle price, got %d", len(prices))
 		}
