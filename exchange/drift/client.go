@@ -665,28 +665,29 @@ func (c *Client) transformSwap(ctx context.Context, record driftSwapRecord, acco
 
 	var baseAsset, quoteAsset, side, quantity, price string
 
-	// out = asset leaving user's account (sold), in = asset entering (bought)
+	// Drift swap semantics: out = what user RECEIVES, in = what user SENDS
+	// (from the protocol's perspective: user puts tokens IN, gets tokens OUT)
 	if outMarket.BaseAsset == "USDC" {
-		// User spent USDC (out) to buy inMarket asset (in) → buy
+		// User received USDC (out), sent inMarket asset (in) → sell base for USDC
 		baseAsset = inMarket.BaseAsset
 		quoteAsset = "USDC"
-		side = "buy"
+		side = "sell"
 		quantity = amountIn
 		price = calculatePrice(amountOut, amountIn)
 	} else if inMarket.BaseAsset == "USDC" {
-		// User sold outMarket asset (out) to receive USDC (in) → sell
+		// User sent USDC (in), received outMarket asset (out) → buy base with USDC
 		baseAsset = outMarket.BaseAsset
 		quoteAsset = "USDC"
-		side = "sell"
+		side = "buy"
 		quantity = amountOut
 		price = calculatePrice(amountIn, amountOut)
 	} else {
-		// Non-USDC swap: user sold outMarket (out) to buy inMarket (in)
-		baseAsset = inMarket.BaseAsset
-		quoteAsset = outMarket.BaseAsset
+		// Non-USDC swap: user sent inMarket (in), received outMarket (out)
+		baseAsset = outMarket.BaseAsset
+		quoteAsset = inMarket.BaseAsset
 		side = "buy"
-		quantity = amountIn
-		price = calculatePrice(amountOut, amountIn)
+		quantity = amountOut
+		price = calculatePrice(amountIn, amountOut)
 	}
 
 	if baseAsset == "" || quoteAsset == "" {
