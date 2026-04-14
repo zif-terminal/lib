@@ -866,6 +866,77 @@ func TestDriftClient_FetchTrades_WithSwaps(t *testing.T) {
 	}
 }
 
+// TestFetchTrades_UnresolvableSwapMarketIndex verifies that a swap with an
+// unknown market index causes FetchTrades to return an error, not silently
+// skip the record. Same bug pattern as the deposit case.
+func TestFetchTrades_UnresolvableSwapMarketIndex(t *testing.T) {
+	now := time.Now()
+	swapTs := now.Add(-5 * 24 * time.Hour).Unix()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/stats/markets" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"success":true,"markets":[]}`))
+			return
+		}
+
+		// Return empty trades
+		if strings.Contains(r.URL.Path, "/trades") && !strings.Contains(r.URL.Path, "/swaps") {
+			json.NewEncoder(w).Encode(driftTradesResponse{
+				Success: true,
+				Records: []driftTradeRecord{},
+				Meta:    driftMeta{NextPage: nil},
+			})
+			return
+		}
+
+		// Return a swap with an unresolvable market index
+		if strings.Contains(r.URL.Path, "/swaps") {
+			response := fmt.Sprintf(`{
+				"success": true,
+				"records": [{
+					"ts": %d, "txSig": "tx-swap", "txSigIndex": 0, "slot": 1,
+					"user": "test", "outMarketIndex": 888, "inMarketIndex": 0,
+					"amountOut": "1000.0", "amountIn": "100.0",
+					"outOraclePrice": "0.1", "inOraclePrice": "1.0", "fee": "0.0"
+				}],
+				"meta": {"nextPage": null}
+			}`, swapTs)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(response))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		baseURL:    server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+		marketCache: &marketCache{
+			perpMarkets: make(map[int]MarketInfo),
+			spotMarkets: map[int]MarketInfo{
+				0: {MarketIndex: 0, Symbol: "USDC", BaseAsset: "USDC", MarketType: "spot"},
+			},
+			ttl: 1 * time.Hour,
+		},
+	}
+
+	account := &models.ExchangeAccount{
+		ID:                uuid.New().String(),
+		AccountIdentifier: "test-account",
+	}
+
+	since := time.Now().AddDate(0, 0, -30)
+	_, _, err := client.FetchTrades(context.Background(), account, since)
+	if err == nil {
+		t.Fatal("Expected error when swap has unresolvable market index, but got nil — swap would be silently dropped")
+	}
+	if !strings.Contains(err.Error(), "888") {
+		t.Errorf("Error should reference the unresolvable market index 888, got: %v", err)
+	}
+}
+
 func TestTransformSwap(t *testing.T) {
 	client := NewClient()
 	accountUUID := uuid.New()
@@ -1204,6 +1275,162 @@ func TestDriftClient_FetchDeposits_FiltersBySince(t *testing.T) {
 	}
 	if len(transfers) > 0 && transfers[0].Amount != "200" {
 		t.Errorf("Expected amount '200', got '%s'", transfers[0].Amount)
+	}
+}
+
+// TestFetchDeposits_UnresolvableMarketIndex verifies that a deposit with an
+// unknown market index causes FetchDeposits to return an error, not silently
+// skip the record. This was a real bug: a PUMP deposit (spot market index 56)
+// was silently dropped because the market index wasn't in the hardcoded defaults
+// and the Drift markets API returned empty data.
+func TestFetchDeposits_UnresolvableMarketIndex(t *testing.T) {
+	now := time.Now()
+	knownTs := now.Add(-10 * 24 * time.Hour).Unix()
+	unknownTs := now.Add(-5 * 24 * time.Hour).Unix()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return empty markets — simulates the real Drift API behavior
+		if r.URL.Path == "/stats/markets" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"success":true,"markets":[]}`))
+			return
+		}
+
+		if strings.Contains(r.URL.Path, "/deposits") {
+			response := fmt.Sprintf(`{
+				"success": true,
+				"records": [
+					{
+						"ts": %d,
+						"txSig": "tx-known",
+						"slot": 1,
+						"amount": "100.000000",
+						"marketIndex": 0,
+						"depositRecordId": "dep-1",
+						"direction": "deposit",
+						"oraclePrice": "1.000000",
+						"user": "test"
+					},
+					{
+						"ts": %d,
+						"txSig": "tx-unknown",
+						"slot": 2,
+						"amount": "2379024.429915",
+						"marketIndex": 999,
+						"depositRecordId": "dep-2",
+						"direction": "deposit",
+						"oraclePrice": "0.003",
+						"user": "test"
+					}
+				],
+				"meta": {"nextPage": null}
+			}`, knownTs, unknownTs)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(response))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	// Use a cache with NO hardcoded defaults to simulate the old behavior
+	// where index 56 (PUMP) wasn't in the defaults
+	emptyCache := &marketCache{
+		perpMarkets: make(map[int]MarketInfo),
+		spotMarkets: map[int]MarketInfo{
+			0: {MarketIndex: 0, Symbol: "USDC", BaseAsset: "USDC", QuoteAsset: "USDC", MarketType: "spot"},
+		},
+		ttl: 1 * time.Hour,
+	}
+
+	client := &Client{
+		baseURL:     server.URL,
+		httpClient:  &http.Client{Timeout: 5 * time.Second},
+		marketCache: emptyCache,
+	}
+
+	account := &models.ExchangeAccount{
+		ID:                uuid.New().String(),
+		AccountIdentifier: "test-account",
+	}
+
+	since := time.Now().AddDate(0, 0, -30)
+	_, _, err := client.FetchDeposits(context.Background(), account, since)
+	if err == nil {
+		t.Fatal("Expected error when deposit has unresolvable market index, but got nil — deposit would be silently dropped")
+	}
+	if !strings.Contains(err.Error(), "999") {
+		t.Errorf("Error should reference the unresolvable market index 999, got: %v", err)
+	}
+}
+
+// TestFetchDeposits_HardcodedFallbackResolvesMarket verifies that deposits
+// with market indices not in the API response but present in hardcoded defaults
+// are resolved correctly.
+func TestFetchDeposits_HardcodedFallbackResolvesMarket(t *testing.T) {
+	now := time.Now()
+	pumpTs := now.Add(-5 * 24 * time.Hour).Unix()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return empty markets — hardcoded defaults should cover it
+		if r.URL.Path == "/stats/markets" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"success":true,"markets":[]}`))
+			return
+		}
+
+		if strings.Contains(r.URL.Path, "/deposits") {
+			response := fmt.Sprintf(`{
+				"success": true,
+				"records": [
+					{
+						"ts": %d,
+						"txSig": "tx-pump",
+						"slot": 1,
+						"amount": "2379024.429915",
+						"marketIndex": 56,
+						"depositRecordId": "dep-pump",
+						"direction": "deposit",
+						"oraclePrice": "0.003",
+						"user": "test"
+					}
+				],
+				"meta": {"nextPage": null}
+			}`, pumpTs)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(response))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	// Use the REAL default cache which should include PUMP at index 56
+	client := &Client{
+		baseURL:     server.URL,
+		httpClient:  &http.Client{Timeout: 5 * time.Second},
+		marketCache: newMarketCache(1 * time.Hour),
+	}
+
+	account := &models.ExchangeAccount{
+		ID:                uuid.New().String(),
+		AccountIdentifier: "test-account",
+	}
+
+	since := time.Now().AddDate(0, 0, -30)
+	transfers, _, err := client.FetchDeposits(context.Background(), account, since)
+	if err != nil {
+		t.Fatalf("Expected PUMP deposit to resolve via hardcoded defaults, got error: %v", err)
+	}
+
+	if len(transfers) != 1 {
+		t.Fatalf("Expected 1 transfer, got %d", len(transfers))
+	}
+	if transfers[0].Asset != "PUMP" {
+		t.Errorf("Expected asset 'PUMP', got '%s'", transfers[0].Asset)
+	}
+	if transfers[0].Amount != "2379024.429915" {
+		t.Errorf("Expected amount '2379024.429915', got '%s'", transfers[0].Amount)
 	}
 }
 
