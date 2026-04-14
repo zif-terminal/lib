@@ -665,24 +665,33 @@ func (c *Client) transformSwap(ctx context.Context, record driftSwapRecord, acco
 
 	var baseAsset, quoteAsset, side, quantity, price string
 
+	// out = asset leaving user's account (sold), in = asset entering (bought)
 	if outMarket.BaseAsset == "USDC" {
+		// User spent USDC (out) to buy inMarket asset (in) → buy
 		baseAsset = inMarket.BaseAsset
 		quoteAsset = "USDC"
-		side = "sell"
+		side = "buy"
 		quantity = amountIn
 		price = calculatePrice(amountOut, amountIn)
 	} else if inMarket.BaseAsset == "USDC" {
+		// User sold outMarket asset (out) to receive USDC (in) → sell
 		baseAsset = outMarket.BaseAsset
 		quoteAsset = "USDC"
-		side = "buy"
+		side = "sell"
 		quantity = amountOut
 		price = calculatePrice(amountIn, amountOut)
 	} else {
-		baseAsset = outMarket.BaseAsset
-		quoteAsset = inMarket.BaseAsset
+		// Non-USDC swap: user sold outMarket (out) to buy inMarket (in)
+		baseAsset = inMarket.BaseAsset
+		quoteAsset = outMarket.BaseAsset
 		side = "buy"
-		quantity = amountOut
-		price = calculatePrice(amountIn, amountOut)
+		quantity = amountIn
+		price = calculatePrice(amountOut, amountIn)
+	}
+
+	if baseAsset == "" || quoteAsset == "" {
+		return nil, nil, fmt.Errorf("resolved empty base_asset=%q or quote_asset=%q for swap %s_%d (outIdx=%d, inIdx=%d)",
+			baseAsset, quoteAsset, record.TxSig, record.TxSigIndex, record.OutMarketIndex, record.InMarketIndex)
 	}
 
 	timestamp := time.Unix(record.Ts, 0).UTC()

@@ -714,15 +714,15 @@ func TestDriftClient_FetchTrades_WithSwaps(t *testing.T) {
 						TxSigIndex:     0,
 						Slot:           12345,
 						User:           "test-account",
-						OutMarketIndex: 1,
-						InMarketIndex:  0,
-						AmountOut:      "1.000000",   // User receives 1 SOL
-						AmountIn:       "100.000000", // User spends 100 USDC
-						OutOraclePrice: "100.000000",
-						InOraclePrice:  "1.000000",
+						OutMarketIndex: 0,  // USDC leaves
+						InMarketIndex:  1,  // SOL enters
+						AmountOut:      "100.000000", // 100 USDC spent
+						AmountIn:       "1.000000",   // 1 SOL received
+						OutOraclePrice: "1.000000",
+						InOraclePrice:  "100.000000",
 						Fee:            "0.100000",
-						OutSymbol:      "SOL",  // User receives SOL
-						InSymbol:       "USDC", // User spends USDC
+						OutSymbol:      "USDC",
+						InSymbol:       "SOL",
 					},
 				},
 				Meta: driftMeta{NextPage: nil},
@@ -832,7 +832,7 @@ func TestDriftClient_FetchTrades_WithSwaps(t *testing.T) {
 	}
 
 	// Verify oracle prices from swap
-	// Swap has OutOraclePrice="100.000000" (SOL) and InOraclePrice="1.000000" (USDC)
+	// Swap has OutOraclePrice="1.000000" (USDC) and InOraclePrice="100.000000" (SOL)
 	if len(prices) != 2 {
 		t.Fatalf("Expected 2 oracle prices from swap, got %d", len(prices))
 	}
@@ -871,22 +871,22 @@ func TestTransformSwap(t *testing.T) {
 	accountUUID := uuid.New()
 
 	t.Run("buy swap (spent USDC, received SOL)", func(t *testing.T) {
-		// Drift API: OutSymbol=what user RECEIVES, InSymbol=what user SPENDS
+		// Drift API: Out=what LEAVES user's account, In=what ENTERS
 		record := driftSwapRecord{
 			Ts:             1700000000,
 			TxSig:          "test-tx-sig",
 			TxSigIndex:     0,
 			Slot:           12345,
 			User:           "test-user",
-			OutMarketIndex: 1,
-			InMarketIndex:  0,
-			AmountOut:      "2.500000",   // User receives 2.5 SOL
-			AmountIn:       "200.000000", // User spends 200 USDC
-			OutOraclePrice: "80.000000",
-			InOraclePrice:  "1.000000",
+			OutMarketIndex: 0,  // USDC leaves
+			InMarketIndex:  1,  // SOL enters
+			AmountOut:      "200.000000", // 200 USDC spent
+			AmountIn:       "2.500000",   // 2.5 SOL received
+			OutOraclePrice: "1.000000",
+			InOraclePrice:  "80.000000",
 			Fee:            "0.200000",
-			OutSymbol:      "SOL",  // User receives SOL
-			InSymbol:       "USDC", // User spends USDC
+			OutSymbol:      "USDC",
+			InSymbol:       "SOL",
 		}
 
 		trade, _, _ := client.transformSwap(context.Background(), record, accountUUID)
@@ -912,22 +912,22 @@ func TestTransformSwap(t *testing.T) {
 	})
 
 	t.Run("sell swap (spent SOL, received USDC)", func(t *testing.T) {
-		// Drift API: OutSymbol=what user RECEIVES, InSymbol=what user SPENDS
+		// Drift API: Out=what LEAVES user's account, In=what ENTERS
 		record := driftSwapRecord{
 			Ts:             1700000000,
 			TxSig:          "test-tx-sig-2",
 			TxSigIndex:     0,
 			Slot:           12345,
 			User:           "test-user",
-			OutMarketIndex: 0,
-			InMarketIndex:  1,
-			AmountOut:      "200.000000", // User receives 200 USDC
-			AmountIn:       "2.500000",   // User spends 2.5 SOL
-			OutOraclePrice: "1.000000",
-			InOraclePrice:  "80.000000",
+			OutMarketIndex: 1,  // SOL leaves
+			InMarketIndex:  0,  // USDC enters
+			AmountOut:      "2.500000",   // 2.5 SOL spent
+			AmountIn:       "200.000000", // 200 USDC received
+			OutOraclePrice: "80.000000",
+			InOraclePrice:  "1.000000",
 			Fee:            "0.200000",
-			OutSymbol:      "USDC", // User receives USDC
-			InSymbol:       "SOL",  // User spends SOL
+			OutSymbol:      "SOL",
+			InSymbol:       "USDC",
 		}
 
 		trade, _, _ := client.transformSwap(context.Background(), record, accountUUID)
@@ -953,27 +953,27 @@ func TestTransformSwap(t *testing.T) {
 	})
 
 	t.Run("non-USDC swap (SOL to mSOL)", func(t *testing.T) {
-		// Drift API: OutSymbol=what user RECEIVES, InSymbol=what user SPENDS
+		// Drift API: Out=what LEAVES user's account, In=what ENTERS
 		record := driftSwapRecord{
 			Ts:             1700000000,
 			TxSig:          "test-tx-sig-3",
 			TxSigIndex:     0,
 			Slot:           12345,
 			User:           "test-user",
-			OutMarketIndex: 2,
-			InMarketIndex:  1,
-			AmountOut:      "9.500000",  // User receives 9.5 mSOL
-			AmountIn:       "10.000000", // User spends 10 SOL
-			OutOraclePrice: "84.000000",
-			InOraclePrice:  "80.000000",
+			OutMarketIndex: 1,  // SOL leaves
+			InMarketIndex:  2,  // mSOL enters
+			AmountOut:      "10.000000", // 10 SOL spent
+			AmountIn:       "9.500000",  // 9.5 mSOL received
+			OutOraclePrice: "80.000000",
+			InOraclePrice:  "84.000000",
 			Fee:            "0.010000",
-			OutSymbol:      "mSOL", // User receives mSOL
-			InSymbol:       "SOL",  // User spends SOL
+			OutSymbol:      "SOL",
+			InSymbol:       "mSOL",
 		}
 
 		trade, _, _ := client.transformSwap(context.Background(), record, accountUUID)
 
-		// For non-USDC swaps, outSymbol (received) is base, inSymbol (spent) is quote
+		// For non-USDC swaps: base=what enters (bought), quote=what leaves (sold)
 		if trade.BaseAsset != "mSOL" {
 			t.Errorf("Expected base asset 'mSOL', got '%s'", trade.BaseAsset)
 		}
