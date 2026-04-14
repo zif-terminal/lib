@@ -434,3 +434,40 @@ func (c *Client) UpdateAccountTypeMetadata(ctx context.Context, accountID uuid.U
 
 	return nil
 }
+
+// GetDistinctTransferAssets returns distinct asset names from transfers for an account.
+func (c *Client) GetDistinctTransferAssets(ctx context.Context, accountID uuid.UUID) ([]string, error) {
+	query := `
+		query GetDistinctTransferAssets($account_id: uuid!) {
+			transfers(
+				where: { exchange_account_id: { _eq: $account_id } }
+				distinct_on: asset
+			) {
+				asset
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"account_id": accountID.String(),
+	})
+
+	var resp struct {
+		Transfers []struct {
+			Asset string `json:"asset"`
+		} `json:"transfers"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get distinct transfer assets: %w", err)
+	}
+
+	assets := make([]string, 0, len(resp.Transfers))
+	for _, t := range resp.Transfers {
+		if t.Asset != "" {
+			assets = append(assets, t.Asset)
+		}
+	}
+
+	return assets, nil
+}
