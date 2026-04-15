@@ -53,14 +53,39 @@ func TestGetClient(t *testing.T) {
 	})
 }
 
+func TestGetClientHyperliquid(t *testing.T) {
+	client, err := GetClient("hyperliquid")
+	if err != nil {
+		t.Fatalf("GetClient failed: %v", err)
+	}
+
+	if client == nil {
+		t.Fatal("GetClient returned nil client")
+	}
+
+	if client.Name() != "hyperliquid" {
+		t.Errorf("Expected client name 'hyperliquid', got '%s'", client.Name())
+	}
+
+	var _ iface.ExchangeClient = client
+}
+
 func TestListAvailableExchanges(t *testing.T) {
 	exchanges := ListAvailableExchanges()
 
-	if len(exchanges) != 1 {
-		t.Fatalf("Expected 1 exchange, got %d", len(exchanges))
+	if len(exchanges) != 2 {
+		t.Fatalf("Expected 2 exchanges, got %d", len(exchanges))
 	}
 
-	if exchanges[0] != "drift" {
-		t.Errorf("Expected 'drift', got '%s'", exchanges[0])
+	found := map[string]bool{}
+	for _, e := range exchanges {
+		found[e] = true
+	}
+
+	if !found["drift"] {
+		t.Error("Expected 'drift' in exchanges list")
+	}
+	if !found["hyperliquid"] {
+		t.Error("Expected 'hyperliquid' in exchanges list")
 	}
 }
