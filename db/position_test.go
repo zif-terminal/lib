@@ -63,6 +63,291 @@ func TestClient_DeletePositionsForAccount_Error(t *testing.T) {
 	}
 }
 
+func TestClient_DeleteOpenPositionsForAccount(t *testing.T) {
+	ctx := context.Background()
+	accountID := uuid.New()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"delete_positions": map[string]interface{}{
+					"affected_rows": 2,
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	count, err := client.DeleteOpenPositionsForAccount(ctx, accountID)
+	if err != nil {
+		t.Fatalf("DeleteOpenPositionsForAccount failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("Expected 2 affected rows, got %d", count)
+	}
+}
+
+func TestClient_DeletePositionsByIDs(t *testing.T) {
+	ctx := context.Background()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"delete_positions": map[string]interface{}{
+					"affected_rows": 3,
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	ids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+	count, err := client.DeletePositionsByIDs(ctx, ids)
+	if err != nil {
+		t.Fatalf("DeletePositionsByIDs failed: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("Expected 3 affected rows, got %d", count)
+	}
+}
+
+func TestClient_DeletePositionsByIDs_Empty(t *testing.T) {
+	ctx := context.Background()
+	client := NewClientWithGraphQL(&mockGraphQLClient{}, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+	count, err := client.DeletePositionsByIDs(ctx, []uuid.UUID{})
+	if err != nil {
+		t.Fatalf("DeletePositionsByIDs failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 affected rows, got %d", count)
+	}
+}
+
+func TestClient_CountClosedPositions(t *testing.T) {
+	ctx := context.Background()
+	accountID := uuid.New()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"positions_aggregate": map[string]interface{}{
+					"aggregate": map[string]interface{}{
+						"count": 7,
+					},
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	count, err := client.CountClosedPositions(ctx, accountID)
+	if err != nil {
+		t.Fatalf("CountClosedPositions failed: %v", err)
+	}
+	if count != 7 {
+		t.Errorf("Expected 7 closed positions, got %d", count)
+	}
+}
+
+func TestClient_UpsertPositions(t *testing.T) {
+	ctx := context.Background()
+	accountID := uuid.New()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"insert_positions": map[string]interface{}{
+					"returning": []map[string]interface{}{
+						{
+							"id":                  uuid.New().String(),
+							"exchange_account_id": accountID.String(),
+							"market":              "SOL-PERP",
+							"market_type":         "perp",
+							"side":                "long",
+							"status":              "open",
+							"quantity":             "10",
+							"start_time":          1700000000000,
+							"end_time":            0,
+						},
+					},
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	inputs := []*PositionInput{
+		{
+			ExchangeAccountID: accountID,
+			Market:            "SOL-PERP",
+			MarketType:        "perp",
+			Side:              "long",
+			Status:            "open",
+			Quantity:          "10",
+			StartTime:         1700000000000,
+		},
+	}
+
+	positions, err := client.UpsertPositions(ctx, inputs)
+	if err != nil {
+		t.Fatalf("UpsertPositions failed: %v", err)
+	}
+	if len(positions) != 1 {
+		t.Fatalf("Expected 1 position, got %d", len(positions))
+	}
+}
+
+func TestClient_UpsertPositions_Empty(t *testing.T) {
+	ctx := context.Background()
+	client := NewClientWithGraphQL(&mockGraphQLClient{}, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+	positions, err := client.UpsertPositions(ctx, []*PositionInput{})
+	if err != nil {
+		t.Fatalf("UpsertPositions failed: %v", err)
+	}
+	if positions != nil {
+		t.Errorf("Expected nil positions, got %v", positions)
+	}
+}
+
+func TestClient_UpsertPositions_Dedup(t *testing.T) {
+	ctx := context.Background()
+	accountID := uuid.New()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"insert_positions": map[string]interface{}{
+					"returning": []map[string]interface{}{
+						{
+							"id":                  uuid.New().String(),
+							"exchange_account_id": accountID.String(),
+							"market":              "SOL-PERP",
+							"market_type":         "perp",
+							"side":                "long",
+							"status":              "open",
+							"quantity":             "20",
+							"start_time":          1700000000000,
+							"end_time":            0,
+						},
+					},
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	// Two inputs with the same natural key — should be deduped
+	inputs := []*PositionInput{
+		{
+			ExchangeAccountID: accountID,
+			Market:            "SOL-PERP",
+			MarketType:        "perp",
+			Side:              "long",
+			Status:            "open",
+			Quantity:          "10",
+			StartTime:         1700000000000,
+		},
+		{
+			ExchangeAccountID: accountID,
+			Market:            "SOL-PERP",
+			MarketType:        "perp",
+			Side:              "long",
+			Status:            "open",
+			Quantity:          "20",
+			StartTime:         1700000000000,
+		},
+	}
+
+	positions, err := client.UpsertPositions(ctx, inputs)
+	if err != nil {
+		t.Fatalf("UpsertPositions failed: %v", err)
+	}
+	if len(positions) != 1 {
+		t.Fatalf("Expected 1 position after dedup, got %d", len(positions))
+	}
+}
+
+func TestClient_DeletePositionEventsByPositionIDs(t *testing.T) {
+	ctx := context.Background()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"delete_position_events": map[string]interface{}{
+					"affected_rows": 4,
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	ids := []uuid.UUID{uuid.New(), uuid.New()}
+	count, err := client.DeletePositionEventsByPositionIDs(ctx, ids)
+	if err != nil {
+		t.Fatalf("DeletePositionEventsByPositionIDs failed: %v", err)
+	}
+	if count != 4 {
+		t.Errorf("Expected 4 affected rows, got %d", count)
+	}
+}
+
+func TestClient_DeletePositionEventsByPositionIDs_Empty(t *testing.T) {
+	ctx := context.Background()
+	client := NewClientWithGraphQL(&mockGraphQLClient{}, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+	count, err := client.DeletePositionEventsByPositionIDs(ctx, []uuid.UUID{})
+	if err != nil {
+		t.Fatalf("DeletePositionEventsByPositionIDs failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("Expected 0 affected rows, got %d", count)
+	}
+}
+
 func TestClient_AddPositions(t *testing.T) {
 	ctx := context.Background()
 	accountID := uuid.New()

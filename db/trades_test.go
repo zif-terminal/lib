@@ -448,3 +448,62 @@ func TestClient_LatestTrade_EmptyInput(t *testing.T) {
 		t.Errorf("Expected empty map, got %d entries", len(latestTrades))
 	}
 }
+
+func TestClient_GetTradesByIDs(t *testing.T) {
+	ctx := context.Background()
+	id1 := uuid.New()
+	accountID := uuid.New()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"trades": []map[string]interface{}{
+					{
+						"id":                  id1.String(),
+						"base_asset":          "SOL",
+						"quote_asset":         "USDC",
+						"side":                "buy",
+						"price":               "100",
+						"quantity":            "10",
+						"timestamp":           time.Now().UnixMilli(),
+						"fee":                 "0.1",
+						"order_id":            "order-1",
+						"trade_id":            "trade-1",
+						"exchange_account_id": accountID.String(),
+						"market_type":         "spot",
+					},
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	trades, err := client.GetTradesByIDs(ctx, []uuid.UUID{id1})
+	if err != nil {
+		t.Fatalf("GetTradesByIDs failed: %v", err)
+	}
+	if len(trades) != 1 {
+		t.Fatalf("Expected 1 trade, got %d", len(trades))
+	}
+}
+
+func TestClient_GetTradesByIDs_Empty(t *testing.T) {
+	ctx := context.Background()
+	client := NewClientWithGraphQL(&mockGraphQLClient{}, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+	trades, err := client.GetTradesByIDs(ctx, []uuid.UUID{})
+	if err != nil {
+		t.Fatalf("GetTradesByIDs failed: %v", err)
+	}
+	if len(trades) != 0 {
+		t.Fatalf("Expected 0 trades, got %d", len(trades))
+	}
+}
