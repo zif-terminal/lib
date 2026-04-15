@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
-	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/zif-terminal/lib/models"
@@ -23,7 +21,7 @@ type SpotBalanceSnapshotInput = models.SpotBalanceSnapshotInput
 // GetLatestBalanceSnapshots returns the most recent balance snapshot per asset
 // for the given account. It queries the spot_balance_snapshots table using
 // distinct_on to get only the latest entry per asset.
-// Returns float64-based BalanceSnapshot (used by activity_processor).
+// Returns string-based BalanceSnapshot (used by activity_processor for big.Rat math).
 func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.UUID) ([]*BalanceSnapshot, error) {
 	query := `
 		query GetLatestBalanceSnapshots($account_id: uuid!) {
@@ -53,35 +51,14 @@ func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.U
 
 	balances := make([]*BalanceSnapshot, 0, len(resp.Snapshots))
 	for _, s := range resp.Snapshots {
-		balance, err := parseFloat64(s.Balance)
-		if err != nil {
-			return nil, fmt.Errorf("invalid balance %q for asset %s: %w", s.Balance, s.Asset, err)
-		}
 		balances = append(balances, &BalanceSnapshot{
 			Asset:       s.Asset,
-			Balance:     balance,
+			Balance:     s.Balance,
 			TimestampMs: s.Timestamp.UnixMilli(),
 		})
 	}
 
 	return balances, nil
-}
-
-// parseFloat64 parses a numeric string to float64.
-// Returns an error on empty strings, unparseable values, NaN, and Inf
-// to prevent silent data corruption in downstream calculations.
-func parseFloat64(s string) (float64, error) {
-	if s == "" {
-		return 0, nil
-	}
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, fmt.Errorf("cannot parse %q: %w", s, err)
-	}
-	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return 0, fmt.Errorf("invalid value: %v", f)
-	}
-	return f, nil
 }
 
 // GetAllBalanceSnapshots returns balance snapshots for an account, sorted
@@ -121,13 +98,9 @@ func (c *Client) GetAllBalanceSnapshots(ctx context.Context, accountID uuid.UUID
 
 	balances := make([]*BalanceSnapshot, 0, len(resp.Snapshots))
 	for _, s := range resp.Snapshots {
-		balance, err := parseFloat64(s.Balance)
-		if err != nil {
-			return nil, fmt.Errorf("invalid balance %q for asset %s: %w", s.Balance, s.Asset, err)
-		}
 		balances = append(balances, &BalanceSnapshot{
 			Asset:       s.Asset,
-			Balance:     balance,
+			Balance:     s.Balance,
 			TimestampMs: s.Timestamp.UnixMilli(),
 		})
 	}
@@ -336,57 +309,6 @@ func (c *Client) PruneOldSpotBalanceSnapshots(ctx context.Context, beforeMs int6
 	}
 
 	return resp.Delete.AffectedRows, nil
-}
-
-// ---------------------------------------------------------------------------
-// Funding range sum
-// ---------------------------------------------------------------------------
-
-// SumFundingInRange returns the sum of all funding payment amounts for an account
-// in the half-open interval (fromMs, toMs].
-func (c *Client) SumFundingInRange(ctx context.Context, accountID uuid.UUID, fromMs, toMs int64) (string, error) {
-	query := `
-		query SumFundingInRange($account_id: uuid!, $from_ms: bigint!, $to_ms: bigint!) {
-			funding_payments_aggregate(
-				where: {
-					exchange_account_id: { _eq: $account_id }
-					timestamp: { _gt: $from_ms, _lte: $to_ms }
-				}
-			) {
-				aggregate {
-					sum {
-						amount
-					}
-				}
-			}
-		}
-	`
-
-	req := c.graphqlRequestWithVars(query, map[string]interface{}{
-		"account_id": accountID.String(),
-		"from_ms":    fromMs,
-		"to_ms":      toMs,
-	})
-
-	var resp struct {
-		Aggregate struct {
-			Aggregate struct {
-				Sum struct {
-					Amount *string `json:"amount"`
-				} `json:"sum"`
-			} `json:"aggregate"`
-		} `json:"funding_payments_aggregate"`
-	}
-
-	if err := c.execute(ctx, req, &resp); err != nil {
-		return "0", fmt.Errorf("failed to sum funding in range: %w", err)
-	}
-
-	if resp.Aggregate.Aggregate.Sum.Amount == nil {
-		return "0", nil
-	}
-
-	return *resp.Aggregate.Aggregate.Sum.Amount, nil
 }
 
 // ---------------------------------------------------------------------------

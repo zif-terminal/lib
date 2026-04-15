@@ -42,18 +42,40 @@ func (c *Client) ListMissingPositionPnL(ctx context.Context, limit int) ([]*Miss
 }
 
 // AddPositionPnL batch-inserts position PnL records. Uses on_conflict to update existing rows.
+// Inputs are written in chunks of 1000 to avoid Hasura payload limits.
 func (c *Client) AddPositionPnL(ctx context.Context, inputs []*PositionPnLInput) (int, error) {
 	if len(inputs) == 0 {
 		return 0, nil
 	}
 
+	const chunkSize = 1000
+	totalAffected := 0
+
+	for start := 0; start < len(inputs); start += chunkSize {
+		end := start + chunkSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		chunk := inputs[start:end]
+
+		affected, err := c.addPositionPnLChunk(ctx, chunk)
+		if err != nil {
+			return totalAffected, err
+		}
+		totalAffected += affected
+	}
+
+	return totalAffected, nil
+}
+
+func (c *Client) addPositionPnLChunk(ctx context.Context, inputs []*PositionPnLInput) (int, error) {
 	query := `
 		mutation AddPositionPnL($objects: [position_pnl_insert_input!]!) {
 			insert_position_pnl(
 				objects: $objects
 				on_conflict: {
 					constraint: position_pnl_position_id_denomination_key
-					update_columns: [realized_pnl]
+					update_columns: [realized_pnl, trade_pnl, funding_pnl, fee_pnl, interest_pnl]
 				}
 			) {
 				affected_rows
@@ -67,6 +89,10 @@ func (c *Client) AddPositionPnL(ctx context.Context, inputs []*PositionPnLInput)
 			"position_id":  input.PositionID.String(),
 			"denomination": input.Denomination,
 			"realized_pnl": input.RealizedPnL,
+			"trade_pnl":    input.TradePnL,
+			"funding_pnl":  input.FundingPnL,
+			"fee_pnl":      input.FeePnL,
+			"interest_pnl": input.InterestPnL,
 		}
 	}
 

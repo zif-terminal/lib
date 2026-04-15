@@ -13,22 +13,23 @@ import (
 // Validity is determined by comparing per-type timestamps and schema_version
 // against the current DB state.
 type ProcessorCheckpoint struct {
-	ExchangeAccountID      uuid.UUID             `json:"exchange_account_id"`
-	State                  *models.AccountState   `json:"state"`                    // Typed account state
-	SchemaVersion          int                    `json:"schema_version"`           // Bumped when AccountState shape changes
-	LastTradeTimestamp      int64                  `json:"last_trade_timestamp"`     // Unix ms of newest trade
-	LastTransferTimestamp   int64                  `json:"last_transfer_timestamp"`  // Unix ms of newest transfer
-	LastSettlementTimestamp int64                  `json:"last_settlement_timestamp"` // Deprecated: kept for DB compat, no longer used for validation
-	LastSnapshotTimestamp   int64                  `json:"last_snapshot_timestamp"`  // Unix ms of newest snapshot
-	UpdatedAt              string                 `json:"updated_at"`
+	ExchangeAccountID       uuid.UUID            `json:"exchange_account_id"`
+	State                   *models.AccountState `json:"state"`                     // Typed account state
+	SchemaVersion           int                  `json:"schema_version"`            // Bumped when AccountState shape changes
+	LastTradeTimestamp      int64                `json:"last_trade_timestamp"`      // Unix ms of newest trade
+	LastTransferTimestamp   int64                `json:"last_transfer_timestamp"`   // Unix ms of newest transfer
+	LastSettlementTimestamp int64                `json:"last_settlement_timestamp"` // Deprecated: kept for DB compat, no longer used for validation
+	LastSnapshotTimestamp   int64                `json:"last_snapshot_timestamp"`   // Unix ms of newest snapshot
+	LastError               *string              `json:"last_error"`                // Error message from the most recent failed run (NULL on success)
+	UpdatedAt               string               `json:"updated_at"`
 }
 
 // UnmarshalJSON handles Hasura returning BIGINT as string and JSONB as escaped strings.
 func (cp *ProcessorCheckpoint) UnmarshalJSON(data []byte) error {
 	type Alias ProcessorCheckpoint
 	aux := &struct {
-		State                  interface{} `json:"state"`
-		SchemaVersion          interface{} `json:"schema_version"`
+		State                   interface{} `json:"state"`
+		SchemaVersion           interface{} `json:"schema_version"`
 		LastTradeTimestamp      interface{} `json:"last_trade_timestamp"`
 		LastTransferTimestamp   interface{} `json:"last_transfer_timestamp"`
 		LastSettlementTimestamp interface{} `json:"last_settlement_timestamp"`
@@ -117,13 +118,18 @@ func (c *Client) SaveCheckpoint(ctx context.Context, checkpoint *ProcessorCheckp
 				object: $object
 				on_conflict: {
 					constraint: processor_checkpoints_pkey
-					update_columns: [state, schema_version, last_trade_timestamp, last_transfer_timestamp, last_settlement_timestamp, last_snapshot_timestamp, updated_at]
+					update_columns: [state, schema_version, last_trade_timestamp, last_transfer_timestamp, last_settlement_timestamp, last_snapshot_timestamp, last_error, updated_at]
 				}
 			) {
 				exchange_account_id
 			}
 		}
 	`
+
+	var lastError interface{}
+	if checkpoint.LastError != nil {
+		lastError = *checkpoint.LastError
+	}
 
 	object := map[string]interface{}{
 		"exchange_account_id":       checkpoint.ExchangeAccountID.String(),
@@ -133,6 +139,7 @@ func (c *Client) SaveCheckpoint(ctx context.Context, checkpoint *ProcessorCheckp
 		"last_transfer_timestamp":   checkpoint.LastTransferTimestamp,
 		"last_settlement_timestamp": checkpoint.LastSettlementTimestamp,
 		"last_snapshot_timestamp":   checkpoint.LastSnapshotTimestamp,
+		"last_error":                lastError,
 		"updated_at":                "now()",
 	}
 
@@ -166,6 +173,7 @@ func (c *Client) LoadCheckpoint(ctx context.Context, accountID uuid.UUID) (*Proc
 				last_transfer_timestamp
 				last_settlement_timestamp
 				last_snapshot_timestamp
+				last_error
 				updated_at
 			}
 		}
@@ -184,6 +192,70 @@ func (c *Client) LoadCheckpoint(ctx context.Context, accountID uuid.UUID) (*Proc
 	}
 
 	return resp.Checkpoint, nil
+}
+
+// SetProcessorCheckpointError records an error message on the checkpoint row for an account.
+// The checkpoint row must already exist (created by a prior SaveCheckpoint). If no row
+// exists yet, this is a no-op — the error will be surfaced via logs only.
+func (c *Client) SetProcessorCheckpointError(ctx context.Context, accountID uuid.UUID, errorMsg string) error {
+	query := `
+		mutation SetCheckpointError($id: uuid!, $msg: String!) {
+			update_processor_checkpoints_by_pk(
+				pk_columns: {exchange_account_id: $id}
+				_set: {last_error: $msg}
+			) {
+				exchange_account_id
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id":  accountID.String(),
+		"msg": errorMsg,
+	})
+
+	var resp struct {
+		Update *struct {
+			ExchangeAccountID string `json:"exchange_account_id"`
+		} `json:"update_processor_checkpoints_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to set checkpoint error: %w", err)
+	}
+
+	return nil
+}
+
+// ClearProcessorCheckpointError sets last_error to NULL on the checkpoint row.
+// No-op if no row exists.
+func (c *Client) ClearProcessorCheckpointError(ctx context.Context, accountID uuid.UUID) error {
+	query := `
+		mutation ClearCheckpointError($id: uuid!) {
+			update_processor_checkpoints_by_pk(
+				pk_columns: {exchange_account_id: $id}
+				_set: {last_error: null}
+			) {
+				exchange_account_id
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id": accountID.String(),
+	})
+
+	var resp struct {
+		Update *struct {
+			ExchangeAccountID string `json:"exchange_account_id"`
+		} `json:"update_processor_checkpoints_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to clear checkpoint error: %w", err)
+	}
+
+	return nil
 }
 
 // DeleteCheckpoint removes the processor checkpoint for an account.

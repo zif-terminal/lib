@@ -14,6 +14,14 @@ type ExchangeAccount = models.ExchangeAccount
 // ExchangeAccountInput represents exchange account input for mutations (aliased from models package)
 type ExchangeAccountInput = models.ExchangeAccountInput
 
+// AccountListFilter controls which accounts ListAccounts returns.
+// Nil fields mean "don't filter on this flag". When both are nil, all
+// accounts are returned.
+type AccountListFilter struct {
+	SyncEnabled       *bool
+	ProcessingEnabled *bool
+}
+
 // GetAccount retrieves a single exchange account by ID
 func (c *Client) GetAccount(ctx context.Context, id string) (*ExchangeAccount, error) {
 	query := `
@@ -23,10 +31,14 @@ func (c *Client) GetAccount(ctx context.Context, id string) (*ExchangeAccount, e
 				account_identifier
 				account_type
 				account_type_metadata
+				status
+				sync_enabled
+				processing_enabled
 				exchange {
 					id
 					name
 					display_name
+					settles_on_close
 				}
 			}
 		}
@@ -51,25 +63,40 @@ func (c *Client) GetAccount(ctx context.Context, id string) (*ExchangeAccount, e
 	return resp.ExchangeAccountsByPk, nil
 }
 
-// ListAccounts retrieves all exchange accounts
-func (c *Client) ListAccounts(ctx context.Context) ([]*ExchangeAccount, error) {
+// ListAccounts retrieves exchange accounts matching the given filter.
+// Pass AccountListFilter{} to get all accounts.
+func (c *Client) ListAccounts(ctx context.Context, f AccountListFilter) ([]*ExchangeAccount, error) {
+	where := map[string]interface{}{}
+	if f.SyncEnabled != nil {
+		where["sync_enabled"] = map[string]interface{}{"_eq": *f.SyncEnabled}
+	}
+	if f.ProcessingEnabled != nil {
+		where["processing_enabled"] = map[string]interface{}{"_eq": *f.ProcessingEnabled}
+	}
+
 	query := `
-		query ListAccounts {
-			exchange_accounts {
+		query ListAccounts($where: exchange_accounts_bool_exp!) {
+			exchange_accounts(where: $where) {
 				id
 				account_identifier
 				account_type
 				account_type_metadata
+				status
+				sync_enabled
+				processing_enabled
 				exchange {
 					id
 					name
 					display_name
+					settles_on_close
 				}
 			}
 		}
 	`
 
-	req := c.graphqlRequest(query)
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"where": where,
+	})
 
 	var resp struct {
 		ExchangeAccounts []*ExchangeAccount `json:"exchange_accounts"`

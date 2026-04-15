@@ -308,7 +308,8 @@ func (c *Client) createTradePageFetcher(accountUUID uuid.UUID) pageFetcher[trade
 		for _, record := range response.Records {
 			trade, price, err := c.transformTrade(ctx, record, accountUUID)
 			if err != nil {
-				return pageResult[tradeWithPrices]{}, fmt.Errorf("drift/trades: failed to process trade %s: %w", record.FillRecordID, err)
+				return pageResult[tradeWithPrices]{}, fmt.Errorf("drift/trades: failed to transform trade %s (market_index=%d, market_type=%s, ts=%d): %w",
+					record.FillRecordID, record.MarketIndex, record.MarketType, record.Ts, err)
 			}
 			var prices []*models.PriceRecord
 			if price != nil {
@@ -317,9 +318,13 @@ func (c *Client) createTradePageFetcher(accountUUID uuid.UUID) pageFetcher[trade
 			results = append(results, tradeWithPrices{trade: trade, prices: prices})
 		}
 
+		nextPage, err := extractNextPage(response.Meta)
+		if err != nil {
+			return pageResult[tradeWithPrices]{}, fmt.Errorf("drift/trades: %w", err)
+		}
 		return pageResult[tradeWithPrices]{
 			items:    results,
-			nextPage: extractNextPage(response.Meta),
+			nextPage: nextPage,
 		}, nil
 	}
 }
@@ -352,14 +357,19 @@ func (c *Client) createSwapPageFetcher(accountUUID uuid.UUID) pageFetcher[tradeW
 		for _, record := range response.Records {
 			swap, prices, err := c.transformSwap(ctx, record, accountUUID)
 			if err != nil {
-				return pageResult[tradeWithPrices]{}, fmt.Errorf("drift/swaps: failed to process swap %s_%d: %w", record.TxSig, record.TxSigIndex, err)
+				return pageResult[tradeWithPrices]{}, fmt.Errorf("drift/swaps: failed to transform swap %s_%d (out_market=%d, in_market=%d, ts=%d): %w",
+					record.TxSig, record.TxSigIndex, record.OutMarketIndex, record.InMarketIndex, record.Ts, err)
 			}
 			results = append(results, tradeWithPrices{trade: swap, prices: prices})
 		}
 
+		nextPage, err := extractNextPage(response.Meta)
+		if err != nil {
+			return pageResult[tradeWithPrices]{}, fmt.Errorf("drift/swaps: %w", err)
+		}
 		return pageResult[tradeWithPrices]{
 			items:    results,
-			nextPage: extractNextPage(response.Meta),
+			nextPage: nextPage,
 		}, nil
 	}
 }
@@ -392,14 +402,19 @@ func (c *Client) createFundingPageFetcher(accountUUID uuid.UUID) pageFetcher[*mo
 		for _, record := range response.Records {
 			payment, err := c.transformFundingPayment(ctx, record, accountUUID)
 			if err != nil {
-				return pageResult[*models.TransferInput]{}, fmt.Errorf("drift/funding: failed to process payment at ts=%d: %w", record.Ts, err)
+				return pageResult[*models.TransferInput]{}, fmt.Errorf("drift/funding: failed to transform payment (market_index=%d, ts=%d): %w",
+					record.MarketIndex, record.Ts, err)
 			}
 			payments = append(payments, payment)
 		}
 
+		nextPage, err := extractNextPage(response.Meta)
+		if err != nil {
+			return pageResult[*models.TransferInput]{}, fmt.Errorf("drift/funding: %w", err)
+		}
 		return pageResult[*models.TransferInput]{
 			items:    payments,
-			nextPage: extractNextPage(response.Meta),
+			nextPage: nextPage,
 		}, nil
 	}
 }
@@ -432,14 +447,19 @@ func (c *Client) createDepositPageFetcher(accountUUID uuid.UUID) pageFetcher[dep
 		for _, record := range response.Records {
 			transfer, price, err := c.transformDeposit(ctx, record, accountUUID)
 			if err != nil {
-				return pageResult[depositWithPrice]{}, fmt.Errorf("drift/deposits: failed to process deposit %s: %w", record.DepositRecordID, err)
+				return pageResult[depositWithPrice]{}, fmt.Errorf("drift/deposits: failed to transform deposit %s (market_index=%d, ts=%d): %w",
+					record.DepositRecordID, record.MarketIndex, record.Ts, err)
 			}
 			results = append(results, depositWithPrice{transfer: transfer, price: price})
 		}
 
+		nextPage, err := extractNextPage(response.Meta)
+		if err != nil {
+			return pageResult[depositWithPrice]{}, fmt.Errorf("drift/deposits: %w", err)
+		}
 		return pageResult[depositWithPrice]{
 			items:    results,
-			nextPage: extractNextPage(response.Meta),
+			nextPage: nextPage,
 		}, nil
 	}
 }
@@ -449,6 +469,8 @@ type settlePnlRecord struct {
 	Timestamp   time.Time
 	Pnl         string // Settled PnL amount (signed)
 	MarketIndex int
+	TxSig       string
+	TxSigIndex  int
 }
 
 // FetchSettlements implements iface.ExchangeClient.
@@ -478,13 +500,15 @@ func (c *Client) FetchSettlements(
 			market = marketInfo.Symbol
 		}
 
+		sid := settlementID(r)
 		settlements = append(settlements, &models.Settlement{
 			ExchangeAccountID: accountUUID,
 			Asset:             "USDC",
 			Amount:            r.Pnl,
 			Market:            market,
 			Timestamp:         r.Timestamp,
-			SettlementID:      fmt.Sprintf("settle_%d_%s", r.MarketIndex, r.Timestamp.Format("20060102150405")),
+			SettlementID:      sid,
+			ExternalID:        sid,
 		})
 	}
 
@@ -549,28 +573,37 @@ func (c *Client) createSettlePnlPageFetcher() pageFetcher[settlePnlRecord] {
 				Timestamp:   time.Unix(r.Ts, 0).UTC(),
 				Pnl:         cleanDecimalString(r.Pnl),
 				MarketIndex: r.MarketIndex,
+				TxSig:       r.TxSig,
+				TxSigIndex:  r.TxSigIndex,
 			})
 		}
 
+		nextPage, err := extractNextPage(response.Meta)
+		if err != nil {
+			return pageResult[settlePnlRecord]{}, fmt.Errorf("drift/settlePnl: %w", err)
+		}
 		return pageResult[settlePnlRecord]{
 			items:    records,
-			nextPage: extractNextPage(response.Meta),
+			nextPage: nextPage,
 		}, nil
 	}
 }
 
-// extractNextPage extracts the next page token from API response metadata
-func extractNextPage(meta driftMeta) string {
+// extractNextPage extracts the next page token from API response metadata.
+// Returns "" when meta.NextPage is nil (terminal page). Returns an error on
+// unknown token types — a silent "" would mask a real pagination bug.
+func extractNextPage(meta driftMeta) (string, error) {
 	if meta.NextPage == nil {
-		return ""
+		return "", nil
 	}
 	switch v := meta.NextPage.(type) {
 	case string:
-		return v
+		return v, nil
 	case float64:
-		return strconv.Itoa(int(v))
+		return strconv.Itoa(int(v)), nil
+	default:
+		return "", fmt.Errorf("drift: unknown next_page token type %T: %v", meta.NextPage, meta.NextPage)
 	}
-	return ""
 }
 
 // Transform functions - convert API records to model types
@@ -584,7 +617,10 @@ func (c *Client) transformTrade(ctx context.Context, record driftTradeRecord, ac
 	} else {
 		direction = record.MakerOrderDirection
 	}
-	side := normalizeSide(direction)
+	side, err := normalizeSide(direction)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to normalize side for trade %s (ts=%d): %w", record.FillRecordID, record.Ts, err)
+	}
 
 	var orderID string
 	if isTaker {
@@ -616,7 +652,10 @@ func (c *Client) transformTrade(ctx context.Context, record driftTradeRecord, ac
 	quoteAsset := marketInfo.QuoteAsset
 	baseAmount := cleanDecimalString(record.BaseAssetAmountFilled)
 	quoteAmount := cleanDecimalString(record.QuoteAssetAmountFilled)
-	price := calculatePrice(quoteAmount, baseAmount)
+	price, err := calculatePrice(quoteAmount, baseAmount)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to compute price for trade %s (base=%q, quote=%q): %w", record.FillRecordID, baseAmount, quoteAmount, err)
+	}
 	timestamp := time.Unix(record.Ts, 0).UTC()
 
 	trade := &models.TradeInput{
@@ -631,6 +670,8 @@ func (c *Client) transformTrade(ctx context.Context, record driftTradeRecord, ac
 		Timestamp:         timestamp,
 		ExchangeAccountID: accountUUID,
 		MarketType:        marketType,
+		TxSignature:       record.TxSig,
+		FeeAsset:          quoteAsset,
 	}
 
 	// Extract oracle price if available
@@ -664,6 +705,7 @@ func (c *Client) transformSwap(ctx context.Context, record driftSwapRecord, acco
 	fee := cleanDecimalString(record.Fee)
 
 	var baseAsset, quoteAsset, side, quantity, price string
+	var priceErr error
 
 	// Drift swap semantics: out = what user RECEIVES, in = what user SENDS
 	// (from the protocol's perspective: user puts tokens IN, gets tokens OUT)
@@ -673,21 +715,24 @@ func (c *Client) transformSwap(ctx context.Context, record driftSwapRecord, acco
 		quoteAsset = "USDC"
 		side = "sell"
 		quantity = amountIn
-		price = calculatePrice(amountOut, amountIn)
+		price, priceErr = calculatePrice(amountOut, amountIn)
 	} else if inMarket.BaseAsset == "USDC" {
 		// User sent USDC (in), received outMarket asset (out) → buy base with USDC
 		baseAsset = outMarket.BaseAsset
 		quoteAsset = "USDC"
 		side = "buy"
 		quantity = amountOut
-		price = calculatePrice(amountIn, amountOut)
+		price, priceErr = calculatePrice(amountIn, amountOut)
 	} else {
 		// Non-USDC swap: user sent inMarket (in), received outMarket (out)
 		baseAsset = outMarket.BaseAsset
 		quoteAsset = inMarket.BaseAsset
 		side = "buy"
 		quantity = amountOut
-		price = calculatePrice(amountIn, amountOut)
+		price, priceErr = calculatePrice(amountIn, amountOut)
+	}
+	if priceErr != nil {
+		return nil, nil, fmt.Errorf("failed to compute price for swap %s_%d (in=%q, out=%q): %w", record.TxSig, record.TxSigIndex, amountIn, amountOut, priceErr)
 	}
 
 	if baseAsset == "" || quoteAsset == "" {
@@ -710,6 +755,8 @@ func (c *Client) transformSwap(ctx context.Context, record driftSwapRecord, acco
 		Timestamp:         timestamp,
 		ExchangeAccountID: accountUUID,
 		MarketType:        "swap",
+		TxSignature:       record.TxSig,
+		FeeAsset:          quoteAsset,
 	}
 
 	// Extract oracle prices for both sides of the swap
@@ -752,8 +799,9 @@ func (c *Client) transformFundingPayment(ctx context.Context, record driftFundin
 		Asset:             marketInfo.QuoteAsset,
 		Amount:            amount,
 		Timestamp:         timestamp,
+		ExternalID:        paymentID,
 		Metadata: map[string]string{
-			"market":     marketInfo.BaseAsset,
+			"market":     marketInfo.BaseAsset + "-PERP",
 			"payment_id": paymentID,
 		},
 	}, nil
@@ -780,6 +828,10 @@ func (c *Client) transformDeposit(ctx context.Context, record driftDepositRecord
 		Type:              transferType,
 		Amount:            amount,
 		Timestamp:         timestamp,
+		ExternalID:        record.DepositRecordID,
+		Metadata: map[string]string{
+			"payment_id": record.DepositRecordID,
+		},
 	}
 
 	// Extract oracle price if available
@@ -799,15 +851,24 @@ func (c *Client) transformDeposit(ctx context.Context, record driftDepositRecord
 
 // Helper functions
 
-func normalizeSide(direction string) string {
-	direction = strings.ToLower(strings.TrimSpace(direction))
-	switch direction {
+// settlementID returns a unique ID for a settlement record.
+// Uses TxSig + TxSigIndex when available; falls back to synthetic format.
+func settlementID(r settlePnlRecord) string {
+	if r.TxSig != "" {
+		return fmt.Sprintf("%s_%d", r.TxSig, r.TxSigIndex)
+	}
+	return fmt.Sprintf("settle_%d_%s", r.MarketIndex, r.Timestamp.Format("20060102150405"))
+}
+
+func normalizeSide(direction string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(direction))
+	switch normalized {
 	case "long":
-		return "buy"
+		return "buy", nil
 	case "short":
-		return "sell"
+		return "sell", nil
 	default:
-		return "buy"
+		return "", fmt.Errorf("drift: unknown order direction %q", direction)
 	}
 }
 
@@ -834,25 +895,25 @@ func cleanDecimalString(s string) string {
 	return s
 }
 
-func convertFromBasePrecision(raw string) string {
+func convertFromBasePrecision(raw string) (string, error) {
 	if raw == "" {
-		return "0"
+		return "0", nil
 	}
 	return divideByPrecision(raw, BasePrecision)
 }
 
-func convertFromQuotePrecision(raw string) string {
+func convertFromQuotePrecision(raw string) (string, error) {
 	if raw == "" {
-		return "0"
+		return "0", nil
 	}
 	return divideByPrecision(raw, QuotePrecision)
 }
 
-func divideByPrecision(raw string, precision int64) string {
+func divideByPrecision(raw string, precision int64) (string, error) {
 	rawInt := new(big.Int)
 	rawInt, ok := rawInt.SetString(raw, 10)
 	if !ok {
-		return "0"
+		return "", fmt.Errorf("drift: failed to parse integer %q for precision division", raw)
 	}
 
 	negative := rawInt.Sign() < 0
@@ -875,26 +936,26 @@ func divideByPrecision(raw string, precision int64) string {
 		str = "-" + str
 	}
 
-	return str
+	return str, nil
 }
 
-func calculatePrice(quoteAmount, baseAmount string) string {
+func calculatePrice(quoteAmount, baseAmount string) (string, error) {
 	if baseAmount == "" || baseAmount == "0" {
-		return "0"
+		return "0", nil
 	}
 
 	quoteFloat, _, err := big.ParseFloat(quoteAmount, 10, 256, big.ToNearestEven)
 	if err != nil {
-		return "0"
+		return "", fmt.Errorf("drift: failed to parse quote amount %q: %w", quoteAmount, err)
 	}
 
 	baseFloat, _, err := big.ParseFloat(baseAmount, 10, 256, big.ToNearestEven)
 	if err != nil {
-		return "0"
+		return "", fmt.Errorf("drift: failed to parse base amount %q: %w", baseAmount, err)
 	}
 
 	if baseFloat.Sign() == 0 {
-		return "0"
+		return "0", nil
 	}
 
 	result := new(big.Float).Quo(quoteFloat, baseFloat)
@@ -905,7 +966,7 @@ func calculatePrice(quoteAmount, baseAmount string) string {
 		str = strings.TrimRight(str, ".")
 	}
 
-	return str
+	return str, nil
 }
 
 func parseRetryAfter(retryAfter string) time.Duration {

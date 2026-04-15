@@ -42,8 +42,8 @@ func TestClient_GetAllBalanceSnapshots(t *testing.T) {
 	if balances[0].Asset != "USDC" {
 		t.Errorf("Expected first asset USDC, got %s", balances[0].Asset)
 	}
-	if balances[0].Balance != 1000.50 {
-		t.Errorf("Expected balance 1000.50, got %f", balances[0].Balance)
+	if balances[0].Balance != "1000.50" {
+		t.Errorf("Expected balance 1000.50, got %s", balances[0].Balance)
 	}
 }
 
@@ -294,75 +294,6 @@ func TestClient_PruneOldSpotBalanceSnapshots(t *testing.T) {
 	}
 }
 
-func TestClient_SumFundingInRange(t *testing.T) {
-	ctx := context.Background()
-	accountID := uuid.New()
-
-	mockClient := &mockGraphQLClient{
-		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
-			amount := "123.45"
-			respData := map[string]interface{}{
-				"funding_payments_aggregate": map[string]interface{}{
-					"aggregate": map[string]interface{}{
-						"sum": map[string]interface{}{
-							"amount": &amount,
-						},
-					},
-				},
-			}
-			data, _ := json.Marshal(respData)
-			return json.Unmarshal(data, resp)
-		},
-	}
-
-	client := NewClientWithGraphQL(mockClient, ClientConfig{
-		URL:         "http://localhost:8080/v1/graphql",
-		AdminSecret: "test-secret",
-	})
-
-	sum, err := client.SumFundingInRange(ctx, accountID, 1700000000000, 1700000100000)
-	if err != nil {
-		t.Fatalf("SumFundingInRange failed: %v", err)
-	}
-	if sum != "123.45" {
-		t.Errorf("Expected sum 123.45, got %s", sum)
-	}
-}
-
-func TestClient_SumFundingInRange_Nil(t *testing.T) {
-	ctx := context.Background()
-	accountID := uuid.New()
-
-	mockClient := &mockGraphQLClient{
-		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
-			respData := map[string]interface{}{
-				"funding_payments_aggregate": map[string]interface{}{
-					"aggregate": map[string]interface{}{
-						"sum": map[string]interface{}{
-							"amount": nil,
-						},
-					},
-				},
-			}
-			data, _ := json.Marshal(respData)
-			return json.Unmarshal(data, resp)
-		},
-	}
-
-	client := NewClientWithGraphQL(mockClient, ClientConfig{
-		URL:         "http://localhost:8080/v1/graphql",
-		AdminSecret: "test-secret",
-	})
-
-	sum, err := client.SumFundingInRange(ctx, accountID, 1700000000000, 1700000100000)
-	if err != nil {
-		t.Fatalf("SumFundingInRange failed: %v", err)
-	}
-	if sum != "0" {
-		t.Errorf("Expected sum 0, got %s", sum)
-	}
-}
-
 func TestClient_UpdateAccountTypeMetadata(t *testing.T) {
 	ctx := context.Background()
 	accountID := uuid.New()
@@ -464,15 +395,15 @@ func TestClient_GetLatestBalanceSnapshots(t *testing.T) {
 	if balances[0].Asset != "SOL" {
 		t.Errorf("Expected first asset SOL, got %s", balances[0].Asset)
 	}
-	if balances[0].Balance != 25.5 {
-		t.Errorf("Expected SOL balance 25.5, got %f", balances[0].Balance)
+	if balances[0].Balance != "25.5" {
+		t.Errorf("Expected SOL balance 25.5, got %s", balances[0].Balance)
 	}
 	// Check BTC
 	if balances[1].Asset != "BTC" {
 		t.Errorf("Expected second asset BTC, got %s", balances[1].Asset)
 	}
-	if balances[1].Balance != 0.5 {
-		t.Errorf("Expected BTC balance 0.5, got %f", balances[1].Balance)
+	if balances[1].Balance != "0.5" {
+		t.Errorf("Expected BTC balance 0.5, got %s", balances[1].Balance)
 	}
 }
 
@@ -505,35 +436,3 @@ func TestClient_GetLatestBalanceSnapshots_Empty(t *testing.T) {
 	}
 }
 
-func TestParseFloat64(t *testing.T) {
-	t.Run("valid values", func(t *testing.T) {
-		tests := []struct {
-			input string
-			want  float64
-		}{
-			{"100.5", 100.5},
-			{"-50.25", -50.25},
-			{"0", 0},
-			{"", 0},
-		}
-		for _, tt := range tests {
-			got, err := parseFloat64(tt.input)
-			if err != nil {
-				t.Errorf("parseFloat64(%q) unexpected error: %v", tt.input, err)
-			}
-			if got != tt.want {
-				t.Errorf("parseFloat64(%q) = %f, want %f", tt.input, got, tt.want)
-			}
-		}
-	})
-
-	t.Run("invalid values return error", func(t *testing.T) {
-		invalid := []string{"invalid", "NaN", "Inf", "-Inf"}
-		for _, input := range invalid {
-			_, err := parseFloat64(input)
-			if err == nil {
-				t.Errorf("parseFloat64(%q) expected error, got nil", input)
-			}
-		}
-	})
-}

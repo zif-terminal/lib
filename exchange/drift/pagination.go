@@ -78,9 +78,10 @@ func fetchHistorical[T any](
 
 		monthItems, err := fetchAllPages(ctx, monthURL, fetcher)
 		if err != nil {
-			// Continue on error - some months may not have data
-			current = current.AddDate(0, 1, 0)
-			continue
+			// A failed month is a real data gap — fail loud rather than silently
+			// losing a slice of the historical record.
+			return nil, fmt.Errorf("drift/%s: historical fetch failed for %d/%d (account=%s): %w",
+				endpoint, current.Year(), int(current.Month()), accountID, err)
 		}
 
 		// For the month that overlaps with the recent window, filter out records

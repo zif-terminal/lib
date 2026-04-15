@@ -34,6 +34,8 @@ func (c *Client) GetTrade(ctx context.Context, id string) (*Trade, error) {
 				trade_id
 				exchange_account_id
 				market_type
+				tx_signature
+				fee_asset
 			}
 		}
 	`
@@ -85,6 +87,7 @@ func (c *Client) ListTrades(ctx context.Context, filter TradeFilter) ([]*Trade, 
 					quantity
 					timestamp
 					fee
+					fee_asset
 					order_id
 					trade_id
 					exchange_account_id
@@ -118,6 +121,7 @@ func (c *Client) ListTrades(ctx context.Context, filter TradeFilter) ([]*Trade, 
 					quantity
 					timestamp
 					fee
+					fee_asset
 					order_id
 					trade_id
 					exchange_account_id
@@ -150,6 +154,7 @@ func (c *Client) ListTrades(ctx context.Context, filter TradeFilter) ([]*Trade, 
 					quantity
 					timestamp
 					fee
+					fee_asset
 					order_id
 					trade_id
 					exchange_account_id
@@ -175,6 +180,7 @@ func (c *Client) ListTrades(ctx context.Context, filter TradeFilter) ([]*Trade, 
 					quantity
 					timestamp
 					fee
+					fee_asset
 					order_id
 					trade_id
 					exchange_account_id
@@ -213,6 +219,8 @@ func (c *Client) CreateTrade(ctx context.Context, input *TradeInput) (*Trade, er
 			$trade_id: String!
 			$exchange_account_id: uuid!
 			$market_type: String!
+			$tx_signature: String
+			$fee_asset: String!
 		) {
 			insert_trades_one(object: {
 				base_asset: $base_asset
@@ -226,6 +234,8 @@ func (c *Client) CreateTrade(ctx context.Context, input *TradeInput) (*Trade, er
 				trade_id: $trade_id
 				exchange_account_id: $exchange_account_id
 				market_type: $market_type
+				tx_signature: $tx_signature
+				fee_asset: $fee_asset
 			}) {
 				id
 				base_asset
@@ -239,6 +249,8 @@ func (c *Client) CreateTrade(ctx context.Context, input *TradeInput) (*Trade, er
 				trade_id
 				exchange_account_id
 				market_type
+				tx_signature
+				fee_asset
 			}
 		}
 	`
@@ -261,6 +273,10 @@ func (c *Client) CreateTrade(ctx context.Context, input *TradeInput) (*Trade, er
 		"trade_id":            input.TradeID,
 		"exchange_account_id": input.ExchangeAccountID.String(),
 		"market_type":         marketType,
+		"fee_asset":           input.FeeAsset,
+	}
+	if input.TxSignature != "" {
+		vars["tx_signature"] = input.TxSignature
 	}
 
 	req := c.graphqlRequestWithVars(query, vars)
@@ -296,6 +312,8 @@ func (c *Client) UpdateTrade(ctx context.Context, id string, input *TradeInput) 
 			$trade_id: String!
 			$exchange_account_id: uuid!
 			$market_type: String!
+			$tx_signature: String
+			$fee_asset: String!
 		) {
 			update_trades_by_pk(
 				pk_columns: { id: $id }
@@ -311,6 +329,8 @@ func (c *Client) UpdateTrade(ctx context.Context, id string, input *TradeInput) 
 					trade_id: $trade_id
 					exchange_account_id: $exchange_account_id
 					market_type: $market_type
+					tx_signature: $tx_signature
+					fee_asset: $fee_asset
 				}
 			) {
 				id
@@ -325,6 +345,8 @@ func (c *Client) UpdateTrade(ctx context.Context, id string, input *TradeInput) 
 				trade_id
 				exchange_account_id
 				market_type
+				tx_signature
+				fee_asset
 			}
 		}
 	`
@@ -348,6 +370,10 @@ func (c *Client) UpdateTrade(ctx context.Context, id string, input *TradeInput) 
 		"trade_id":            input.TradeID,
 		"exchange_account_id": input.ExchangeAccountID.String(),
 		"market_type":         marketType,
+		"fee_asset":           input.FeeAsset,
+	}
+	if input.TxSignature != "" {
+		vars["tx_signature"] = input.TxSignature
 	}
 
 	req := c.graphqlRequestWithVars(query, vars)
@@ -419,6 +445,8 @@ func (c *Client) GetTradesByIDs(ctx context.Context, ids []uuid.UUID) ([]*Trade,
 				trade_id
 				exchange_account_id
 				market_type
+				tx_signature
+				fee_asset
 			}
 		}
 	`
@@ -472,6 +500,8 @@ func (c *Client) LatestTrade(ctx context.Context, exchangeAccountIDs []uuid.UUID
 				trade_id
 				exchange_account_id
 				market_type
+				tx_signature
+				fee_asset
 			}
 		}
 	`
@@ -506,4 +536,42 @@ func (c *Client) LatestTrade(ctx context.Context, exchangeAccountIDs []uuid.UUID
 	}
 
 	return result, nil
+}
+
+// FindTradesByTxSignature retrieves trades by transaction signature across all exchange accounts.
+func (c *Client) FindTradesByTxSignature(ctx context.Context, txSignature string) ([]*Trade, error) {
+	query := `
+		query FindTradesByTxSignature($tx_signature: String!) {
+			trades(where: { tx_signature: { _eq: $tx_signature } }) {
+				id
+				base_asset
+				quote_asset
+				side
+				price
+				quantity
+				timestamp
+				fee
+				order_id
+				trade_id
+				exchange_account_id
+				market_type
+				tx_signature
+				fee_asset
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"tx_signature": txSignature,
+	})
+
+	var resp struct {
+		Trades []*Trade `json:"trades"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return nil, fmt.Errorf("failed to find trades by tx signature: %w", err)
+	}
+
+	return resp.Trades, nil
 }

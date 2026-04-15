@@ -97,7 +97,7 @@ type DBClient interface {
 
 	// Account methods
 	GetAccount(ctx context.Context, id string) (*ExchangeAccount, error)
-	ListAccounts(ctx context.Context) ([]*ExchangeAccount, error)
+	ListAccounts(ctx context.Context, filter AccountListFilter) ([]*ExchangeAccount, error)
 	CreateAccount(ctx context.Context, input *ExchangeAccountInput) (*ExchangeAccount, error)
 	UpdateAccount(ctx context.Context, id string, input *ExchangeAccountInput) (*ExchangeAccount, error)
 	DeleteAccount(ctx context.Context, id string) error
@@ -110,6 +110,7 @@ type DBClient interface {
 	UpdateTrade(ctx context.Context, id string, input *TradeInput) (*Trade, error)
 	DeleteTrade(ctx context.Context, id string) error
 	LatestTrade(ctx context.Context, exchangeAccountIDs []uuid.UUID) (map[uuid.UUID]*Trade, error)
+	FindTradesByTxSignature(ctx context.Context, txSignature string) ([]*Trade, error)
 
 	// Position methods
 	DeletePositionsForAccount(ctx context.Context, accountID uuid.UUID) (int, error)
@@ -158,6 +159,8 @@ type DBClient interface {
 	SaveCheckpoint(ctx context.Context, checkpoint *ProcessorCheckpoint) error
 	LoadCheckpoint(ctx context.Context, accountID uuid.UUID) (*ProcessorCheckpoint, error)
 	DeleteCheckpoint(ctx context.Context, accountID uuid.UUID) error
+	SetProcessorCheckpointError(ctx context.Context, accountID uuid.UUID, errorMsg string) error
+	ClearProcessorCheckpointError(ctx context.Context, accountID uuid.UUID) error
 
 	// Sync timestamp methods
 	UpdateAccountLastSynced(ctx context.Context, accountID string) error
@@ -179,6 +182,11 @@ type DBClient interface {
 
 	// Upsert positions (stable IDs via natural key)
 	UpsertPositions(ctx context.Context, inputs []*PositionInput) ([]*Position, error)
+
+	// Omni raw events methods
+	ListOmniRawEvents(ctx context.Context, accountID uuid.UUID, eventType string, sinceMs int64) ([]*OmniRawEvent, error)
+	ListOmniRawEventsByTypes(ctx context.Context, accountID uuid.UUID, eventTypes []string, sinceMs int64) ([]*OmniRawEvent, error)
+	AddOmniRawEvents(ctx context.Context, inputs []*OmniRawEventInput) (int, error)
 }
 
 // Ensure Client implements DBClient

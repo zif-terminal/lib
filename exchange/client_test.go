@@ -70,11 +70,64 @@ func TestGetClientHyperliquid(t *testing.T) {
 	var _ iface.ExchangeClient = client
 }
 
+func TestGetClientLighter(t *testing.T) {
+	client, err := GetClient("lighter")
+	if err != nil {
+		t.Fatalf("GetClient failed: %v", err)
+	}
+
+	if client == nil {
+		t.Fatal("GetClient returned nil client")
+	}
+
+	if client.Name() != "lighter" {
+		t.Errorf("Expected client name 'lighter', got '%s'", client.Name())
+	}
+
+	var _ iface.ExchangeClient = client
+}
+
+func TestGetClientWithDB_Variational(t *testing.T) {
+	// variational requires a DB client — pass nil since we're only checking construction
+	client, err := GetClientWithDB("variational", nil)
+	if err != nil {
+		t.Fatalf("GetClientWithDB failed: %v", err)
+	}
+
+	if client == nil {
+		t.Fatal("GetClientWithDB returned nil client")
+	}
+
+	if client.Name() != "variational" {
+		t.Errorf("Expected client name 'variational', got '%s'", client.Name())
+	}
+
+	var _ iface.ExchangeClient = client
+}
+
+func TestGetClientWithDB_FallbackToDrift(t *testing.T) {
+	client, err := GetClientWithDB("drift", nil)
+	if err != nil {
+		t.Fatalf("GetClientWithDB failed for drift: %v", err)
+	}
+
+	if client.Name() != "drift" {
+		t.Errorf("Expected client name 'drift', got '%s'", client.Name())
+	}
+}
+
+func TestGetClientWithDB_NotFound(t *testing.T) {
+	_, err := GetClientWithDB("nonexistent", nil)
+	if !errors.Is(err, ErrExchangeNotFound) {
+		t.Errorf("Expected ErrExchangeNotFound, got: %v", err)
+	}
+}
+
 func TestListAvailableExchanges(t *testing.T) {
 	exchanges := ListAvailableExchanges()
 
-	if len(exchanges) != 2 {
-		t.Fatalf("Expected 2 exchanges, got %d", len(exchanges))
+	if len(exchanges) != 4 {
+		t.Fatalf("Expected 4 exchanges, got %d", len(exchanges))
 	}
 
 	found := map[string]bool{}
@@ -87,5 +140,11 @@ func TestListAvailableExchanges(t *testing.T) {
 	}
 	if !found["hyperliquid"] {
 		t.Error("Expected 'hyperliquid' in exchanges list")
+	}
+	if !found["lighter"] {
+		t.Error("Expected 'lighter' in exchanges list")
+	}
+	if !found["variational"] {
+		t.Error("Expected 'variational' in exchanges list")
 	}
 }

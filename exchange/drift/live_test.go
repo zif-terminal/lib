@@ -91,18 +91,18 @@ func TestDriftClient_FetchBalances_LiveEndpoint(t *testing.T) {
 		t.Fatalf("Expected 3 balances from /user endpoint, got %d", len(balances))
 	}
 
-	assetMap := map[string]float64{}
+	assetMap := map[string]string{}
 	for _, b := range balances {
 		assetMap[b.Asset] = b.Balance
 	}
-	if assetMap["USDC"] != 5000 {
-		t.Errorf("Expected USDC=5000, got %f", assetMap["USDC"])
+	if assetMap["USDC"] != "5000" {
+		t.Errorf("Expected USDC=5000, got %s", assetMap["USDC"])
 	}
-	if assetMap["SOL"] != 100 {
-		t.Errorf("Expected SOL=100, got %f", assetMap["SOL"])
+	if assetMap["SOL"] != "100" {
+		t.Errorf("Expected SOL=100, got %s", assetMap["SOL"])
 	}
-	if assetMap["JUP"] >= 0 {
-		t.Errorf("Expected negative JUP balance (borrow), got %f", assetMap["JUP"])
+	if len(assetMap["JUP"]) == 0 || assetMap["JUP"][0] != '-' {
+		t.Errorf("Expected negative JUP balance (borrow), got %s", assetMap["JUP"])
 	}
 }
 

@@ -3,8 +3,11 @@ package hyperliquid
 import (
 	"context"
 	"encoding/json"
+
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -167,6 +170,15 @@ func TestTransformFunding(t *testing.T) {
 	if payment.Metadata["n_samples"] != "1" {
 		t.Errorf("n_samples metadata = %q, want 1", payment.Metadata["n_samples"])
 	}
+	if payment.Metadata["payment_id"] != "1700000000000_ETH" {
+		t.Errorf("payment_id metadata = %q, want 1700000000000_ETH", payment.Metadata["payment_id"])
+	}
+	if payment.Metadata["funding_rate"] != "0.0001" {
+		t.Errorf("funding_rate metadata = %q, want 0.0001", payment.Metadata["funding_rate"])
+	}
+	if payment.Amount != "-0.5" {
+		t.Errorf("Amount = %q, want -0.5 (cleanDecimal applied)", payment.Amount)
+	}
 }
 
 func TestTransformFillSlashCoin(t *testing.T) {
@@ -195,6 +207,7 @@ func TestTransformFillSlashCoin(t *testing.T) {
 
 func TestTransformLedgerEntry(t *testing.T) {
 	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
 
 	t.Run("deposit", func(t *testing.T) {
 		entry := hlLedgerEntry{
@@ -205,7 +218,10 @@ func TestTransformLedgerEntry(t *testing.T) {
 				Usdc: "1000.00",
 			},
 		}
-		transfer := transformLedgerEntry(entry, accountUUID)
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if transfer == nil {
 			t.Fatal("expected non-nil transfer")
 		}
@@ -214,6 +230,12 @@ func TestTransformLedgerEntry(t *testing.T) {
 		}
 		if transfer.Amount != "1000" {
 			t.Errorf("Amount = %q, want 1000", transfer.Amount)
+		}
+		if transfer.Metadata["payment_id"] != "0xabc" {
+			t.Errorf("payment_id metadata = %q, want 0xabc", transfer.Metadata["payment_id"])
+		}
+		if transfer.Metadata["source_type"] != "deposit" {
+			t.Errorf("source_type metadata = %q, want deposit", transfer.Metadata["source_type"])
 		}
 	})
 
@@ -226,7 +248,10 @@ func TestTransformLedgerEntry(t *testing.T) {
 				Usdc: "-500.00",
 			},
 		}
-		transfer := transformLedgerEntry(entry, accountUUID)
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if transfer == nil {
 			t.Fatal("expected non-nil transfer")
 		}
@@ -236,20 +261,319 @@ func TestTransformLedgerEntry(t *testing.T) {
 		if transfer.Amount != "500" {
 			t.Errorf("Amount = %q, want 500", transfer.Amount)
 		}
+		if transfer.Metadata["payment_id"] != "0xdef" {
+			t.Errorf("payment_id metadata = %q, want 0xdef", transfer.Metadata["payment_id"])
+		}
 	})
 
-	t.Run("unsupported type returns nil", func(t *testing.T) {
+	t.Run("spotGenesis", func(t *testing.T) {
 		entry := hlLedgerEntry{
 			Time: 1700000000000,
-			Hash: "0xghi",
+			Hash: "0xgenesis",
+			Delta: hlLedgerDelta{
+				Type:   "spotGenesis",
+				Token:  "PURR",
+				Amount: "1000.50",
+			},
+		}
+		transfer, price, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeDeposit {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeDeposit)
+		}
+		if transfer.Asset != "PURR" {
+			t.Errorf("Asset = %q, want PURR", transfer.Asset)
+		}
+		if transfer.Amount != "1000.5" {
+			t.Errorf("Amount = %q, want 1000.5", transfer.Amount)
+		}
+		if transfer.Metadata["source_type"] != "spotgenesis" {
+			t.Errorf("source_type = %q, want spotgenesis", transfer.Metadata["source_type"])
+		}
+		// spotGenesis is a free airdrop — price must be 0
+		if price == nil {
+			t.Fatal("expected price record for spotGenesis")
+		}
+		if price.Price != "0" {
+			t.Errorf("price = %q, want 0 (free airdrop)", price.Price)
+		}
+		if price.Asset != "PURR" {
+			t.Errorf("price asset = %q, want PURR", price.Asset)
+		}
+		if price.Denomination != "USDC" {
+			t.Errorf("price denomination = %q, want USDC", price.Denomination)
+		}
+		if price.Source != "ledger" {
+			t.Errorf("price source = %q, want ledger", price.Source)
+		}
+	})
+
+	t.Run("spotTransfer inbound", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xspotin",
+			Delta: hlLedgerDelta{
+				Type:        "spotTransfer",
+				Token:       "HYPE",
+				Amount:      "50.0",
+				Destination: wallet,
+				User:        "0xSenderAddress",
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeDeposit {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeDeposit)
+		}
+		if transfer.Asset != "HYPE" {
+			t.Errorf("Asset = %q, want HYPE", transfer.Asset)
+		}
+		if transfer.Amount != "50" {
+			t.Errorf("Amount = %q, want 50", transfer.Amount)
+		}
+	})
+
+	t.Run("spotTransfer outbound", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xspotout",
+			Delta: hlLedgerDelta{
+				Type:        "spotTransfer",
+				Token:       "HYPE",
+				Amount:      "25.0",
+				Destination: "0xReceiverAddress",
+				User:        wallet,
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeWithdraw {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeWithdraw)
+		}
+		if transfer.Asset != "HYPE" {
+			t.Errorf("Asset = %q, want HYPE", transfer.Asset)
+		}
+	})
+
+	t.Run("spotTransfer case insensitive match", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xspotcase",
+			Delta: hlLedgerDelta{
+				Type:        "spotTransfer",
+				Token:       "HYPE",
+				Amount:      "10.0",
+				Destination: "0x4c5fed7bdda8023f3133e3a8f7c615395ad673c8", // lowercase
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeDeposit {
+			t.Errorf("Type = %q, want deposit (case-insensitive match)", transfer.Type)
+		}
+	})
+
+	t.Run("internalTransfer outgoing", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xinternalout",
 			Delta: hlLedgerDelta{
 				Type: "internalTransfer",
+				Usdc: "-100.00",
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeWithdraw {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeWithdraw)
+		}
+		if transfer.Asset != "USDC" {
+			t.Errorf("Asset = %q, want USDC", transfer.Asset)
+		}
+		if transfer.Amount != "100" {
+			t.Errorf("Amount = %q, want 100", transfer.Amount)
+		}
+	})
+
+	t.Run("internalTransfer incoming", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xinternalin",
+			Delta: hlLedgerDelta{
+				Type: "internalTransfer",
+				Usdc: "200.00",
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeDeposit {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeDeposit)
+		}
+		if transfer.Amount != "200" {
+			t.Errorf("Amount = %q, want 200", transfer.Amount)
+		}
+	})
+
+	t.Run("vaultCreate", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xvaultcreate",
+			Delta: hlLedgerDelta{
+				Type: "vaultCreate",
+				Usdc: "-5000.00",
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeWithdraw {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeWithdraw)
+		}
+		if transfer.Asset != "USDC" {
+			t.Errorf("Asset = %q, want USDC", transfer.Asset)
+		}
+		if transfer.Amount != "5000" {
+			t.Errorf("Amount = %q, want 5000", transfer.Amount)
+		}
+	})
+
+	t.Run("vaultDeposit", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xvaultdeposit",
+			Delta: hlLedgerDelta{
+				Type: "vaultDeposit",
+				Usdc: "-1000.00",
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeWithdraw {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeWithdraw)
+		}
+		if transfer.Amount != "1000" {
+			t.Errorf("Amount = %q, want 1000", transfer.Amount)
+		}
+	})
+
+	t.Run("vaultDistribution", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xvaultdist",
+			Delta: hlLedgerDelta{
+				Type: "vaultDistribution",
+				Usdc: "250.00",
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeDeposit {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeDeposit)
+		}
+		if transfer.Asset != "USDC" {
+			t.Errorf("Asset = %q, want USDC", transfer.Asset)
+		}
+		if transfer.Amount != "250" {
+			t.Errorf("Amount = %q, want 250", transfer.Amount)
+		}
+	})
+
+	t.Run("accountClassTransfer skipped", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xacctclass",
+			Delta: hlLedgerDelta{
+				Type:   "accountClassTransfer",
+				Usdc:   "100.00",
+				ToPerp: true,
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer != nil {
+			t.Error("expected nil transfer for accountClassTransfer")
+		}
+	})
+
+	t.Run("vaultWithdraw skipped", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xvaultwithdraw",
+			Delta: hlLedgerDelta{
+				Type: "vaultWithdraw",
+				Usdc: "500.00",
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer != nil {
+			t.Error("expected nil transfer for vaultWithdraw")
+		}
+	})
+
+	t.Run("unknown type returns error", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xunknown",
+			Delta: hlLedgerDelta{
+				Type: "liquidation",
 				Usdc: "100.00",
 			},
 		}
-		transfer := transformLedgerEntry(entry, accountUUID)
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err == nil {
+			t.Fatal("expected error for unknown ledger delta type, got nil")
+		}
 		if transfer != nil {
-			t.Error("expected nil transfer for unsupported type")
+			t.Errorf("expected nil transfer for unknown type, got %+v", transfer)
 		}
 	})
 }
@@ -322,8 +646,19 @@ func TestFetchTradesWithMockServer(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if prices != nil {
-		t.Error("expected nil prices for Hyperliquid")
+	if len(prices) != 2 {
+		t.Errorf("expected 2 price records from execution prices, got %d", len(prices))
+	}
+	if len(prices) > 0 {
+		if prices[0].Source != "execution" {
+			t.Errorf("price source = %s, want execution", prices[0].Source)
+		}
+		if prices[0].Asset != "ETH" {
+			t.Errorf("price asset = %s, want ETH", prices[0].Asset)
+		}
+		if prices[0].Price != "2000" {
+			t.Errorf("price = %s, want 2000", prices[0].Price)
+		}
 	}
 
 	if len(trades) != 2 {
@@ -408,14 +743,17 @@ func TestFetchFundingPaymentsWithMockServer(t *testing.T) {
 	if p.Asset != "USDC" {
 		t.Errorf("Asset = %q, want USDC", p.Asset)
 	}
-	if p.Amount != "-0.50" {
-		t.Errorf("Amount = %q, want -0.50", p.Amount)
+	if p.Amount != "-0.5" {
+		t.Errorf("Amount = %q, want -0.5", p.Amount)
 	}
 	if p.Metadata["market"] != "ETH-PERP" {
 		t.Errorf("market metadata = %q, want ETH-PERP", p.Metadata["market"])
 	}
 	if p.Metadata["n_samples"] != "4" {
 		t.Errorf("n_samples metadata = %q, want 4", p.Metadata["n_samples"])
+	}
+	if p.Metadata["payment_id"] != "1700000000000_ETH" {
+		t.Errorf("payment_id metadata = %q, want 1700000000000_ETH", p.Metadata["payment_id"])
 	}
 	if p.ExchangeAccountID != accountID {
 		t.Errorf("ExchangeAccountID = %v, want %v", p.ExchangeAccountID, accountID)
@@ -472,13 +810,14 @@ func TestFetchDepositsWithMockServer(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if prices != nil {
-		t.Error("expected nil prices for Hyperliquid")
+	// These entries (deposit, withdraw, internalTransfer) have no spot price records
+	if len(prices) != 0 {
+		t.Errorf("expected 0 prices for non-spot ledger entries, got %d", len(prices))
 	}
 
-	// internalTransfer should be filtered out
-	if len(transfers) != 2 {
-		t.Fatalf("expected 2 transfers (deposit + withdraw, skipping internalTransfer), got %d", len(transfers))
+	// internalTransfer with positive USDC is now handled as a deposit
+	if len(transfers) != 3 {
+		t.Fatalf("expected 3 transfers (deposit + withdraw + internalTransfer), got %d", len(transfers))
 	}
 
 	// Verify sorted ascending
@@ -662,14 +1001,827 @@ func TestFetchBalancesWithMockServer(t *testing.T) {
 	if usdcBalance == nil {
 		t.Fatal("expected USDC balance")
 	}
-	if usdcBalance.Balance != 5000.50 {
-		t.Errorf("USDC balance = %f, want 5000.50", usdcBalance.Balance)
+	if usdcBalance.Balance != "5000.50" {
+		t.Errorf("USDC balance = %s, want 5000.50", usdcBalance.Balance)
 	}
 
 	if ethBalance == nil {
 		t.Fatal("expected ETH balance")
 	}
-	if ethBalance.Balance != 1.5 {
-		t.Errorf("ETH balance = %f, want 1.5", ethBalance.Balance)
+	if ethBalance.Balance != "1.5" {
+		t.Errorf("ETH balance = %s, want 1.5", ethBalance.Balance)
+	}
+}
+
+func TestTransformFillAtIndexedSpotCoin(t *testing.T) {
+	accountUUID := uuid.New()
+	fill := hlFill{
+		Time: 1700000000000,
+		Coin: "@13-SPOT",
+		Side: "B",
+		Px:   "25.00",
+		Sz:   "10",
+		Fee:  "0.01",
+		Tid:  200,
+		Oid:  300,
+	}
+	trade := transformFill(fill, accountUUID)
+
+	// Before resolution, base asset should be @13
+	if trade.BaseAsset != "@13" {
+		t.Errorf("BaseAsset = %q, want @13 (before resolution)", trade.BaseAsset)
+	}
+	if trade.MarketType != "spot" {
+		t.Errorf("MarketType = %q, want spot", trade.MarketType)
+	}
+}
+
+func spotMetaHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+
+		reqType, _ := body["type"].(string)
+		switch reqType {
+		case "spotMeta":
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"tokens": []map[string]interface{}{
+					{"name": "USDC", "index": 0, "szDecimals": 2, "weiDecimals": 6, "tokenId": "0x0", "isCanonical": true},
+					{"name": "PURR", "index": 1, "szDecimals": 0, "weiDecimals": 18, "tokenId": "0x1", "isCanonical": true},
+					{"name": "HYPE", "index": 2, "szDecimals": 2, "weiDecimals": 18, "tokenId": "0x2", "isCanonical": false},
+				},
+				"universe": []map[string]interface{}{
+					{"name": "PURR/USDC", "tokens": []int{1, 0}, "index": 0, "isCanonical": true},
+					{"name": "@1", "tokens": []int{2, 0}, "index": 1, "isCanonical": false},
+				},
+			})
+		case "userFills":
+			json.NewEncoder(w).Encode([]hlFill{
+				{
+					Time: 1700000000000,
+					Coin: "@1-SPOT",
+					Side: "B",
+					Px:   "25.00",
+					Sz:   "10",
+					Fee:  "0.01",
+					Tid:  200,
+					Oid:  300,
+				},
+				{
+					Time: 1700000001000,
+					Coin: "PURR/USDC",
+					Side: "A",
+					Px:   "0.001",
+					Sz:   "1000",
+					Fee:  "0.005",
+					Tid:  201,
+					Oid:  301,
+				},
+				{
+					Time: 1700000002000,
+					Coin: "ETH",
+					Side: "B",
+					Px:   "2000.00",
+					Sz:   "1",
+					Fee:  "0.20",
+					Tid:  202,
+					Oid:  302,
+				},
+			})
+		}
+	}
+}
+
+func TestFetchTradesResolvesAtIndexedSpotCoins(t *testing.T) {
+	resetSpotMetaCache()
+
+	server := httptest.NewServer(spotMetaHandler())
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	accountID := uuid.New()
+	account := &models.ExchangeAccount{
+		ID:                accountID.String(),
+		AccountIdentifier: "0x1234567890abcdef1234567890abcdef12345678",
+	}
+
+	trades, prices, err := c.FetchTrades(context.Background(), account, time.UnixMilli(1700000000000))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(trades) != 3 {
+		t.Fatalf("expected 3 trades, got %d", len(trades))
+	}
+
+	// First trade: @1-SPOT should resolve to HYPE/USDC
+	if trades[0].BaseAsset != "HYPE" {
+		t.Errorf("trade[0] BaseAsset = %q, want HYPE (@1 resolved)", trades[0].BaseAsset)
+	}
+	if trades[0].QuoteAsset != "USDC" {
+		t.Errorf("trade[0] QuoteAsset = %q, want USDC", trades[0].QuoteAsset)
+	}
+	if trades[0].MarketType != "spot" {
+		t.Errorf("trade[0] MarketType = %q, want spot", trades[0].MarketType)
+	}
+
+	// Second trade: PURR/USDC canonical pair
+	if trades[1].BaseAsset != "PURR" {
+		t.Errorf("trade[1] BaseAsset = %q, want PURR", trades[1].BaseAsset)
+	}
+	if trades[1].MarketType != "spot" {
+		t.Errorf("trade[1] MarketType = %q, want spot", trades[1].MarketType)
+	}
+
+	// Third trade: ETH perp — should be unchanged
+	if trades[2].BaseAsset != "ETH" {
+		t.Errorf("trade[2] BaseAsset = %q, want ETH", trades[2].BaseAsset)
+	}
+	if trades[2].MarketType != "perp" {
+		t.Errorf("trade[2] MarketType = %q, want perp", trades[2].MarketType)
+	}
+
+	// Price records should also use resolved names
+	if len(prices) != 3 {
+		t.Fatalf("expected 3 price records, got %d", len(prices))
+	}
+	if prices[0].Asset != "HYPE" {
+		t.Errorf("prices[0] Asset = %q, want HYPE", prices[0].Asset)
+	}
+}
+
+func TestSpotMetaCacheLazyLoad(t *testing.T) {
+	resetSpotMetaCache()
+
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+
+		if body["type"] == "spotMeta" {
+			callCount++
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"tokens": []map[string]interface{}{
+					{"name": "USDC", "index": 0},
+					{"name": "SOL", "index": 1},
+				},
+				"universe": []map[string]interface{}{
+					{"name": "@0", "tokens": []int{1, 0}, "index": 0},
+				},
+			})
+			return
+		}
+		w.Write([]byte("[]"))
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	ctx := context.Background()
+
+	// First call should trigger API fetch
+	base, quote, err := c.resolveSpotCoin(ctx, "@0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if base != "SOL" {
+		t.Errorf("base = %q, want SOL", base)
+	}
+	if quote != "USDC" {
+		t.Errorf("quote = %q, want USDC", quote)
+	}
+	if callCount != 1 {
+		t.Errorf("expected 1 API call, got %d", callCount)
+	}
+
+	// Second call should use cache — no additional API call
+	base2, _, err := c.resolveSpotCoin(ctx, "@0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if base2 != "SOL" {
+		t.Errorf("base = %q, want SOL (cached)", base2)
+	}
+	if callCount != 1 {
+		t.Errorf("expected still 1 API call (cached), got %d", callCount)
+	}
+
+	// Non-indexed coin should pass through without API call
+	base3, quote3, err := c.resolveSpotCoin(ctx, "ETH")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if base3 != "ETH" {
+		t.Errorf("base = %q, want ETH (passthrough)", base3)
+	}
+	if quote3 != "USDC" {
+		t.Errorf("quote = %q, want USDC (passthrough)", quote3)
+	}
+	if callCount != 1 {
+		t.Errorf("expected still 1 API call, got %d", callCount)
+	}
+}
+
+func TestTransformFillSpotDustConversion(t *testing.T) {
+	accountUUID := uuid.New()
+
+	// A spot dust conversion fill — should be classified as spot, not perp
+	fill := hlFill{
+		Time:          1728345600098,
+		Coin:          "@74",
+		Side:          "A",
+		Px:            "0.0014717",
+		Sz:            "639.282608",
+		Fee:           "0",
+		Tid:           0,
+		ClosedPnl:     "0.0",
+		StartPosition: "639.282608",
+		Dir:           "Spot Dust Conversion",
+		Oid:           40950466295,
+	}
+
+	trade := transformFill(fill, accountUUID)
+
+	if trade.MarketType != "spot" {
+		t.Errorf("MarketType = %q, want spot (dust conversion should be spot)", trade.MarketType)
+	}
+	if trade.Side != "sell" {
+		t.Errorf("Side = %q, want sell", trade.Side)
+	}
+	// BaseAsset is still @74 before resolution
+	if trade.BaseAsset != "@74" {
+		t.Errorf("BaseAsset = %q, want @74 (before resolution)", trade.BaseAsset)
+	}
+	// Tid=0 fills must get a deterministic hash-based trade ID, not "0"
+	if trade.TradeID == "0" {
+		t.Error("TradeID should not be \"0\" for dust conversion fills with Tid=0")
+	}
+	if !strings.HasPrefix(trade.TradeID, "hl_") {
+		t.Errorf("TradeID = %q, want prefix \"hl_\" for Tid=0 fills", trade.TradeID)
+	}
+}
+
+func TestTransformFillTidZeroDeterministicUnique(t *testing.T) {
+	accountUUID := uuid.New()
+
+	fill1 := hlFill{
+		Time:          1728345600098,
+		Coin:          "@74",
+		Side:          "A",
+		Px:            "0.0014717",
+		Sz:            "639.282608",
+		Fee:           "0",
+		Tid:           0,
+		ClosedPnl:     "0.0",
+		StartPosition: "639.282608",
+		Dir:           "Spot Dust Conversion",
+		Oid:           40950466295,
+	}
+
+	fill2 := hlFill{
+		Time:          1728345700000,
+		Coin:          "@75",
+		Side:          "A",
+		Px:            "0.002",
+		Sz:            "100.0",
+		Fee:           "0",
+		Tid:           0,
+		ClosedPnl:     "0.0",
+		StartPosition: "100.0",
+		Dir:           "Spot Dust Conversion",
+		Oid:           40950466300,
+	}
+
+	trade1 := transformFill(fill1, accountUUID)
+	trade2 := transformFill(fill2, accountUUID)
+
+	if trade1.TradeID == "0" || trade2.TradeID == "0" {
+		t.Fatal("TradeID should not be \"0\" for Tid=0 fills")
+	}
+	if !strings.HasPrefix(trade1.TradeID, "hl_") {
+		t.Errorf("trade1 TradeID = %q, want prefix \"hl_\"", trade1.TradeID)
+	}
+	if !strings.HasPrefix(trade2.TradeID, "hl_") {
+		t.Errorf("trade2 TradeID = %q, want prefix \"hl_\"", trade2.TradeID)
+	}
+	if trade1.TradeID == trade2.TradeID {
+		t.Errorf("two different fills with Tid=0 produced the same TradeID: %s", trade1.TradeID)
+	}
+}
+
+func TestSynthesizePrelaunchOpenings(t *testing.T) {
+	accountUUID := uuid.New()
+
+	t.Run("pre-launch perp with no buy fills", func(t *testing.T) {
+		// Use a plain perp coin (e.g., HYPE) — not @N which is now classified as spot.
+		// Pre-launch perps use plain symbol names from the meta response.
+		fills := []hlFill{
+			{
+				Time:          1733265316756,
+				Coin:          "HYPE",
+				Side:          "A",
+				Px:            "11.2",
+				Sz:            "530.49",
+				Fee:           "0.594148",
+				Tid:           544611872761152,
+				ClosedPnl:     "5941.482696",
+				StartPosition: "1567.77",
+				Dir:           "Sell",
+			},
+			{
+				Time:          1733265324007,
+				Coin:          "HYPE",
+				Side:          "A",
+				Px:            "11.2",
+				Sz:            "863.1",
+				Fee:           "0.966672",
+				Tid:           884529762032827,
+				ClosedPnl:     "9666.711369",
+				StartPosition: "1037.28",
+				Dir:           "Sell",
+			},
+		}
+
+		result := synthesizePrelaunchOpenings(fills, accountUUID)
+
+		// Should have 3 fills: 1 synthetic + 2 original
+		if len(result) != 3 {
+			t.Fatalf("expected 3 fills, got %d", len(result))
+		}
+
+		// Find the synthetic fill
+		var synth *hlFill
+		for i := range result {
+			if result[i].Dir == "Synthetic Open Long" {
+				synth = &result[i]
+				break
+			}
+		}
+		if synth == nil {
+			t.Fatal("expected a synthetic opening fill")
+		}
+
+		if synth.Sz != "1567.77" {
+			t.Errorf("synthetic Sz = %q, want 1567.77 (startPosition of earliest fill)", synth.Sz)
+		}
+		if synth.Px != "0" {
+			t.Errorf("synthetic Px = %q, want 0", synth.Px)
+		}
+		if synth.Side != "B" {
+			t.Errorf("synthetic Side = %q, want B (buy)", synth.Side)
+		}
+		if synth.Time >= 1733265316756 {
+			t.Errorf("synthetic Time = %d, should be before earliest fill", synth.Time)
+		}
+	})
+
+	t.Run("spot dust conversion skipped — opening comes from spotGenesis transfer", func(t *testing.T) {
+		fills := []hlFill{
+			{
+				Time:          1728345600098,
+				Coin:          "@74",
+				Side:          "A",
+				Px:            "0.0014717",
+				Sz:            "639.282608",
+				Fee:           "0",
+				Tid:           0,
+				ClosedPnl:     "0.0",
+				StartPosition: "639.282608",
+				Dir:           "Spot Dust Conversion",
+			},
+		}
+
+		result := synthesizePrelaunchOpenings(fills, accountUUID)
+
+		// Dust conversions should NOT get synthetic fills — the opening
+		// position is captured via spotGenesis ledger entries (deposit transfers).
+		if len(result) != 1 {
+			t.Fatalf("expected 1 fill (no synthesis for dust conversion), got %d", len(result))
+		}
+	})
+
+	t.Run("coin with buy fills is not synthesized", func(t *testing.T) {
+		fills := []hlFill{
+			{
+				Time: 1700000000000,
+				Coin: "ETH",
+				Side: "B",
+				Px:   "2000",
+				Sz:   "1",
+				Dir:  "Open Long",
+			},
+			{
+				Time: 1700000001000,
+				Coin: "ETH",
+				Side: "A",
+				Px:   "2100",
+				Sz:   "1",
+				Dir:  "Close Long",
+				StartPosition: "1",
+			},
+		}
+
+		result := synthesizePrelaunchOpenings(fills, accountUUID)
+		if len(result) != 2 {
+			t.Errorf("expected 2 fills (no synthesis for coin with buys), got %d", len(result))
+		}
+	})
+
+	t.Run("no synthesis for zero startPosition", func(t *testing.T) {
+		fills := []hlFill{
+			{
+				Time:          1700000000000,
+				Coin:          "@50",
+				Side:          "A",
+				Px:            "1.0",
+				Sz:            "10",
+				Dir:           "Spot Dust Conversion",
+				StartPosition: "0",
+			},
+		}
+
+		result := synthesizePrelaunchOpenings(fills, accountUUID)
+		if len(result) != 1 {
+			t.Errorf("expected 1 fill (no synthesis for zero startPosition), got %d", len(result))
+		}
+	})
+}
+
+func TestDoPostRateLimitRetry(t *testing.T) {
+	var retryCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempt := retryCount.Add(1)
+		if attempt <= 2 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		// Succeed on 3rd attempt
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]hlFill{})
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var result []hlFill
+	err := c.doPost(ctx, map[string]string{"type": "userFills", "user": "0x0"}, &result)
+	if err != nil {
+		t.Fatalf("expected success after retries, got error: %v", err)
+	}
+
+	count := retryCount.Load()
+	if count != 3 {
+		t.Errorf("expected 3 attempts (2 retries + 1 success), got %d", count)
+	}
+}
+
+func TestDoPostRateLimitExhausted(t *testing.T) {
+	var retryCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		retryCount.Add(1)
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	// Use a generous timeout — we want to test that maxRetries is hit, not context timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	var result []hlFill
+	err := c.doPost(ctx, map[string]string{"type": "userFills", "user": "0x0"}, &result)
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+
+	if !iface.IsRateLimitError(err) {
+		t.Errorf("expected RateLimitError, got %T: %v", err, err)
+	}
+
+	// Should have made maxRetries+1 attempts
+	count := retryCount.Load()
+	if count != int32(maxRetries+1) {
+		t.Errorf("expected %d attempts, got %d", maxRetries+1, count)
+	}
+}
+
+func TestDoPostRespectsRetryAfterHeader(t *testing.T) {
+	var timestamps []time.Time
+	var retryCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		timestamps = append(timestamps, time.Now())
+		attempt := retryCount.Add(1)
+		if attempt == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		// Succeed on 2nd attempt
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]hlFill{})
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var result []hlFill
+	err := c.doPost(ctx, map[string]string{"type": "userFills", "user": "0x0"}, &result)
+	if err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+
+	if len(timestamps) < 2 {
+		t.Fatal("expected at least 2 requests")
+	}
+
+	// The gap between requests should be at least ~1 second (the Retry-After value)
+	gap := timestamps[1].Sub(timestamps[0])
+	if gap < 900*time.Millisecond {
+		t.Errorf("expected at least ~1s gap due to Retry-After header, got %v", gap)
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	tests := []struct {
+		input string
+		want  time.Duration
+	}{
+		{"", 0},
+		{"1", 1 * time.Second},
+		{"5", 5 * time.Second},
+		{"60", 60 * time.Second},
+		{"abc", 0},
+		{"1.5", 0}, // Only integer seconds supported
+	}
+
+	for _, tt := range tests {
+		got := parseRetryAfter(tt.input)
+		if got != tt.want {
+			t.Errorf("parseRetryAfter(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestTransformFillBareAtCoinIsSpot(t *testing.T) {
+	accountUUID := uuid.New()
+
+	tests := []struct {
+		name     string
+		coin     string
+		wantBase string
+		wantType string
+	}{
+		{
+			name:     "bare @107 is spot",
+			coin:     "@107",
+			wantBase: "@107",
+			wantType: "spot",
+		},
+		{
+			name:     "bare @2 is spot",
+			coin:     "@2",
+			wantBase: "@2",
+			wantType: "spot",
+		},
+		{
+			name:     "ETH is perp",
+			coin:     "ETH",
+			wantBase: "ETH",
+			wantType: "perp",
+		},
+		{
+			name:     "BTC is perp",
+			coin:     "BTC",
+			wantBase: "BTC",
+			wantType: "perp",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fill := hlFill{
+				Time: 1700000000000,
+				Coin: tt.coin,
+				Side: "B",
+				Px:   "10",
+				Sz:   "1",
+				Fee:  "0",
+				Tid:  1,
+			}
+			trade := transformFill(fill, accountUUID)
+			if trade.BaseAsset != tt.wantBase {
+				t.Errorf("BaseAsset = %q, want %q", trade.BaseAsset, tt.wantBase)
+			}
+			if trade.MarketType != tt.wantType {
+				t.Errorf("MarketType = %q, want %q", trade.MarketType, tt.wantType)
+			}
+		})
+	}
+}
+
+func TestSynthesizePrelaunchOpeningsSkipsBareAtCoins(t *testing.T) {
+	accountUUID := uuid.New()
+
+	// Bare @N coin with sell-only fills and startPosition > 0 — should NOT be synthesized
+	// because @N coins are spot, and their opening comes from spotGenesis deposits.
+	fills := []hlFill{
+		{
+			Time:          1733265316756,
+			Coin:          "@107",
+			Side:          "A",
+			Px:            "25.5",
+			Sz:            "100",
+			Fee:           "0.1",
+			Tid:           123,
+			ClosedPnl:     "500",
+			StartPosition: "200",
+			Dir:           "Sell",
+		},
+	}
+
+	result := synthesizePrelaunchOpenings(fills, accountUUID)
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 fill (no synthesis for bare @N spot coin), got %d", len(result))
+	}
+}
+
+func TestTransformLedgerEntrySpotTransferWithUsdcValue(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xspotval",
+		Delta: hlLedgerDelta{
+			Type:        "spotTransfer",
+			Token:       "HYPE",
+			Amount:      "100.0",
+			Destination: wallet,
+			UsdcValue:   "2500.0",
+		},
+	}
+
+	transfer, price, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer == nil {
+		t.Fatal("expected non-nil transfer")
+	}
+	if transfer.Asset != "HYPE" {
+		t.Errorf("Asset = %q, want HYPE", transfer.Asset)
+	}
+	if transfer.Amount != "100" {
+		t.Errorf("Amount = %q, want 100", transfer.Amount)
+	}
+
+	// Price should be derived: 2500 / 100 = 25
+	if price == nil {
+		t.Fatal("expected price record for spotTransfer with usdcValue")
+	}
+	if price.Price != "25" {
+		t.Errorf("price = %q, want 25 (2500/100)", price.Price)
+	}
+	if price.Asset != "HYPE" {
+		t.Errorf("price asset = %q, want HYPE", price.Asset)
+	}
+	if price.Denomination != "USDC" {
+		t.Errorf("price denomination = %q, want USDC", price.Denomination)
+	}
+	if price.Source != "ledger" {
+		t.Errorf("price source = %q, want ledger", price.Source)
+	}
+}
+
+func TestTransformLedgerEntrySpotTransferWithoutUsdcValue(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xspotnoval",
+		Delta: hlLedgerDelta{
+			Type:        "spotTransfer",
+			Token:       "HYPE",
+			Amount:      "50.0",
+			Destination: wallet,
+		},
+	}
+
+	transfer, price, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer == nil {
+		t.Fatal("expected non-nil transfer")
+	}
+	if price != nil {
+		t.Errorf("expected nil price for spotTransfer without usdcValue, got %+v", price)
+	}
+}
+
+func TestFetchDepositsReturnsPriceRecords(t *testing.T) {
+	entries := []hlLedgerEntry{
+		{
+			Time: 1700000000000,
+			Hash: "0xgenesis1",
+			Delta: hlLedgerDelta{
+				Type:   "spotGenesis",
+				Token:  "PURR",
+				Amount: "1000.0",
+			},
+		},
+		{
+			Time: 1700000001000,
+			Hash: "0xspottx1",
+			Delta: hlLedgerDelta{
+				Type:        "spotTransfer",
+				Token:       "HYPE",
+				Amount:      "50.0",
+				Destination: "0x1234567890abcdef1234567890abcdef12345678",
+				UsdcValue:   "1250.0",
+			},
+		},
+		{
+			Time: 1700000002000,
+			Hash: "0xdeposit1",
+			Delta: hlLedgerDelta{
+				Type: "deposit",
+				Usdc: "5000.0",
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	accountID := uuid.New()
+	account := &models.ExchangeAccount{
+		ID:                accountID.String(),
+		AccountIdentifier: "0x1234567890abcdef1234567890abcdef12345678",
+	}
+
+	transfers, prices, err := c.FetchDeposits(context.Background(), account, time.UnixMilli(1700000000000))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(transfers) != 3 {
+		t.Fatalf("expected 3 transfers, got %d", len(transfers))
+	}
+
+	// Should have 2 price records: spotGenesis (price=0) and spotTransfer (price=25)
+	if len(prices) != 2 {
+		t.Fatalf("expected 2 price records, got %d", len(prices))
+	}
+
+	// First price: spotGenesis PURR at price 0
+	if prices[0].Asset != "PURR" {
+		t.Errorf("prices[0].Asset = %q, want PURR", prices[0].Asset)
+	}
+	if prices[0].Price != "0" {
+		t.Errorf("prices[0].Price = %q, want 0", prices[0].Price)
+	}
+
+	// Second price: spotTransfer HYPE at price 25 (1250/50)
+	if prices[1].Asset != "HYPE" {
+		t.Errorf("prices[1].Asset = %q, want HYPE", prices[1].Asset)
+	}
+	if prices[1].Price != "25" {
+		t.Errorf("prices[1].Price = %q, want 25", prices[1].Price)
 	}
 }

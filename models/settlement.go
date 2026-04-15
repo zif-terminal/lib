@@ -19,6 +19,7 @@ type Settlement struct {
 	Market            string    `json:"market"`        // Perp market that triggered settlement (e.g., "SOL-PERP")
 	Timestamp         time.Time `json:"timestamp"`
 	SettlementID      string    `json:"settlement_id"` // Unique identifier
+	ExternalID        string    `json:"external_id"`   // Native exchange ID for dedup (backfilled from settlement_id)
 }
 
 // UnmarshalJSON custom unmarshaler to handle BIGINT timestamp and NUMERIC amount
@@ -69,6 +70,7 @@ type SettlementInput struct {
 	Market            string    `json:"market"`
 	Timestamp         time.Time `json:"timestamp"`
 	SettlementID      string    `json:"settlement_id"`
+	ExternalID        string    `json:"external_id"` // Native exchange ID for dedup (defaults to settlement_id)
 }
 
 // SettlementFilter represents filtering options for listing settlements

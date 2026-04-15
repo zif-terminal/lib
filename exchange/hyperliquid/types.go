@@ -17,8 +17,9 @@ type hlFill struct {
 	ClosedPnl string `json:"closedPnl"` // Realized PnL on this fill
 	Hash      string `json:"hash"`      // Transaction hash
 	StartPosition string `json:"startPosition"` // Position before fill
-	Dir       string `json:"dir"`       // Direction description
+	Dir       string `json:"dir"`       // Direction description (e.g., "Open Long", "Close Short", "Sell", "Spot Dust Conversion")
 	Oid       int64  `json:"oid"`       // Order ID
+	FeeToken  string `json:"feeToken"`  // Fee denomination token
 }
 
 // hlFundingEntry represents a single funding payment from Hyperliquid API
@@ -50,13 +51,16 @@ type hlLedgerEntry struct {
 
 // hlLedgerDelta holds the details of a ledger update
 type hlLedgerDelta struct {
-	Type    string `json:"type"`    // "deposit", "withdraw", "internalTransfer", etc.
-	Usdc    string `json:"usdc"`    // USDC amount (string)
-	Amount  string `json:"amount"`  // Amount (sometimes used instead of usdc)
-	Token   string `json:"token"`   // Token name (for non-USDC)
-	Fee     string `json:"fee"`     // Fee (if applicable)
-	Nonce   int64  `json:"nonce"`   // Nonce
-	Destination string `json:"destination"` // Destination address (for withdrawals)
+	Type        string `json:"type"`        // "deposit", "withdraw", "internalTransfer", "spotTransfer", etc.
+	Usdc        string `json:"usdc"`        // USDC amount (string)
+	Amount      string `json:"amount"`      // Amount (sometimes used instead of usdc)
+	Token       string `json:"token"`       // Token name (for non-USDC)
+	Fee         string `json:"fee"`         // Fee (if applicable)
+	Nonce       int64  `json:"nonce"`       // Nonce
+	Destination string `json:"destination"` // Destination address (for withdrawals/spotTransfer)
+	User        string `json:"user"`        // Source user address (for spotTransfer outbound)
+	ToPerp      bool   `json:"toPerp"`      // Direction for accountClassTransfer (true = spot→perp)
+	UsdcValue   string `json:"usdcValue"`   // USDC value of spot transfer (for price derivation)
 }
 
 // hlClearinghouseState represents the clearinghouse state for a user
