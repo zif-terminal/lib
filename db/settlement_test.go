@@ -261,3 +261,57 @@ func TestClient_GetLatestSettlement_NotFound(t *testing.T) {
 		t.Errorf("Expected nil, got %v", settlement)
 	}
 }
+
+func TestClient_GetSettlementsByIDs(t *testing.T) {
+	ctx := context.Background()
+	id1 := uuid.New()
+	accountID := uuid.New()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"settlements": []map[string]interface{}{
+					{
+						"id":                  id1.String(),
+						"exchange_account_id": accountID.String(),
+						"asset":               "USDC",
+						"amount":              "500",
+						"market":              "SOL-PERP",
+						"timestamp":           time.Now().UnixMilli(),
+						"settlement_id":       "settle-1",
+					},
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	settlements, err := client.GetSettlementsByIDs(ctx, []uuid.UUID{id1})
+	if err != nil {
+		t.Fatalf("GetSettlementsByIDs failed: %v", err)
+	}
+	if len(settlements) != 1 {
+		t.Fatalf("Expected 1 settlement, got %d", len(settlements))
+	}
+}
+
+func TestClient_GetSettlementsByIDs_Empty(t *testing.T) {
+	ctx := context.Background()
+	client := NewClientWithGraphQL(&mockGraphQLClient{}, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+	settlements, err := client.GetSettlementsByIDs(ctx, []uuid.UUID{})
+	if err != nil {
+		t.Fatalf("GetSettlementsByIDs failed: %v", err)
+	}
+	if len(settlements) != 0 {
+		t.Fatalf("Expected 0 settlements, got %d", len(settlements))
+	}
+}

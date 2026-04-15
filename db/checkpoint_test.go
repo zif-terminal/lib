@@ -203,3 +203,50 @@ func TestProcessorCheckpoint_UnmarshalJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestClient_DeleteCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	accountID := uuid.New()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"delete_processor_checkpoints_by_pk": map[string]interface{}{
+					"exchange_account_id": accountID.String(),
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	err := client.DeleteCheckpoint(ctx, accountID)
+	if err != nil {
+		t.Fatalf("DeleteCheckpoint failed: %v", err)
+	}
+}
+
+func TestClient_DeleteCheckpoint_Error(t *testing.T) {
+	ctx := context.Background()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			return fmt.Errorf("connection refused")
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	err := client.DeleteCheckpoint(ctx, uuid.New())
+	if err == nil {
+		t.Fatal("Expected error")
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/machinebox/graphql"
 	"github.com/zif-terminal/lib/models"
 )
@@ -473,5 +474,83 @@ func TestClient_UpdateWalletLastDetected_NotFound(t *testing.T) {
 	}
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("Expected ErrNotFound, got: %v", err)
+	}
+}
+
+func TestClient_UpdateWalletTags(t *testing.T) {
+	ctx := context.Background()
+	walletID := uuid.New().String()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"update_wallets_by_pk": map[string]interface{}{
+					"id":   walletID,
+					"tags": []string{"active", "monitored"},
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	err := client.UpdateWalletTags(ctx, walletID, []string{"active", "monitored"})
+	if err != nil {
+		t.Fatalf("UpdateWalletTags failed: %v", err)
+	}
+}
+
+func TestClient_UpdateWalletTags_NotFound(t *testing.T) {
+	ctx := context.Background()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"update_wallets_by_pk": nil,
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	err := client.UpdateWalletTags(ctx, "nonexistent", []string{"test"})
+	if err == nil {
+		t.Fatal("Expected error for non-existent wallet")
+	}
+}
+
+func TestClient_VerifyWalletByDetection(t *testing.T) {
+	ctx := context.Background()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"update_wallets": map[string]interface{}{
+					"affected_rows": 1,
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	err := client.VerifyWalletByDetection(ctx, uuid.New().String())
+	if err != nil {
+		t.Fatalf("VerifyWalletByDetection failed: %v", err)
 	}
 }
