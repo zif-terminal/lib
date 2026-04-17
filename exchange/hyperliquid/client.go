@@ -550,11 +550,10 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		}
 
 	case "internaltransfer":
-		amount := cleanDecimal(entry.Delta.Usdc)
-		if strings.HasPrefix(amount, "-") {
-			transferType = models.TypeWithdraw
-		} else {
+		if strings.EqualFold(entry.Delta.Destination, walletAddress) {
 			transferType = models.TypeDeposit
+		} else {
+			transferType = models.TypeWithdraw
 		}
 		asset = "USDC"
 		amountStr = entry.Delta.Usdc
@@ -590,14 +589,18 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		amountStr = entry.Delta.Usdc
 
 	case "send":
-		amount := cleanDecimal(entry.Delta.Usdc)
-		if strings.HasPrefix(amount, "-") {
-			transferType = models.TypeWithdraw
-		} else {
+		if strings.EqualFold(entry.Delta.Destination, walletAddress) {
 			transferType = models.TypeDeposit
+		} else {
+			transferType = models.TypeWithdraw
 		}
-		asset = "USDC"
-		amountStr = entry.Delta.Usdc
+		if entry.Delta.Token != "" {
+			asset = entry.Delta.Token
+			amountStr = entry.Delta.Amount
+		} else {
+			asset = "USDC"
+			amountStr = entry.Delta.Usdc
+		}
 
 	case "liquidation":
 		// Informational only — no cash flow. Intentionally skipped.
