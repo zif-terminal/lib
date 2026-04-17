@@ -4,8 +4,8 @@ package hyperliquid
 // Base URL: https://api.hyperliquid.xyz/info (POST with JSON body)
 
 // hlFill represents a single trade fill from Hyperliquid API
-// Request: {"type": "userFills", "user": "0x..."}
-// or with pagination: {"type": "userFills", "user": "0x...", "startTime": 1234567890000}
+// Request: {"type": "userFillsByTime", "user": "0x...", "startTime": 1234567890000}
+// Returns fills sorted by timestamp ascending (oldest first).
 type hlFill struct {
 	Time      int64  `json:"time"`      // Unix milliseconds
 	Coin      string `json:"coin"`      // e.g., "ETH" for perp, "ETH-SPOT" for spot

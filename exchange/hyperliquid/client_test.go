@@ -559,12 +559,141 @@ func TestTransformLedgerEntry(t *testing.T) {
 		}
 	})
 
+	t.Run("vaultLeaderCommission", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xvlc",
+			Delta: hlLedgerDelta{
+				Type: "vaultLeaderCommission",
+				Usdc: "88.403549",
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeReward {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeReward)
+		}
+		if transfer.Asset != "USDC" {
+			t.Errorf("Asset = %q, want USDC", transfer.Asset)
+		}
+		if transfer.Amount != "88.403549" {
+			t.Errorf("Amount = %q, want 88.403549", transfer.Amount)
+		}
+	})
+
+	t.Run("rewardsClaim", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xrc",
+			Delta: hlLedgerDelta{
+				Type: "rewardsClaim",
+				Usdc: "50.0",
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeReward {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeReward)
+		}
+		if transfer.Asset != "USDC" {
+			t.Errorf("Asset = %q, want USDC", transfer.Asset)
+		}
+		if transfer.Amount != "50" {
+			t.Errorf("Amount = %q, want 50", transfer.Amount)
+		}
+	})
+
+	t.Run("send outgoing", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xsendout",
+			Delta: hlLedgerDelta{
+				Type: "send",
+				Usdc: "-100.0",
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeWithdraw {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeWithdraw)
+		}
+		if transfer.Asset != "USDC" {
+			t.Errorf("Asset = %q, want USDC", transfer.Asset)
+		}
+		if transfer.Amount != "100" {
+			t.Errorf("Amount = %q, want 100", transfer.Amount)
+		}
+	})
+
+	t.Run("send incoming", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xsendin",
+			Delta: hlLedgerDelta{
+				Type: "send",
+				Usdc: "200.0",
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeDeposit {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeDeposit)
+		}
+		if transfer.Asset != "USDC" {
+			t.Errorf("Asset = %q, want USDC", transfer.Asset)
+		}
+		if transfer.Amount != "200" {
+			t.Errorf("Amount = %q, want 200", transfer.Amount)
+		}
+	})
+
+	t.Run("liquidation skipped", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xliq",
+			Delta: hlLedgerDelta{
+				Type: "liquidation",
+				Usdc: "100.00",
+			},
+		}
+		transfer, price, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer != nil {
+			t.Error("expected nil transfer for liquidation")
+		}
+		if price != nil {
+			t.Error("expected nil price for liquidation")
+		}
+	})
+
 	t.Run("unknown type returns error", func(t *testing.T) {
 		entry := hlLedgerEntry{
 			Time: 1700000000000,
 			Hash: "0xunknown",
 			Delta: hlLedgerDelta{
-				Type: "liquidation",
+				Type: "futureUnknownType",
 				Usdc: "100.00",
 			},
 		}
@@ -1056,7 +1185,7 @@ func spotMetaHandler() http.HandlerFunc {
 					{"name": "@1", "tokens": []int{2, 0}, "index": 1, "isCanonical": false},
 				},
 			})
-		case "userFills":
+		case "userFillsByTime":
 			json.NewEncoder(w).Encode([]hlFill{
 				{
 					Time: 1700000000000,

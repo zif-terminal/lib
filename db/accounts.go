@@ -347,3 +347,66 @@ func (c *Client) UpdateAccountLastSynced(ctx context.Context, accountID string) 
 
 	return nil
 }
+
+// SetAccountSyncError records a sync error message on the exchange account.
+func (c *Client) SetAccountSyncError(ctx context.Context, accountID string, errorMsg string) error {
+	query := `
+		mutation SetAccountSyncError($id: uuid!, $last_sync_error: String!) {
+			update_exchange_accounts_by_pk(pk_columns: {id: $id}, _set: {last_sync_error: $last_sync_error}) {
+				id
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id":              accountID,
+		"last_sync_error": errorMsg,
+	})
+
+	var resp struct {
+		UpdateExchangeAccountsByPk *struct {
+			ID string `json:"id"`
+		} `json:"update_exchange_accounts_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to set account sync error: %w", err)
+	}
+
+	if resp.UpdateExchangeAccountsByPk == nil {
+		return notFoundError("account", accountID)
+	}
+
+	return nil
+}
+
+// ClearAccountSyncError clears any sync error on the exchange account.
+func (c *Client) ClearAccountSyncError(ctx context.Context, accountID string) error {
+	query := `
+		mutation ClearAccountSyncError($id: uuid!) {
+			update_exchange_accounts_by_pk(pk_columns: {id: $id}, _set: {last_sync_error: null}) {
+				id
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id": accountID,
+	})
+
+	var resp struct {
+		UpdateExchangeAccountsByPk *struct {
+			ID string `json:"id"`
+		} `json:"update_exchange_accounts_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to clear account sync error: %w", err)
+	}
+
+	if resp.UpdateExchangeAccountsByPk == nil {
+		return notFoundError("account", accountID)
+	}
+
+	return nil
+}

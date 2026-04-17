@@ -35,7 +35,7 @@ func (c *Client) fetchAllFills(ctx context.Context, user string, since time.Time
 		}
 
 		req := map[string]interface{}{
-			"type":      "userFills",
+			"type":      "userFillsByTime",
 			"user":      user,
 			"startTime": startTime,
 		}

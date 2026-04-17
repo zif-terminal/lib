@@ -2,10 +2,23 @@ package drift
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 )
+
+// HTTPStatusError is returned when the Drift API returns a non-200 status code.
+// It carries the status code so callers can distinguish e.g. 400 from 500.
+type HTTPStatusError struct {
+	StatusCode int
+	Status     string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("API returned status %d: %s", e.StatusCode, e.Status)
+}
 
 // pageResult holds items from a single page plus the next page token
 type pageResult[T any] struct {
@@ -68,6 +81,11 @@ func fetchHistorical[T any](
 	current := time.Date(since.Year(), since.Month(), 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(recentWindowStart.Year(), recentWindowStart.Month(), 1, 0, 0, 0, 0, time.UTC)
 
+	// Track whether we've received any data from historical months.
+	// Sequential 400s before any data means the account didn't exist yet.
+	// Once data arrives, a 400 is a real data gap.
+	hasReceivedData := false
+
 	for !current.After(end) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -78,8 +96,15 @@ func fetchHistorical[T any](
 
 		monthItems, err := fetchAllPages(ctx, monthURL, fetcher)
 		if err != nil {
-			// A failed month is a real data gap — fail loud rather than silently
-			// losing a slice of the historical record.
+			var httpErr *HTTPStatusError
+			if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusBadRequest && !hasReceivedData {
+				// Account likely didn't exist yet — skip this month
+				log.Printf("drift/%s: skipping %d/%d (400, account likely didn't exist yet) | account=%s",
+					endpoint, current.Year(), int(current.Month()), accountID)
+				current = current.AddDate(0, 1, 0)
+				continue
+			}
+			// Real error — either non-400, or 400 after we've already gotten data
 			return nil, fmt.Errorf("drift/%s: historical fetch failed for %d/%d (account=%s): %w",
 				endpoint, current.Year(), int(current.Month()), accountID, err)
 		}
@@ -94,6 +119,10 @@ func fetchHistorical[T any](
 				}
 			}
 			monthItems = filtered
+		}
+
+		if len(monthItems) > 0 {
+			hasReceivedData = true
 		}
 
 		all = append(all, monthItems...)

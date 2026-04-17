@@ -579,6 +579,30 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		// Skip until we understand the full vault withdrawal flow
 		return nil, nil, nil
 
+	case "vaultleadercommission":
+		transferType = models.TypeReward
+		asset = "USDC"
+		amountStr = entry.Delta.Usdc
+
+	case "rewardsclaim":
+		transferType = models.TypeReward
+		asset = "USDC"
+		amountStr = entry.Delta.Usdc
+
+	case "send":
+		amount := cleanDecimal(entry.Delta.Usdc)
+		if strings.HasPrefix(amount, "-") {
+			transferType = models.TypeWithdraw
+		} else {
+			transferType = models.TypeDeposit
+		}
+		asset = "USDC"
+		amountStr = entry.Delta.Usdc
+
+	case "liquidation":
+		// Informational only — no cash flow. Intentionally skipped.
+		return nil, nil, nil
+
 	default:
 		return nil, nil, fmt.Errorf("hyperliquid: unknown ledger delta type %q for entry at timestamp=%d hash=%s", deltaType, entry.Time, entry.Hash)
 	}

@@ -164,6 +164,22 @@ func (c *Client) FetchTrades(
 	// Combine trades and swaps
 	allResults := append(tradeResults, swapResults...)
 
+	// Deduplicate by trade_id + base_asset + market_type before returning —
+	// the Drift API can return the same record more than once across the
+	// historical/recent boundary. The key must match the DB unique constraint
+	// (trade_id, exchange_account_id, base_asset, market_type).
+	seenTrades := make(map[string]bool, len(allResults))
+	dedupedResults := make([]tradeWithPrices, 0, len(allResults))
+	for _, r := range allResults {
+		key := fmt.Sprintf("%s_%s_%s", r.trade.TradeID, r.trade.BaseAsset, r.trade.MarketType)
+		if seenTrades[key] {
+			continue
+		}
+		seenTrades[key] = true
+		dedupedResults = append(dedupedResults, r)
+	}
+	allResults = dedupedResults
+
 	// Sort by timestamp (oldest first)
 	sort.Slice(allResults, func(i, j int) bool {
 		return allResults[i].trade.Timestamp.Before(allResults[j].trade.Timestamp)
@@ -213,6 +229,21 @@ func (c *Client) FetchFundingPayments(
 		return nil, err
 	}
 
+	// Deduplicate by external_id before returning — the Drift API can return
+	// the same funding payment more than once.
+	seenFunding := make(map[string]bool, len(payments))
+	dedupedPayments := make([]*models.TransferInput, 0, len(payments))
+	for _, p := range payments {
+		if p.ExternalID != "" && seenFunding[p.ExternalID] {
+			continue
+		}
+		if p.ExternalID != "" {
+			seenFunding[p.ExternalID] = true
+		}
+		dedupedPayments = append(dedupedPayments, p)
+	}
+	payments = dedupedPayments
+
 	// Sort by timestamp (oldest first)
 	sort.Slice(payments, func(i, j int) bool {
 		return payments[i].Timestamp.Before(payments[j].Timestamp)
@@ -260,6 +291,22 @@ func (c *Client) FetchDeposits(
 		return nil, nil, err
 	}
 
+	// Deduplicate by external_id before returning — the Drift API can return
+	// the same deposit record more than once (within a single month archive or
+	// across the historical/recent boundary).
+	seen := make(map[string]bool, len(results))
+	deduped := make([]depositWithPrice, 0, len(results))
+	for _, r := range results {
+		if r.transfer.ExternalID != "" && seen[r.transfer.ExternalID] {
+			continue
+		}
+		if r.transfer.ExternalID != "" {
+			seen[r.transfer.ExternalID] = true
+		}
+		deduped = append(deduped, r)
+	}
+	results = deduped
+
 	// Sort by timestamp (oldest first)
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].transfer.Timestamp.Before(results[j].transfer.Timestamp)
@@ -289,7 +336,7 @@ func (c *Client) createTradePageFetcher(accountUUID uuid.UUID) pageFetcher[trade
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return pageResult[tradeWithPrices]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+			return pageResult[tradeWithPrices]{}, &HTTPStatusError{StatusCode: resp.StatusCode, Status: resp.Status}
 		}
 
 		var response driftTradesResponse
@@ -338,7 +385,7 @@ func (c *Client) createSwapPageFetcher(accountUUID uuid.UUID) pageFetcher[tradeW
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return pageResult[tradeWithPrices]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+			return pageResult[tradeWithPrices]{}, &HTTPStatusError{StatusCode: resp.StatusCode, Status: resp.Status}
 		}
 
 		var response driftSwapsResponse
@@ -383,7 +430,7 @@ func (c *Client) createFundingPageFetcher(accountUUID uuid.UUID) pageFetcher[*mo
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return pageResult[*models.TransferInput]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+			return pageResult[*models.TransferInput]{}, &HTTPStatusError{StatusCode: resp.StatusCode, Status: resp.Status}
 		}
 
 		var response driftFundingResponse
@@ -428,7 +475,7 @@ func (c *Client) createDepositPageFetcher(accountUUID uuid.UUID) pageFetcher[dep
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return pageResult[depositWithPrice]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+			return pageResult[depositWithPrice]{}, &HTTPStatusError{StatusCode: resp.StatusCode, Status: resp.Status}
 		}
 
 		var response driftDepositsResponse
@@ -491,8 +538,17 @@ func (c *Client) FetchSettlements(
 		return nil, err
 	}
 
+	// Deduplicate records by settlement_id before returning — the Drift API
+	// can return the same settlePnl record more than once.
+	seenSettlements := make(map[string]bool, len(records))
 	settlements := make([]*models.Settlement, 0, len(records))
 	for _, r := range records {
+		sid := settlementID(r)
+		if seenSettlements[sid] {
+			continue
+		}
+		seenSettlements[sid] = true
+
 		// Resolve market index to symbol
 		marketInfo, err := c.getMarketInfo(ctx, r.MarketIndex, "perp")
 		market := fmt.Sprintf("%d", r.MarketIndex)
@@ -500,7 +556,6 @@ func (c *Client) FetchSettlements(
 			market = marketInfo.Symbol
 		}
 
-		sid := settlementID(r)
 		settlements = append(settlements, &models.Settlement{
 			ExchangeAccountID: accountUUID,
 			Asset:             "USDC",
@@ -555,7 +610,7 @@ func (c *Client) createSettlePnlPageFetcher() pageFetcher[settlePnlRecord] {
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return pageResult[settlePnlRecord]{}, fmt.Errorf("API returned status %d: %s", resp.StatusCode, resp.Status)
+			return pageResult[settlePnlRecord]{}, &HTTPStatusError{StatusCode: resp.StatusCode, Status: resp.Status}
 		}
 
 		var response driftSettlePnlResponse

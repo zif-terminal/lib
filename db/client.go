@@ -164,6 +164,8 @@ type DBClient interface {
 
 	// Sync timestamp methods
 	UpdateAccountLastSynced(ctx context.Context, accountID string) error
+	SetAccountSyncError(ctx context.Context, accountID string, errorMsg string) error
+	ClearAccountSyncError(ctx context.Context, accountID string) error
 
 	// Event value methods
 	ListSupportedDenominations(ctx context.Context) ([]string, error)
