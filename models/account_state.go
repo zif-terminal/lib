@@ -24,14 +24,28 @@ type FundingEntry struct {
 	Timestamp   int64     `json:"timestamp"` // Unix ms
 }
 
+// PendingFundingEntry tracks a funding event waiting for a matching perp position to open.
+// Held in-memory only; NOT persisted to the checkpoint. At the end of a processor run,
+// any remaining entries indicate a fail-loud error — funding could not be matched.
+type PendingFundingEntry struct {
+	EventID   uuid.UUID
+	Market    string
+	Amount    string
+	Timestamp int64
+}
+
 // AccountState represents the in-memory state of an account.
 // Built by processing all transactions chronologically.
 type AccountState struct {
-	Assets          map[string]*AssetState        `json:"assets"`
-	Positions       map[string]*PositionState     `json:"positions"`        // Open positions keyed by "marketType:baseAsset"
-	ClosedPositions []*PositionState              `json:"closed_positions"`
-	Trading         map[string]*TradingState      `json:"trading"`          // Keyed by quote asset (e.g., "USDC", "SOL")
-	HasSeenSnapshot bool                          `json:"has_seen_snapshot"` // True after first snapshot baseline applied
+	Assets          map[string]*AssetState    `json:"assets"`
+	Positions       map[string]*PositionState `json:"positions"` // Open positions keyed by "marketType:baseAsset"
+	ClosedPositions []*PositionState          `json:"closed_positions"`
+	Trading         map[string]*TradingState  `json:"trading"`           // Keyed by quote asset (e.g., "USDC", "SOL")
+	HasSeenSnapshot bool                      `json:"has_seen_snapshot"` // True after first snapshot baseline applied
+	// PendingFunding is an in-memory buffer for funding events whose matching perp position
+	// has not yet been opened. Flushed when the matching position opens. Not JSON-serialized —
+	// the processor fails loudly at the end of the run if this buffer is non-empty.
+	PendingFunding []PendingFundingEntry `json:"-"`
 }
 
 // AssetState tracks the state of a single asset (USDC, SOL, etc.)
@@ -45,20 +59,26 @@ type AssetState struct {
 
 // PositionState tracks in-memory position state (perp or spot), open or closed.
 // A position is closed when EndTime > 0.
+//
+// The EventEntries slice is the immutable history of ENTRY events (deposits,
+// buys on the current side, interest credits, etc.) for the position. It is
+// never shrunk by FIFO consumption — instead, the running "available for
+// matching" quantity is computed as (sum(EventEntries) - sum(ExitEntries)),
+// which equals the Quantity field. ExitEntries is the immutable history of
+// EXIT events (withdrawals, opposite-side trades, fees) that have been
+// matched against the entries via FIFO. Both slices are written to the DB
+// as position_events rows (direction=entry vs direction=exit).
 type PositionState struct {
 	Market             string         `json:"market"`              // e.g., "SOL" or "SOL-PERP"
 	MarketType         string         `json:"market_type"`         // "perp" or "spot"
 	Side               string         `json:"side"`                // "long" or "short"
 	Quantity           string         `json:"quantity"`            // Current position size (0 when closed)
-	TotalFees          string         `json:"total_fees"`          // Accumulated fees
-	CumulativeFunding  string         `json:"cumulative_funding"`  // Funding paid/received for this position
 	ContributingTrades []string       `json:"contributing_trades"` // Exchange trade IDs
-	EventEntries       []EventEntry   `json:"event_entries"`       // Per-event qty for FIFO allocation
+	EventEntries       []EventEntry   `json:"event_entries"`       // Immutable history of entry events
+	ExitEntries        []EventEntry   `json:"exit_entries,omitempty"` // Immutable history of exit events
 	FundingEntries     []FundingEntry `json:"funding_entries"`     // Individual funding payments
 	StartTime          int64          `json:"start_time"`          // Unix ms
 	EndTime            int64          `json:"end_time,omitempty"`  // Unix ms, 0 = still open
-	ExitEventID        uuid.UUID      `json:"exit_event_id,omitempty"`    // DB UUID of closing event
-	ExitEventType      string         `json:"exit_event_type,omitempty"`  // "trade", "interest", "transfer", etc.
 }
 
 // IsClosed returns true if the position has been fully closed

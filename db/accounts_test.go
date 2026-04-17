@@ -142,7 +142,7 @@ func TestClient_ListAccounts(t *testing.T) {
 		AdminSecret: "test-secret",
 	})
 
-	accounts, err := client.ListAccounts(ctx)
+	accounts, err := client.ListAccounts(ctx, AccountListFilter{})
 	if err != nil {
 		t.Fatalf("ListAccounts failed: %v", err)
 	}

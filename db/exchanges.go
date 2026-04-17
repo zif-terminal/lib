@@ -21,6 +21,7 @@ func (c *Client) GetExchange(ctx context.Context, id string) (*Exchange, error) 
 				id
 				name
 				display_name
+				settles_on_close
 			}
 		}
 	`
@@ -52,6 +53,7 @@ func (c *Client) ListExchanges(ctx context.Context) ([]*Exchange, error) {
 				id
 				name
 				display_name
+				settles_on_close
 			}
 		}
 	`
@@ -80,6 +82,7 @@ func (c *Client) CreateExchange(ctx context.Context, input *ExchangeInput) (*Exc
 				id
 				name
 				display_name
+				settles_on_close
 			}
 		}
 	`
@@ -115,6 +118,7 @@ func (c *Client) UpdateExchange(ctx context.Context, id string, input *ExchangeI
 				id
 				name
 				display_name
+				settles_on_close
 			}
 		}
 	`

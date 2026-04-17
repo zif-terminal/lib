@@ -145,6 +145,51 @@ func TestClient_GetNearestPrice(t *testing.T) {
 	}
 }
 
+func TestClient_GetNearestPrice_StringifiedTimestamp(t *testing.T) {
+	ctx := context.Background()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			// HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true returns bigint as string
+			respData := map[string]interface{}{
+				"price_cache": []map[string]interface{}{
+					{
+						"asset":        "mSOL",
+						"denomination": "USDC",
+						"timestamp":    "1700000003000",
+						"price":        "150.25",
+						"source":       "drift",
+					},
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	price, err := client.GetNearestPrice(ctx, "mSOL", "USDC", 1700000003000, 10000)
+	if err != nil {
+		t.Fatalf("GetNearestPrice failed: %v", err)
+	}
+
+	if price == nil {
+		t.Fatal("Expected a price, got nil")
+	}
+
+	if price.Timestamp != 1700000003000 {
+		t.Errorf("Expected timestamp 1700000003000, got %d", price.Timestamp)
+	}
+
+	if price.Price != "150.25" {
+		t.Errorf("Expected price 150.25, got %s", price.Price)
+	}
+}
+
 func TestClient_GetNearestPrice_NoResult(t *testing.T) {
 	ctx := context.Background()
 

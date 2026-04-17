@@ -14,6 +14,14 @@ type ExchangeAccount = models.ExchangeAccount
 // ExchangeAccountInput represents exchange account input for mutations (aliased from models package)
 type ExchangeAccountInput = models.ExchangeAccountInput
 
+// AccountListFilter controls which accounts ListAccounts returns.
+// Nil fields mean "don't filter on this flag". When both are nil, all
+// accounts are returned.
+type AccountListFilter struct {
+	SyncEnabled       *bool
+	ProcessingEnabled *bool
+}
+
 // GetAccount retrieves a single exchange account by ID
 func (c *Client) GetAccount(ctx context.Context, id string) (*ExchangeAccount, error) {
 	query := `
@@ -23,10 +31,14 @@ func (c *Client) GetAccount(ctx context.Context, id string) (*ExchangeAccount, e
 				account_identifier
 				account_type
 				account_type_metadata
+				status
+				sync_enabled
+				processing_enabled
 				exchange {
 					id
 					name
 					display_name
+					settles_on_close
 				}
 			}
 		}
@@ -51,25 +63,40 @@ func (c *Client) GetAccount(ctx context.Context, id string) (*ExchangeAccount, e
 	return resp.ExchangeAccountsByPk, nil
 }
 
-// ListAccounts retrieves all exchange accounts
-func (c *Client) ListAccounts(ctx context.Context) ([]*ExchangeAccount, error) {
+// ListAccounts retrieves exchange accounts matching the given filter.
+// Pass AccountListFilter{} to get all accounts.
+func (c *Client) ListAccounts(ctx context.Context, f AccountListFilter) ([]*ExchangeAccount, error) {
+	where := map[string]interface{}{}
+	if f.SyncEnabled != nil {
+		where["sync_enabled"] = map[string]interface{}{"_eq": *f.SyncEnabled}
+	}
+	if f.ProcessingEnabled != nil {
+		where["processing_enabled"] = map[string]interface{}{"_eq": *f.ProcessingEnabled}
+	}
+
 	query := `
-		query ListAccounts {
-			exchange_accounts {
+		query ListAccounts($where: exchange_accounts_bool_exp!) {
+			exchange_accounts(where: $where) {
 				id
 				account_identifier
 				account_type
 				account_type_metadata
+				status
+				sync_enabled
+				processing_enabled
 				exchange {
 					id
 					name
 					display_name
+					settles_on_close
 				}
 			}
 		}
 	`
 
-	req := c.graphqlRequest(query)
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"where": where,
+	})
 
 	var resp struct {
 		ExchangeAccounts []*ExchangeAccount `json:"exchange_accounts"`
@@ -312,6 +339,69 @@ func (c *Client) UpdateAccountLastSynced(ctx context.Context, accountID string) 
 
 	if err := c.execute(ctx, req, &resp); err != nil {
 		return fmt.Errorf("failed to update account last_synced_at: %w", err)
+	}
+
+	if resp.UpdateExchangeAccountsByPk == nil {
+		return notFoundError("account", accountID)
+	}
+
+	return nil
+}
+
+// SetAccountSyncError records a sync error message on the exchange account.
+func (c *Client) SetAccountSyncError(ctx context.Context, accountID string, errorMsg string) error {
+	query := `
+		mutation SetAccountSyncError($id: uuid!, $last_sync_error: String!) {
+			update_exchange_accounts_by_pk(pk_columns: {id: $id}, _set: {last_sync_error: $last_sync_error}) {
+				id
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id":              accountID,
+		"last_sync_error": errorMsg,
+	})
+
+	var resp struct {
+		UpdateExchangeAccountsByPk *struct {
+			ID string `json:"id"`
+		} `json:"update_exchange_accounts_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to set account sync error: %w", err)
+	}
+
+	if resp.UpdateExchangeAccountsByPk == nil {
+		return notFoundError("account", accountID)
+	}
+
+	return nil
+}
+
+// ClearAccountSyncError clears any sync error on the exchange account.
+func (c *Client) ClearAccountSyncError(ctx context.Context, accountID string) error {
+	query := `
+		mutation ClearAccountSyncError($id: uuid!) {
+			update_exchange_accounts_by_pk(pk_columns: {id: $id}, _set: {last_sync_error: null}) {
+				id
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id": accountID,
+	})
+
+	var resp struct {
+		UpdateExchangeAccountsByPk *struct {
+			ID string `json:"id"`
+		} `json:"update_exchange_accounts_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to clear account sync error: %w", err)
 	}
 
 	if resp.UpdateExchangeAccountsByPk == nil {

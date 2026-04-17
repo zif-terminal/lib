@@ -17,6 +17,7 @@ const (
 	TypeInterest  = "interest"
 	TypeReward    = "reward"
 	TypeFunding   = "funding"
+	TypeFee       = "fee"
 )
 
 // Transfer represents a unified transfer event (deposit, withdrawal, interest, etc.)
@@ -28,6 +29,7 @@ type Transfer struct {
 	Asset             string    `json:"asset"`
 	Amount            string    `json:"amount"` // Always positive; direction determined by Type
 	Timestamp         time.Time `json:"timestamp"`
+	ExternalID        string    `json:"external_id,omitempty"` // Native exchange ID for dedup (e.g., payment_id, tx hash)
 	Metadata          map[string]string `json:"metadata,omitempty"`  // Extensible metadata (e.g., market, payment_id for funding)
 }
 
@@ -43,6 +45,7 @@ type TransferInput struct {
 	Asset             string    `json:"asset"`
 	Amount            string    `json:"amount"`
 	Timestamp         time.Time `json:"timestamp"`
+	ExternalID        string    `json:"external_id,omitempty"` // Native exchange ID for dedup
 	Metadata          map[string]string `json:"metadata,omitempty"`
 }
 

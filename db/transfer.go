@@ -100,10 +100,21 @@ func (c *Client) GetTransfersByIDs(ctx context.Context, ids []uuid.UUID) ([]*Tra
 }
 
 // AddTransfers inserts transfer records into the transfers table.
-// Uses ON CONFLICT DO NOTHING to avoid duplicates.
+// Duplicates raise a unique-constraint violation and must be handled by callers —
+// silent ON CONFLICT tolerance is a bug magnet at the re-sync cursor boundary.
+//
+// Before inserting, upgrades any existing rows that have external_id = '' to
+// the real external_id when the base columns (exchange_account_id, type, asset,
+// timestamp) match. This prevents duplicates when the same transfer was
+// originally synced without an external_id and later re-synced with one.
 func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*Transfer, error) {
 	if len(inputs) == 0 {
 		return []*Transfer{}, nil
+	}
+
+	// Upgrade empty external_ids on existing rows before inserting.
+	if err := c.upgradeTransferExternalIDs(ctx, inputs); err != nil {
+		return nil, fmt.Errorf("failed to upgrade transfer external IDs: %w", err)
 	}
 
 	objects := make([]map[string]interface{}, len(inputs))
@@ -115,6 +126,9 @@ func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*
 			"amount":              input.Amount,
 			"timestamp":           input.Timestamp.UnixMilli(),
 		}
+		if input.ExternalID != "" {
+			obj["external_id"] = input.ExternalID
+		}
 		if len(input.Metadata) > 0 {
 			obj["metadata"] = input.Metadata
 		}
@@ -123,7 +137,7 @@ func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*
 
 	query := `
 		mutation AddTransfers($objects: [transfers_insert_input!]!) {
-			insert_transfers(objects: $objects, on_conflict: {constraint: idx_transfers_unique, update_columns: []}) {
+			insert_transfers(objects: $objects) {
 				returning {
 					id
 					exchange_account_id
@@ -131,6 +145,7 @@ func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*
 					asset
 					amount
 					timestamp
+					external_id
 					metadata
 				}
 			}
@@ -152,6 +167,62 @@ func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*
 	}
 
 	return resp.InsertTransfers.Returning, nil
+}
+
+// upgradeTransferExternalIDs updates existing transfers that have external_id = ''
+// to the real external_id when all base columns match. This is done one at a time
+// since each transfer has a unique external_id value. Only inputs with non-empty
+// ExternalID are processed.
+func (c *Client) upgradeTransferExternalIDs(ctx context.Context, inputs []*TransferInput) error {
+	for _, input := range inputs {
+		if input.ExternalID == "" {
+			continue
+		}
+
+		query := `
+			mutation UpgradeTransferExternalID(
+				$account_id: uuid!,
+				$type: String!,
+				$asset: String!,
+				$ts: bigint!,
+				$external_id: String!
+			) {
+				update_transfers(
+					where: {
+						exchange_account_id: { _eq: $account_id }
+						type: { _eq: $type }
+						asset: { _eq: $asset }
+						timestamp: { _eq: $ts }
+						external_id: { _eq: "" }
+					}
+					_set: { external_id: $external_id }
+				) {
+					affected_rows
+				}
+			}
+		`
+
+		req := c.graphqlRequestWithVars(query, map[string]interface{}{
+			"account_id":  input.ExchangeAccountID.String(),
+			"type":        input.Type,
+			"asset":       input.Asset,
+			"ts":          input.Timestamp.UnixMilli(),
+			"external_id": input.ExternalID,
+		})
+
+		var resp struct {
+			UpdateTransfers struct {
+				AffectedRows int `json:"affected_rows"`
+			} `json:"update_transfers"`
+		}
+
+		if err := c.execute(ctx, req, &resp); err != nil {
+			return fmt.Errorf("failed to upgrade external_id for transfer %s/%s/%s: %w",
+				input.Type, input.Asset, input.ExternalID, err)
+		}
+	}
+
+	return nil
 }
 
 // DeleteTransfersByAccountAndType deletes transfer records matching account ID and type.

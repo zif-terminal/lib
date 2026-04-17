@@ -11,11 +11,22 @@ const maxFillsPerPage = 2000
 // maxLedgerEntriesPerPage is the number of ledger entries we expect before paginating.
 const maxLedgerEntriesPerPage = 500
 
+// clampUnixMilli returns the unix milliseconds of t, clamped to 0 (Unix epoch)
+// if t is before that. Go's zero time.Time is year 1 which gives a negative ms value
+// that the Hyperliquid API rejects.
+func clampUnixMilli(t time.Time) int64 {
+	ms := t.UnixMilli()
+	if ms < 0 {
+		return 0
+	}
+	return ms
+}
+
 // fetchAllFills fetches all fills for a user, paginating by startTime.
 // since is the earliest timestamp to fetch from (unix milliseconds).
 // Returns fills sorted by timestamp ascending (oldest first).
 func (c *Client) fetchAllFills(ctx context.Context, user string, since time.Time) ([]hlFill, error) {
-	startTime := since.UnixMilli()
+	startTime := clampUnixMilli(since)
 	var all []hlFill
 
 	for {
@@ -24,7 +35,7 @@ func (c *Client) fetchAllFills(ctx context.Context, user string, since time.Time
 		}
 
 		req := map[string]interface{}{
-			"type":      "userFills",
+			"type":      "userFillsByTime",
 			"user":      user,
 			"startTime": startTime,
 		}
@@ -59,7 +70,7 @@ func (c *Client) fetchAllFunding(ctx context.Context, user string, since time.Ti
 	req := map[string]interface{}{
 		"type":      "userFunding",
 		"user":      user,
-		"startTime": since.UnixMilli(),
+		"startTime": clampUnixMilli(since),
 	}
 
 	var entries []hlFundingEntry
@@ -72,7 +83,7 @@ func (c *Client) fetchAllFunding(ctx context.Context, user string, since time.Ti
 
 // fetchAllLedgerUpdates fetches all non-funding ledger updates for a user since the given time.
 func (c *Client) fetchAllLedgerUpdates(ctx context.Context, user string, since time.Time) ([]hlLedgerEntry, error) {
-	startTime := since.UnixMilli()
+	startTime := clampUnixMilli(since)
 	var all []hlLedgerEntry
 
 	for {

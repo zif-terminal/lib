@@ -1,4 +1,4 @@
-package hyperliquid
+package lighter
 
 import (
 	"context"
@@ -6,11 +6,9 @@ import (
 	"time"
 )
 
-// Global rate limiter shared across all hyperliquid.Client instances.
-// Hyperliquid allows 1200 req/min (20 req/s). We target 5 req/s to leave ample
-// headroom — practical limits are lower than the theoretical max, especially
-// when multiple services share the same IP.
-var globalLimiter = newRateLimiter(5, 5)
+// Global rate limiter shared across all lighter.Client instances.
+// Lighter allows ~60 req/min (1 req/s). We target 1 req/s to match the limit.
+var globalLimiter = newRateLimiter(1, 2)
 
 // rateLimiter implements a token bucket rate limiter.
 type rateLimiter struct {

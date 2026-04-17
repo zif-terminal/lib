@@ -140,7 +140,7 @@ func (c *Client) FetchBalances(
 
 		balances = append(balances, &models.BalanceSnapshot{
 			Asset:   b.Symbol,
-			Balance: balance,
+			Balance: b.Balance,
 		})
 	}
 
@@ -213,9 +213,10 @@ func (c *Client) FetchHistoricalBalanceSnapshots(
 					continue
 				}
 
+				_ = balance
 				balances = append(balances, &models.BalanceSnapshot{
 					Asset:   symbol,
-					Balance: balance,
+					Balance: asset.Balance,
 				})
 			}
 

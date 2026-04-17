@@ -63,6 +63,24 @@ func TestPrice_UnmarshalJSON_WholeNumber(t *testing.T) {
 	}
 }
 
+func TestPrice_UnmarshalJSON_TimestampAsString(t *testing.T) {
+	// HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true causes bigint to come back as a string
+	data := `{"asset":"mSOL","denomination":"USDC","timestamp":"1700000000000","price":"150.25","source":"drift"}`
+	var p Price
+	if err := json.Unmarshal([]byte(data), &p); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if p.Timestamp != 1700000000000 {
+		t.Errorf("Expected timestamp 1700000000000, got %d", p.Timestamp)
+	}
+	if p.Price != "150.25" {
+		t.Errorf("Expected price '150.25', got '%s'", p.Price)
+	}
+	if p.Asset != "mSOL" {
+		t.Errorf("Expected asset mSOL, got %s", p.Asset)
+	}
+}
+
 func TestPositionEvent_UnmarshalJSON_QuantityAsFloat(t *testing.T) {
 	data := `{
 		"id": "00000000-0000-0000-0000-000000000001",

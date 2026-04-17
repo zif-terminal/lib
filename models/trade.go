@@ -24,6 +24,8 @@ type Trade struct {
 	TradeID           string    `json:"trade_id"`
 	ExchangeAccountID uuid.UUID `json:"exchange_account_id"`
 	MarketType        string    `json:"market_type"` // "perp" or "spot"
+	TxSignature       string    `json:"tx_signature,omitempty"`
+	FeeAsset          string    `json:"fee_asset"`
 }
 
 // UnmarshalJSON custom unmarshaler to handle BIGINT timestamp (Unix milliseconds) and NUMERIC as numbers
@@ -175,6 +177,8 @@ type TradeInput struct {
 	TradeID           string    `json:"trade_id"`
 	ExchangeAccountID uuid.UUID `json:"exchange_account_id"`
 	MarketType        string    `json:"market_type"` // "perp" or "spot"
+	TxSignature       string    `json:"tx_signature,omitempty"`
+	FeeAsset          string    `json:"fee_asset"`
 }
 
 // TradeFilter represents filtering options for listing trades

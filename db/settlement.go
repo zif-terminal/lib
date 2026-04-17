@@ -17,7 +17,9 @@ type SettlementInput = models.SettlementInput
 // SettlementFilter represents settlement filter (aliased from models package)
 type SettlementFilter = models.SettlementFilter
 
-// AddSettlements inserts settlement records, skipping duplicates via ON CONFLICT.
+// AddSettlements inserts settlement records. Duplicates raise a unique-constraint
+// violation and must be handled by callers — silent ON CONFLICT tolerance is a bug
+// magnet at the re-sync cursor boundary.
 func (c *Client) AddSettlements(ctx context.Context, inputs []*SettlementInput) (int, error) {
 	if len(inputs) == 0 {
 		return 0, nil
@@ -25,7 +27,7 @@ func (c *Client) AddSettlements(ctx context.Context, inputs []*SettlementInput) 
 
 	objects := make([]map[string]interface{}, len(inputs))
 	for i, input := range inputs {
-		objects[i] = map[string]interface{}{
+		obj := map[string]interface{}{
 			"exchange_account_id": input.ExchangeAccountID.String(),
 			"asset":               input.Asset,
 			"amount":              input.Amount,
@@ -33,17 +35,15 @@ func (c *Client) AddSettlements(ctx context.Context, inputs []*SettlementInput) 
 			"timestamp":           input.Timestamp.UnixMilli(),
 			"settlement_id":       input.SettlementID,
 		}
+		if input.ExternalID != "" {
+			obj["external_id"] = input.ExternalID
+		}
+		objects[i] = obj
 	}
 
 	query := `
 		mutation AddSettlements($objects: [settlements_insert_input!]!) {
-			insert_settlements(
-				objects: $objects
-				on_conflict: {
-					constraint: settlements_exchange_account_id_settlement_id_key
-					update_columns: []
-				}
-			) {
+			insert_settlements(objects: $objects) {
 				affected_rows
 			}
 		}
@@ -82,6 +82,7 @@ func (c *Client) GetSettlementsByIDs(ctx context.Context, ids []uuid.UUID) ([]*S
 				market
 				timestamp
 				settlement_id
+				external_id
 			}
 		}
 	`
@@ -138,6 +139,7 @@ func (c *Client) ListSettlements(ctx context.Context, filter SettlementFilter) (
 				market
 				timestamp
 				settlement_id
+				external_id
 			}
 		}
 	`, queryHeader, whereClause)
@@ -171,6 +173,7 @@ func (c *Client) GetLatestSettlement(ctx context.Context, exchangeAccountID uuid
 				market
 				timestamp
 				settlement_id
+				external_id
 			}
 		}
 	`

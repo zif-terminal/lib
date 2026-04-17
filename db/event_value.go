@@ -69,12 +69,37 @@ func (c *Client) ListMissingEventValues(ctx context.Context, limit int) ([]*Miss
 	return resp.MissingEventValues, nil
 }
 
-// AddEventValues inserts event value records. Uses on_conflict to skip duplicates.
+// AddEventValues upserts event value records: on conflict with the unique
+// (event_id, event_type, denomination) key, the existing row's quantity is
+// updated to the new value. This is a real upsert, not a silent skip — it
+// lets the processor refresh event values when quantities are recomputed.
+// Inputs are written in chunks of 1000 to avoid Hasura payload limits.
 func (c *Client) AddEventValues(ctx context.Context, inputs []*EventValueInput) (int, error) {
 	if len(inputs) == 0 {
 		return 0, nil
 	}
 
+	const chunkSize = 1000
+	totalAffected := 0
+
+	for start := 0; start < len(inputs); start += chunkSize {
+		end := start + chunkSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		chunk := inputs[start:end]
+
+		affected, err := c.addEventValuesChunk(ctx, chunk)
+		if err != nil {
+			return totalAffected, err
+		}
+		totalAffected += affected
+	}
+
+	return totalAffected, nil
+}
+
+func (c *Client) addEventValuesChunk(ctx context.Context, inputs []*EventValueInput) (int, error) {
 	query := `
 		mutation AddEventValues($objects: [event_values_insert_input!]!) {
 			insert_event_values(

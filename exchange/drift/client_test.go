@@ -505,16 +505,16 @@ func TestDriftClient_FetchFundingPayments_Success(t *testing.T) {
 	}
 
 	// Verify first payment (oldest) - market stored in metadata
-	if payments[0].Metadata["market"] != "SOL" {
-		t.Errorf("Expected market 'SOL', got '%s'", payments[0].Metadata["market"])
+	if payments[0].Metadata["market"] != "SOL-PERP" {
+		t.Errorf("Expected market 'SOL-PERP', got '%s'", payments[0].Metadata["market"])
 	}
 	if payments[0].Amount != "0.1" {
 		t.Errorf("Expected amount '0.1', got '%s'", payments[0].Amount)
 	}
 
 	// Verify second payment (negative)
-	if payments[1].Metadata["market"] != "BTC" {
-		t.Errorf("Expected market 'BTC', got '%s'", payments[1].Metadata["market"])
+	if payments[1].Metadata["market"] != "BTC-PERP" {
+		t.Errorf("Expected market 'BTC-PERP', got '%s'", payments[1].Metadata["market"])
 	}
 	if payments[1].Amount != "-0.05" {
 		t.Errorf("Expected amount '-0.05', got '%s'", payments[1].Amount)
@@ -547,21 +547,32 @@ func TestDriftClient_FetchFundingPayments_ContextCancellation(t *testing.T) {
 
 func TestNormalizeSide(t *testing.T) {
 	tests := []struct {
-		input    string
-		expected string
+		input     string
+		expected  string
+		wantError bool
 	}{
-		{"long", "buy"},
-		{"LONG", "buy"},
-		{"Long", "buy"},
-		{"short", "sell"},
-		{"SHORT", "sell"},
-		{"Short", "sell"},
-		{"unknown", "buy"}, // Default
-		{"", "buy"},        // Default
+		{"long", "buy", false},
+		{"LONG", "buy", false},
+		{"Long", "buy", false},
+		{"short", "sell", false},
+		{"SHORT", "sell", false},
+		{"Short", "sell", false},
+		{"unknown", "", true},
+		{"", "", true},
 	}
 
 	for _, tc := range tests {
-		result := normalizeSide(tc.input)
+		result, err := normalizeSide(tc.input)
+		if tc.wantError {
+			if err == nil {
+				t.Errorf("normalizeSide(%q) expected error, got nil", tc.input)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("normalizeSide(%q) unexpected error: %v", tc.input, err)
+			continue
+		}
 		if result != tc.expected {
 			t.Errorf("normalizeSide(%q) = %q, expected %q", tc.input, result, tc.expected)
 		}
@@ -631,7 +642,11 @@ func TestConvertFromBasePrecision(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		result := convertFromBasePrecision(tc.raw)
+		result, err := convertFromBasePrecision(tc.raw)
+		if err != nil {
+			t.Errorf("convertFromBasePrecision(%q) unexpected error: %v", tc.raw, err)
+			continue
+		}
 		if result != tc.expected {
 			t.Errorf("convertFromBasePrecision(%q) = %q, expected %q", tc.raw, result, tc.expected)
 		}
@@ -654,7 +669,11 @@ func TestConvertFromQuotePrecision(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		result := convertFromQuotePrecision(tc.raw)
+		result, err := convertFromQuotePrecision(tc.raw)
+		if err != nil {
+			t.Errorf("convertFromQuotePrecision(%q) unexpected error: %v", tc.raw, err)
+			continue
+		}
 		if result != tc.expected {
 			t.Errorf("convertFromQuotePrecision(%q) = %q, expected %q", tc.raw, result, tc.expected)
 		}
@@ -676,7 +695,11 @@ func TestCalculatePrice(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		result := calculatePrice(tc.quote, tc.base)
+		result, err := calculatePrice(tc.quote, tc.base)
+		if err != nil {
+			t.Errorf("calculatePrice(%q, %q) unexpected error: %v", tc.quote, tc.base, err)
+			continue
+		}
 		if result != tc.expected {
 			t.Errorf("calculatePrice(%q, %q) = %q, expected %q", tc.quote, tc.base, result, tc.expected)
 		}
@@ -867,8 +890,8 @@ func TestDriftClient_FetchTrades_WithSwaps(t *testing.T) {
 }
 
 // TestFetchTrades_UnresolvableSwapMarketIndex verifies that a swap with an
-// unknown market index causes FetchTrades to return an error, not silently
-// skip the record. Same bug pattern as the deposit case.
+// unknown market index causes FetchTrades to return an error. Silently
+// skipping unresolvable records caused data gaps that went unnoticed.
 func TestFetchTrades_UnresolvableSwapMarketIndex(t *testing.T) {
 	now := time.Now()
 	swapTs := now.Add(-5 * 24 * time.Hour).Unix()
@@ -930,10 +953,10 @@ func TestFetchTrades_UnresolvableSwapMarketIndex(t *testing.T) {
 	since := time.Now().AddDate(0, 0, -30)
 	_, _, err := client.FetchTrades(context.Background(), account, since)
 	if err == nil {
-		t.Fatal("Expected error when swap has unresolvable market index, but got nil — swap would be silently dropped")
+		t.Fatal("Expected error for unresolvable swap market index, got nil")
 	}
-	if !strings.Contains(err.Error(), "888") {
-		t.Errorf("Error should reference the unresolvable market index 888, got: %v", err)
+	if !strings.Contains(err.Error(), "market spot index 888 not found") {
+		t.Errorf("Expected 'market not found' error, got: %v", err)
 	}
 }
 
@@ -1279,10 +1302,9 @@ func TestDriftClient_FetchDeposits_FiltersBySince(t *testing.T) {
 }
 
 // TestFetchDeposits_UnresolvableMarketIndex verifies that a deposit with an
-// unknown market index causes FetchDeposits to return an error, not silently
-// skip the record. This was a real bug: a PUMP deposit (spot market index 56)
-// was silently dropped because the market index wasn't in the hardcoded defaults
-// and the Drift markets API returned empty data.
+// unknown market index causes FetchDeposits to return an error. Silently
+// skipping unresolvable records caused data gaps (e.g., 2.38M PUMP deposits
+// were dropped when market index 56 wasn't in hardcoded defaults).
 func TestFetchDeposits_UnresolvableMarketIndex(t *testing.T) {
 	now := time.Now()
 	knownTs := now.Add(-10 * 24 * time.Hour).Unix()
@@ -1357,10 +1379,10 @@ func TestFetchDeposits_UnresolvableMarketIndex(t *testing.T) {
 	since := time.Now().AddDate(0, 0, -30)
 	_, _, err := client.FetchDeposits(context.Background(), account, since)
 	if err == nil {
-		t.Fatal("Expected error when deposit has unresolvable market index, but got nil — deposit would be silently dropped")
+		t.Fatal("Expected error for unresolvable deposit market index, got nil")
 	}
-	if !strings.Contains(err.Error(), "999") {
-		t.Errorf("Error should reference the unresolvable market index 999, got: %v", err)
+	if !strings.Contains(err.Error(), "market spot index 999 not found") {
+		t.Errorf("Expected 'market not found' error, got: %v", err)
 	}
 }
 

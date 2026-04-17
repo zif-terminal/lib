@@ -114,6 +114,70 @@ func TestClient_AddTransfers(t *testing.T) {
 	}
 }
 
+func TestClient_AddTransfers_WithExternalID(t *testing.T) {
+	ctx := context.Background()
+	accountID := uuid.New()
+	returnedID := uuid.New()
+
+	callCount := 0
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			callCount++
+			if callCount == 1 {
+				// First call: upgradeTransferExternalIDs update mutation
+				respData := map[string]interface{}{
+					"update_transfers": map[string]interface{}{
+						"affected_rows": 1,
+					},
+				}
+				data, _ := json.Marshal(respData)
+				return json.Unmarshal(data, resp)
+			}
+			// Second call: insert mutation
+			respData := map[string]interface{}{
+				"insert_transfers": map[string]interface{}{
+					"returning": []map[string]interface{}{},
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	inputs := []*models.TransferInput{
+		{
+			ExchangeAccountID: accountID,
+			Type:              models.TypeDeposit,
+			Asset:             "USDC",
+			Amount:            "1000",
+			Timestamp:         time.Now(),
+			ExternalID:        "ext-123",
+		},
+	}
+
+	transfers, err := client.AddTransfers(ctx, inputs)
+	if err != nil {
+		t.Fatalf("AddTransfers failed: %v", err)
+	}
+
+	// The upgrade mutation upgraded the existing row, so insert returns nothing new
+	if len(transfers) != 0 {
+		t.Fatalf("Expected 0 transfers (upgraded existing), got %d", len(transfers))
+	}
+
+	// Verify both mutations were called: upgrade + insert
+	if callCount != 2 {
+		t.Errorf("Expected 2 GraphQL calls (upgrade + insert), got %d", callCount)
+	}
+
+	_ = returnedID // suppress unused
+}
+
 func TestClient_AddTransfers_Empty(t *testing.T) {
 	ctx := context.Background()
 	client := NewClientWithGraphQL(&mockGraphQLClient{}, ClientConfig{

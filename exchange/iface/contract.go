@@ -297,6 +297,9 @@ func validateFundingTransferInput(t *testing.T, payment *models.TransferInput) {
 	if payment.Timestamp.IsZero() {
 		t.Error("TransferInput.Timestamp must be non-zero")
 	}
+	if payment.ExternalID == "" {
+		t.Error("TransferInput.ExternalID must be non-empty for funding payments")
+	}
 	if payment.Metadata == nil {
 		t.Error("TransferInput.Metadata must be non-nil for funding payments")
 	} else {

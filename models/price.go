@@ -36,11 +36,13 @@ type Price struct {
 	Source       string `json:"source"`
 }
 
-// UnmarshalJSON handles Hasura returning NUMERIC fields as JSON numbers.
+// UnmarshalJSON handles Hasura returning NUMERIC fields as JSON numbers
+// and BIGINT fields as strings (when HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true).
 func (p *Price) UnmarshalJSON(data []byte) error {
 	type Alias Price
 	aux := &struct {
-		Price interface{} `json:"price"`
+		Price     interface{} `json:"price"`
+		Timestamp interface{} `json:"timestamp"`
 		*Alias
 	}{
 		Alias: (*Alias)(p),
@@ -59,6 +61,10 @@ func (p *Price) UnmarshalJSON(data []byte) error {
 		default:
 			p.Price = fmt.Sprintf("%v", val)
 		}
+	}
+
+	if aux.Timestamp != nil {
+		p.Timestamp = parseIntField(aux.Timestamp)
 	}
 
 	return nil

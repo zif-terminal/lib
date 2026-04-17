@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -160,8 +161,12 @@ func (c *Client) fetchMarkets(ctx context.Context) error {
 		return fmt.Errorf("markets API returned success=false")
 	}
 
-	// If API returned no markets, don't overwrite hardcoded defaults
+	// If API returned no markets, don't overwrite hardcoded defaults.
+	// The hardcoded defaults are a legitimate fallback (keeps us running),
+	// but an empty response from the markets API is a real upstream regression
+	// that degrades our ability to resolve newly-added markets — log loudly.
 	if len(response.Markets) == 0 {
+		log.Printf("ERROR drift/markets: API returned 0 markets — relying on hardcoded defaults (newly-added markets will fail to resolve) | url=%s", c.baseURL+"/stats/markets")
 		// Still mark as fetched so we don't retry immediately
 		c.marketCache.mu.Lock()
 		c.marketCache.lastFetch = time.Now()
