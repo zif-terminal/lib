@@ -167,6 +167,12 @@ type DBClient interface {
 	SetAccountSyncError(ctx context.Context, accountID string, errorMsg string) error
 	ClearAccountSyncError(ctx context.Context, accountID string) error
 
+	// Account reset methods
+	ClearSyncReset(ctx context.Context, accountID string) error
+	ClearProcessorReset(ctx context.Context, accountID string) error
+	DeleteSyncedData(ctx context.Context, accountID uuid.UUID) error
+	DeleteProcessedData(ctx context.Context, accountID uuid.UUID) error
+
 	// Event value methods
 	ListSupportedDenominations(ctx context.Context) ([]string, error)
 	ListMissingEventValues(ctx context.Context, limit int) ([]*MissingEventValue, error)

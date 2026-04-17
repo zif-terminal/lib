@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/machinebox/graphql"
 	"github.com/zif-terminal/lib/models"
 )
@@ -688,5 +689,206 @@ func TestClient_UpdateAccountTags_NotFound(t *testing.T) {
 	err := client.UpdateAccountTags(ctx, "nonexistent", []string{"test"})
 	if err == nil {
 		t.Fatal("Expected error for non-existent account")
+	}
+}
+
+func TestClient_ClearSyncReset(t *testing.T) {
+	ctx := context.Background()
+	id := "test-account-id"
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"update_exchange_accounts_by_pk": map[string]interface{}{
+					"id": id,
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	err := client.ClearSyncReset(ctx, id)
+	if err != nil {
+		t.Fatalf("ClearSyncReset failed: %v", err)
+	}
+}
+
+func TestClient_ClearSyncReset_NotFound(t *testing.T) {
+	ctx := context.Background()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"update_exchange_accounts_by_pk": nil,
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	err := client.ClearSyncReset(ctx, "non-existent-id")
+	if err == nil {
+		t.Fatal("Expected error for non-existent account")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got: %v", err)
+	}
+}
+
+func TestClient_ClearProcessorReset(t *testing.T) {
+	ctx := context.Background()
+	id := "test-account-id"
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"update_exchange_accounts_by_pk": map[string]interface{}{
+					"id": id,
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	err := client.ClearProcessorReset(ctx, id)
+	if err != nil {
+		t.Fatalf("ClearProcessorReset failed: %v", err)
+	}
+}
+
+func TestClient_ClearProcessorReset_NotFound(t *testing.T) {
+	ctx := context.Background()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"update_exchange_accounts_by_pk": nil,
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	err := client.ClearProcessorReset(ctx, "non-existent-id")
+	if err == nil {
+		t.Fatal("Expected error for non-existent account")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got: %v", err)
+	}
+}
+
+func TestClient_DeleteSyncedData(t *testing.T) {
+	ctx := context.Background()
+	accountID := uuid.New()
+	callCount := 0
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			callCount++
+			var respData map[string]interface{}
+			switch callCount {
+			case 1:
+				respData = map[string]interface{}{
+					"delete_trades": map[string]interface{}{"affected_rows": 5},
+				}
+			case 2:
+				respData = map[string]interface{}{
+					"delete_transfers": map[string]interface{}{"affected_rows": 3},
+				}
+			case 3:
+				respData = map[string]interface{}{
+					"delete_settlements": map[string]interface{}{"affected_rows": 2},
+				}
+			case 4:
+				respData = map[string]interface{}{
+					"delete_spot_balance_snapshots": map[string]interface{}{"affected_rows": 10},
+				}
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	err := client.DeleteSyncedData(ctx, accountID)
+	if err != nil {
+		t.Fatalf("DeleteSyncedData failed: %v", err)
+	}
+	if callCount != 4 {
+		t.Errorf("Expected 4 GraphQL calls, got %d", callCount)
+	}
+}
+
+func TestClient_DeleteProcessedData(t *testing.T) {
+	ctx := context.Background()
+	accountID := uuid.New()
+	callCount := 0
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			callCount++
+			var respData map[string]interface{}
+			switch callCount {
+			case 1:
+				// DeletePositionsForAccount
+				respData = map[string]interface{}{
+					"delete_positions": map[string]interface{}{"affected_rows": 4},
+				}
+			case 2:
+				// DeleteCheckpoint
+				respData = map[string]interface{}{
+					"delete_processor_checkpoints_by_pk": map[string]interface{}{
+						"exchange_account_id": accountID.String(),
+					},
+				}
+			case 3:
+				// DeleteDerivedTransfers
+				respData = map[string]interface{}{
+					"delete_transfers": map[string]interface{}{"affected_rows": 2},
+				}
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	err := client.DeleteProcessedData(ctx, accountID)
+	if err != nil {
+		t.Fatalf("DeleteProcessedData failed: %v", err)
+	}
+	if callCount != 3 {
+		t.Errorf("Expected 3 GraphQL calls, got %d", callCount)
 	}
 }

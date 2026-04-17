@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/zif-terminal/lib/models"
 )
 
@@ -34,6 +35,8 @@ func (c *Client) GetAccount(ctx context.Context, id string) (*ExchangeAccount, e
 				status
 				sync_enabled
 				processing_enabled
+				sync_reset_requested
+				processor_reset_requested
 				exchange {
 					id
 					name
@@ -84,6 +87,8 @@ func (c *Client) ListAccounts(ctx context.Context, f AccountListFilter) ([]*Exch
 				status
 				sync_enabled
 				processing_enabled
+				sync_reset_requested
+				processor_reset_requested
 				exchange {
 					id
 					name
@@ -406,6 +411,176 @@ func (c *Client) ClearAccountSyncError(ctx context.Context, accountID string) er
 
 	if resp.UpdateExchangeAccountsByPk == nil {
 		return notFoundError("account", accountID)
+	}
+
+	return nil
+}
+
+// ClearSyncReset clears the sync reset flag and resets sync state on an account.
+func (c *Client) ClearSyncReset(ctx context.Context, accountID string) error {
+	query := `
+		mutation ClearSyncReset($id: uuid!) {
+			update_exchange_accounts_by_pk(pk_columns: {id: $id}, _set: {
+				sync_reset_requested: false
+				last_synced_at: null
+				last_sync_error: null
+			}) {
+				id
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id": accountID,
+	})
+
+	var resp struct {
+		UpdateExchangeAccountsByPk *struct {
+			ID string `json:"id"`
+		} `json:"update_exchange_accounts_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to clear sync reset: %w", err)
+	}
+
+	if resp.UpdateExchangeAccountsByPk == nil {
+		return notFoundError("account", accountID)
+	}
+
+	return nil
+}
+
+// ClearProcessorReset clears the processor reset flag on an account.
+func (c *Client) ClearProcessorReset(ctx context.Context, accountID string) error {
+	query := `
+		mutation ClearProcessorReset($id: uuid!) {
+			update_exchange_accounts_by_pk(pk_columns: {id: $id}, _set: {
+				processor_reset_requested: false
+			}) {
+				id
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id": accountID,
+	})
+
+	var resp struct {
+		UpdateExchangeAccountsByPk *struct {
+			ID string `json:"id"`
+		} `json:"update_exchange_accounts_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to clear processor reset: %w", err)
+	}
+
+	if resp.UpdateExchangeAccountsByPk == nil {
+		return notFoundError("account", accountID)
+	}
+
+	return nil
+}
+
+// DeleteSyncedData deletes all synced data for an account: trades, transfers,
+// settlements, and spot balance snapshots.
+func (c *Client) DeleteSyncedData(ctx context.Context, accountID uuid.UUID) error {
+	id := accountID.String()
+
+	// Delete trades
+	tradesQuery := `
+		mutation DeleteTradesForAccount($id: uuid!) {
+			delete_trades(where: { exchange_account_id: { _eq: $id } }) {
+				affected_rows
+			}
+		}
+	`
+	req := c.graphqlRequestWithVars(tradesQuery, map[string]interface{}{"id": id})
+	var tradesResp struct {
+		DeleteTrades struct {
+			AffectedRows int `json:"affected_rows"`
+		} `json:"delete_trades"`
+	}
+	if err := c.execute(ctx, req, &tradesResp); err != nil {
+		return fmt.Errorf("failed to delete trades: %w", err)
+	}
+
+	// Delete transfers
+	transfersQuery := `
+		mutation DeleteTransfersForAccount($id: uuid!) {
+			delete_transfers(where: { exchange_account_id: { _eq: $id } }) {
+				affected_rows
+			}
+		}
+	`
+	req = c.graphqlRequestWithVars(transfersQuery, map[string]interface{}{"id": id})
+	var transfersResp struct {
+		DeleteTransfers struct {
+			AffectedRows int `json:"affected_rows"`
+		} `json:"delete_transfers"`
+	}
+	if err := c.execute(ctx, req, &transfersResp); err != nil {
+		return fmt.Errorf("failed to delete transfers: %w", err)
+	}
+
+	// Delete settlements
+	settlementsQuery := `
+		mutation DeleteSettlementsForAccount($id: uuid!) {
+			delete_settlements(where: { exchange_account_id: { _eq: $id } }) {
+				affected_rows
+			}
+		}
+	`
+	req = c.graphqlRequestWithVars(settlementsQuery, map[string]interface{}{"id": id})
+	var settlementsResp struct {
+		DeleteSettlements struct {
+			AffectedRows int `json:"affected_rows"`
+		} `json:"delete_settlements"`
+	}
+	if err := c.execute(ctx, req, &settlementsResp); err != nil {
+		return fmt.Errorf("failed to delete settlements: %w", err)
+	}
+
+	// Delete spot balance snapshots
+	snapshotsQuery := `
+		mutation DeleteSnapshotsForAccount($id: uuid!) {
+			delete_spot_balance_snapshots(where: { exchange_account_id: { _eq: $id } }) {
+				affected_rows
+			}
+		}
+	`
+	req = c.graphqlRequestWithVars(snapshotsQuery, map[string]interface{}{"id": id})
+	var snapshotsResp struct {
+		DeleteSpotBalanceSnapshots struct {
+			AffectedRows int `json:"affected_rows"`
+		} `json:"delete_spot_balance_snapshots"`
+	}
+	if err := c.execute(ctx, req, &snapshotsResp); err != nil {
+		return fmt.Errorf("failed to delete spot balance snapshots: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteProcessedData deletes all processed data for an account: positions
+// (cascades to position_events and position_pnl), processor checkpoints,
+// and derived transfers.
+func (c *Client) DeleteProcessedData(ctx context.Context, accountID uuid.UUID) error {
+	// Delete positions (cascades to position_events and position_pnl via DB FK)
+	if _, err := c.DeletePositionsForAccount(ctx, accountID); err != nil {
+		return fmt.Errorf("failed to delete positions: %w", err)
+	}
+
+	// Delete processor checkpoint
+	if err := c.DeleteCheckpoint(ctx, accountID); err != nil {
+		return fmt.Errorf("failed to delete checkpoint: %w", err)
+	}
+
+	// Delete derived transfers
+	if _, err := c.DeleteDerivedTransfers(ctx, accountID); err != nil {
+		return fmt.Errorf("failed to delete derived transfers: %w", err)
 	}
 
 	return nil

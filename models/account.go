@@ -21,8 +21,10 @@ type ExchangeAccount struct {
 	AccountTypeMetadata json.RawMessage `json:"account_type_metadata" db:"account_type_metadata"` // JSONB
 	WalletID            *string         `json:"wallet_id,omitempty" db:"wallet_id"`               // FK to wallets.id
 	Status              string          `json:"status" db:"status"`                               // "active", "needs_token", "disabled"
-	SyncEnabled         bool            `json:"sync_enabled" db:"sync_enabled"`
-	ProcessingEnabled   bool            `json:"processing_enabled" db:"processing_enabled"`
+	SyncEnabled             bool   `json:"sync_enabled" db:"sync_enabled"`
+	ProcessingEnabled       bool   `json:"processing_enabled" db:"processing_enabled"`
+	SyncResetRequested      bool   `json:"sync_reset_requested" db:"sync_reset_requested"`
+	ProcessorResetRequested bool   `json:"processor_reset_requested" db:"processor_reset_requested"`
 	DetectedAt          *string         `json:"detected_at,omitempty" db:"detected_at"`           // When account was detected
 	LastSyncedAt        *string         `json:"last_synced_at,omitempty" db:"last_synced_at"`     // When account was last synced
 	Tags                []string        `json:"tags" db:"tags"`

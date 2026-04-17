@@ -398,8 +398,9 @@ func TestTransformLedgerEntry(t *testing.T) {
 			Time: 1700000000000,
 			Hash: "0xinternalout",
 			Delta: hlLedgerDelta{
-				Type: "internalTransfer",
-				Usdc: "-100.00",
+				Type:        "internalTransfer",
+				Usdc:        "100.00",
+				Destination: "0xOtherAddress",
 			},
 		}
 		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
@@ -425,8 +426,9 @@ func TestTransformLedgerEntry(t *testing.T) {
 			Time: 1700000000000,
 			Hash: "0xinternalin",
 			Delta: hlLedgerDelta{
-				Type: "internalTransfer",
-				Usdc: "200.00",
+				Type:        "internalTransfer",
+				Usdc:        "200.00",
+				Destination: wallet,
 			},
 		}
 		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
@@ -613,13 +615,14 @@ func TestTransformLedgerEntry(t *testing.T) {
 		}
 	})
 
-	t.Run("send outgoing", func(t *testing.T) {
+	t.Run("send outgoing USDC", func(t *testing.T) {
 		entry := hlLedgerEntry{
 			Time: 1700000000000,
 			Hash: "0xsendout",
 			Delta: hlLedgerDelta{
-				Type: "send",
-				Usdc: "-100.0",
+				Type:        "send",
+				Usdc:        "100.0",
+				Destination: "0xOtherAddress",
 			},
 		}
 		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
@@ -640,13 +643,14 @@ func TestTransformLedgerEntry(t *testing.T) {
 		}
 	})
 
-	t.Run("send incoming", func(t *testing.T) {
+	t.Run("send incoming USDC", func(t *testing.T) {
 		entry := hlLedgerEntry{
 			Time: 1700000000000,
 			Hash: "0xsendin",
 			Delta: hlLedgerDelta{
-				Type: "send",
-				Usdc: "200.0",
+				Type:        "send",
+				Usdc:        "200.0",
+				Destination: wallet,
 			},
 		}
 		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
@@ -664,6 +668,64 @@ func TestTransformLedgerEntry(t *testing.T) {
 		}
 		if transfer.Amount != "200" {
 			t.Errorf("Amount = %q, want 200", transfer.Amount)
+		}
+	})
+
+	t.Run("send outgoing spot token", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xsendtokenout",
+			Delta: hlLedgerDelta{
+				Type:        "send",
+				Token:       "PURR",
+				Amount:      "500.0",
+				Destination: "0xOtherAddress",
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeWithdraw {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeWithdraw)
+		}
+		if transfer.Asset != "PURR" {
+			t.Errorf("Asset = %q, want PURR", transfer.Asset)
+		}
+		if transfer.Amount != "500" {
+			t.Errorf("Amount = %q, want 500", transfer.Amount)
+		}
+	})
+
+	t.Run("send incoming spot token", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xsendtokenin",
+			Delta: hlLedgerDelta{
+				Type:        "send",
+				Token:       "PURR",
+				Amount:      "300.0",
+				Destination: wallet,
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeDeposit {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeDeposit)
+		}
+		if transfer.Asset != "PURR" {
+			t.Errorf("Asset = %q, want PURR", transfer.Asset)
+		}
+		if transfer.Amount != "300" {
+			t.Errorf("Amount = %q, want 300", transfer.Amount)
 		}
 	})
 
@@ -911,8 +973,9 @@ func TestFetchDepositsWithMockServer(t *testing.T) {
 			Time: 1700000002000,
 			Hash: "0xccc",
 			Delta: hlLedgerDelta{
-				Type: "internalTransfer",
-				Usdc: "200.00",
+				Type:        "internalTransfer",
+				Usdc:        "200.00",
+				Destination: "0x1234567890abcdef1234567890abcdef12345678",
 			},
 		},
 	}
