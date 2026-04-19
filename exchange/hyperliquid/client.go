@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"net/http"
 	"sort"
 	"strconv"
@@ -268,6 +269,19 @@ func (c *Client) FetchDeposits(
 		}
 	}
 
+	// Fetch borrow/lend interest
+	bliEntries, err := c.fetchAllBorrowLendInterest(ctx, user, since)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch borrow/lend interest: %w", err)
+	}
+
+	for _, entry := range bliEntries {
+		transfer := transformBorrowLendInterest(entry, accountUUID)
+		if transfer != nil {
+			transfers = append(transfers, transfer)
+		}
+	}
+
 	// Sort by timestamp ascending
 	sort.Slice(transfers, func(i, j int) bool {
 		return transfers[i].Timestamp.Before(transfers[j].Timestamp)
@@ -313,21 +327,40 @@ func (c *Client) FetchBalances(
 	nowMs := time.Now().UnixMilli()
 	var balances []*models.BalanceSnapshot
 
-	// Add USDC balance from perp account value
-	accountValue, err := strconv.ParseFloat(perpState.MarginSummary.AccountValue, 64)
+	// Combine perp USDC (totalRawUsd) and spot USDC into a single snapshot.
+	// Use totalRawUsd (NOT accountValue) — accountValue includes unrealized PnL
+	// from open positions, which would cause phantom balance changes every time
+	// the market moves.
+	perpUSDC, err := strconv.ParseFloat(perpState.MarginSummary.TotalRawUsd, 64)
 	if err != nil {
-		return nil, fmt.Errorf("hyperliquid: failed to parse perp account value %q: %w", perpState.MarginSummary.AccountValue, err)
+		return nil, fmt.Errorf("hyperliquid: failed to parse perp totalRawUsd %q: %w", perpState.MarginSummary.TotalRawUsd, err)
 	}
-	if math.Abs(accountValue) > 0.000001 {
+
+	spotUSDC := 0.0
+	for _, b := range spotState.Balances {
+		if b.Coin == "USDC" {
+			spotUSDC, err = strconv.ParseFloat(b.Total, 64)
+			if err != nil {
+				return nil, fmt.Errorf("hyperliquid: failed to parse spot USDC balance %q: %w", b.Total, err)
+			}
+			break
+		}
+	}
+
+	totalUSDC := perpUSDC + spotUSDC
+	if math.Abs(totalUSDC) > 0.000001 {
 		balances = append(balances, &models.BalanceSnapshot{
 			Asset:       "USDC",
-			Balance:     perpState.MarginSummary.AccountValue,
+			Balance:     cleanDecimal(strconv.FormatFloat(totalUSDC, 'f', -1, 64)),
 			TimestampMs: nowMs,
 		})
 	}
 
-	// Add spot balances
+	// Add non-USDC spot balances
 	for _, b := range spotState.Balances {
+		if b.Coin == "USDC" {
+			continue // already combined above
+		}
 		total, err := strconv.ParseFloat(b.Total, 64)
 		if err != nil {
 			return nil, fmt.Errorf("hyperliquid: failed to parse spot balance %q for coin %s: %w", b.Total, b.Coin, err)
@@ -568,6 +601,17 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		asset = "USDC"
 		amountStr = entry.Delta.Usdc
 
+	case "cstakingtransfer":
+		// HyperStake consensus staking. Staking locks tokens out of the trading
+		// balance; unstaking returns them. Direction is indicated by isDeposit.
+		if entry.Delta.IsDeposit {
+			transferType = models.TypeWithdraw
+		} else {
+			transferType = models.TypeDeposit
+		}
+		asset = entry.Delta.Token
+		amountStr = entry.Delta.Amount
+
 	case "accountclasstransfer":
 		// Internal rebalance between the user's own spot and perp sub-accounts.
 		// This is NOT a cashflow — the wallet's total USDC position is unchanged,
@@ -575,8 +619,9 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		return nil, nil, nil
 
 	case "vaultwithdraw":
-		// Skip until we understand the full vault withdrawal flow
-		return nil, nil, nil
+		transferType = models.TypeDeposit
+		asset = "USDC"
+		amountStr = entry.Delta.NetWithdrawnUsd
 
 	case "vaultleadercommission":
 		transferType = models.TypeReward
@@ -589,6 +634,10 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		amountStr = entry.Delta.Usdc
 
 	case "send":
+		// Skip self-sends (spot<->perp within same wallet)
+		if strings.EqualFold(entry.Delta.User, walletAddress) && strings.EqualFold(entry.Delta.Destination, walletAddress) {
+			return nil, nil, nil
+		}
 		if strings.EqualFold(entry.Delta.Destination, walletAddress) {
 			transferType = models.TypeDeposit
 		} else {
@@ -597,6 +646,21 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		if entry.Delta.Token != "" {
 			asset = entry.Delta.Token
 			amountStr = entry.Delta.Amount
+			// Derive price from usdcValue / amount when available (same as spotTransfer)
+			if asset != "USDC" && entry.Delta.UsdcValue != "" && entry.Delta.UsdcValue != "0" {
+				usdcVal, uErr := strconv.ParseFloat(entry.Delta.UsdcValue, 64)
+				amt, aErr := strconv.ParseFloat(entry.Delta.Amount, 64)
+				if uErr == nil && aErr == nil && amt != 0 {
+					price := math.Abs(usdcVal / amt)
+					priceRecord = &models.PriceRecord{
+						Asset:        entry.Delta.Token,
+						Denomination: "USDC",
+						Timestamp:    time.UnixMilli(entry.Time).UTC(),
+						Price:        cleanDecimal(strconv.FormatFloat(price, 'f', -1, 64)),
+						Source:       "ledger",
+					}
+				}
+			}
 		} else {
 			asset = "USDC"
 			amountStr = entry.Delta.Usdc
@@ -616,18 +680,88 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		amount = amount[1:]
 	}
 
+	// Some ledger entries share the same hash (e.g. vaultWithdraw and
+	// vaultLeaderCommission for the same vault withdrawal). Disambiguate
+	// by appending the delta type for types that are known to collide.
+	externalID := entry.Hash
+	if deltaType == "vaultwithdraw" {
+		externalID = entry.Hash + "_" + deltaType
+	}
+
+	metadata := map[string]string{
+		"payment_id":  entry.Hash,
+		"source_type": deltaType,
+	}
+
+	// Add vault address to metadata for vault-related entries
+	if entry.Delta.Vault != "" {
+		switch deltaType {
+		case "vaultcreate", "vaultdeposit", "vaultwithdraw", "vaultdistribution", "vaultleadercommission":
+			metadata["vault_address"] = entry.Delta.Vault
+		}
+	}
+
 	return &models.TransferInput{
 		ExchangeAccountID: accountUUID,
 		Type:              transferType,
 		Asset:             asset,
 		Amount:            amount,
 		Timestamp:         time.UnixMilli(entry.Time).UTC(),
-		ExternalID:        entry.Hash,
-		Metadata: map[string]string{
-			"payment_id":  entry.Hash,
-			"source_type": deltaType,
-		},
+		ExternalID:        externalID,
+		Metadata:          metadata,
 	}, priceRecord, nil
+}
+
+// transformBorrowLendInterest converts a Hyperliquid borrow/lend interest entry to a TransferInput.
+// Net interest = supply - borrow. Positive = earned, negative = paid. Zero net is skipped.
+// Uses math/big.Rat for exact decimal arithmetic.
+func transformBorrowLendInterest(entry hlBorrowLendInterest, accountUUID uuid.UUID) *models.TransferInput {
+	supply := new(big.Rat)
+	if _, ok := supply.SetString(entry.Supply); !ok {
+		supply.SetInt64(0)
+	}
+
+	borrow := new(big.Rat)
+	if _, ok := borrow.SetString(entry.Borrow); !ok {
+		borrow.SetInt64(0)
+	}
+
+	// net = supply - borrow
+	net := new(big.Rat).Sub(supply, borrow)
+
+	if net.Sign() == 0 {
+		return nil
+	}
+
+	// Format the net amount as a decimal string
+	amount := net.FloatString(18)
+	amount = cleanDecimal(amount)
+
+	// Make amount positive — direction is determined by type
+	if strings.HasPrefix(amount, "-") {
+		amount = amount[1:]
+	}
+
+	// If after cleaning the amount is zero or dust, skip
+	if amount == "0" {
+		return nil
+	}
+
+	externalID := fmt.Sprintf("bli_%s_%d", entry.Token, entry.Time)
+
+	return &models.TransferInput{
+		ExchangeAccountID: accountUUID,
+		Type:              models.TypeInterest,
+		Asset:             entry.Token,
+		Amount:            amount,
+		Timestamp:         time.UnixMilli(entry.Time).UTC(),
+		ExternalID:        externalID,
+		Metadata: map[string]string{
+			"source_type": "borrow_lend_interest",
+			"borrow":      entry.Borrow,
+			"supply":      entry.Supply,
+		},
+	}
 }
 
 // cleanDecimal cleans a decimal string: trims trailing zeros and dots.

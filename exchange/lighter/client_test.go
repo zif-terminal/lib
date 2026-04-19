@@ -54,6 +54,12 @@ func TestFetchHistoricalBalanceSnapshotsReturnsNil(t *testing.T) {
 	}
 }
 
+// testAPIKeyMeta returns account_type_metadata with a dummy API key for tests.
+func testAPIKeyMeta() json.RawMessage {
+	meta, _ := json.Marshal(map[string]interface{}{"api_key": "test-key"})
+	return meta
+}
+
 // testLimiter returns a fast rate limiter for tests (no waiting).
 func testLimiter() *rateLimiter {
 	return newRateLimiter(1000, 1000)
@@ -68,53 +74,64 @@ func newTestClient(url string) *Client {
 	}
 }
 
+// serveOrderBookDetails returns an HTTP handler that serves mock order book details.
+func serveOrderBookDetails(markets []lighterOrderBookDetail, spotMarkets []lighterOrderBookDetail) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(lighterOrderBookDetailsResp{
+			Code:             200,
+			OrderBookDetails: markets,
+			SpotOrderBooks:   spotMarkets,
+		})
+	}
+}
+
 func TestFetchTradesWithMock(t *testing.T) {
 	resetMarketCache()
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/orderBookDetails", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(lighterOrderBookDetailsResp{
-			OrderBooks: []lighterOrderBookDetail{
-				{MarketID: 1, Symbol: "ETH", BaseAsset: "ETH", QuoteAsset: "USDC", MarketType: "perp"},
-				{MarketID: 2, Symbol: "BTC", BaseAsset: "BTC", QuoteAsset: "USDC", MarketType: "perp"},
-			},
-		})
-	})
+	mux.HandleFunc("/orderBookDetails", serveOrderBookDetails(
+		[]lighterOrderBookDetail{
+			{MarketID: 1, Symbol: "ETH", MarketType: "perp"},
+			{MarketID: 2, Symbol: "BTC", MarketType: "perp"},
+		},
+		nil,
+	))
 
 	mux.HandleFunc("/trades", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiResponse[lighterTrade]{
-			Code:    0,
-			Message: "ok",
-			Data: []lighterTrade{
+		json.NewEncoder(w).Encode(tradesResponse{
+			Code:    200,
+			Trades: []lighterTrade{
 				{
-					TradeID:      "t1",
+					TradeID:      1,
+					TradeIDStr:   "t1",
 					MarketID:     1,
 					AskAccountID: 5,
 					BidAccountID: 10,
 					Price:        "2000.50",
-					Quantity:     "1.5",
-					TakerFee:     "0.30",
-					MakerFee:     "0.10",
-					IsBuyerTaker: true,
+					Size:         "1.5",
+					TakerFee:     300000, // 0.3 USDC in micro-USDC
+					MakerFee:     100000, // 0.1 USDC in micro-USDC
+					IsMakerAsk:   true,   // ask is maker
 					Timestamp:    1700000001000,
-					AskOrderID:   "o-ask-1",
-					BidOrderID:   "o-bid-1",
+					AskIDStr:     "o-ask-1",
+					BidIDStr:     "o-bid-1",
 				},
 				{
-					TradeID:      "t2",
+					TradeID:      2,
+					TradeIDStr:   "t2",
 					MarketID:     2,
 					AskAccountID: 10,
 					BidAccountID: 99,
 					Price:        "35000.00",
-					Quantity:     "0.1",
-					TakerFee:     "0.50",
-					MakerFee:     "0.15",
-					IsBuyerTaker: false,
+					Size:         "0.1",
+					TakerFee:     500000, // 0.5 USDC
+					MakerFee:     150000, // 0.15 USDC
+					IsMakerAsk:   false,  // bid is maker, ask (account 10) is taker
 					Timestamp:    1700000000000,
-					AskOrderID:   "o-ask-2",
-					BidOrderID:   "o-bid-2",
+					AskIDStr:     "o-ask-2",
+					BidIDStr:     "o-bid-2",
 				},
 			},
 		})
@@ -127,8 +144,9 @@ func TestFetchTradesWithMock(t *testing.T) {
 
 	accountID := uuid.New()
 	account := &models.ExchangeAccount{
-		ID:                accountID.String(),
-		AccountIdentifier: "10", // account_index = 10
+		ID:                  accountID.String(),
+		AccountIdentifier:   "10", // account_index = 10
+		AccountTypeMetadata: testAPIKeyMeta(),
 	}
 
 	trades, prices, err := c.FetchTrades(context.Background(), account, time.Time{})
@@ -149,7 +167,7 @@ func TestFetchTradesWithMock(t *testing.T) {
 		t.Error("trades should be sorted ascending by timestamp")
 	}
 
-	// First trade (t2 - earlier timestamp): account 10 is ask, so sell
+	// First trade (t2 - earlier timestamp): account 10 is ask, is_maker_ask=false so ask is taker
 	sell := trades[0]
 	if sell.TradeID != "t2" {
 		t.Errorf("expected trade t2 first (earlier), got %s", sell.TradeID)
@@ -163,8 +181,9 @@ func TestFetchTradesWithMock(t *testing.T) {
 	if sell.MarketType != "perp" {
 		t.Errorf("expected perp, got %s", sell.MarketType)
 	}
+	// Account 10 is ask, is_maker_ask=false, so account is taker -> taker fee
 	if sell.Fee != "0.5" {
-		t.Errorf("expected fee 0.5 (taker, sell side, buyer is not taker), got %s", sell.Fee)
+		t.Errorf("expected fee 0.5 (taker fee for ask when is_maker_ask=false), got %s", sell.Fee)
 	}
 	if sell.OrderID != "o-ask-2" {
 		t.Errorf("expected ask order ID for sell side, got %s", sell.OrderID)
@@ -173,7 +192,7 @@ func TestFetchTradesWithMock(t *testing.T) {
 		t.Errorf("expected USDC fee asset, got %s", sell.FeeAsset)
 	}
 
-	// Second trade (t1 - later timestamp): account 10 is bid, so buy
+	// Second trade (t1 - later timestamp): account 10 is bid, is_maker_ask=true so bid is taker
 	buy := trades[1]
 	if buy.Side != "buy" {
 		t.Errorf("expected buy side for bid account, got %s", buy.Side)
@@ -181,8 +200,9 @@ func TestFetchTradesWithMock(t *testing.T) {
 	if buy.BaseAsset != "ETH" {
 		t.Errorf("expected ETH, got %s", buy.BaseAsset)
 	}
+	// Account 10 is bid, is_maker_ask=true, so bid is taker -> taker fee
 	if buy.Fee != "0.3" {
-		t.Errorf("expected fee 0.3 (taker, buy side, buyer is taker), got %s", buy.Fee)
+		t.Errorf("expected fee 0.3 (taker fee for bid when is_maker_ask=true), got %s", buy.Fee)
 	}
 	if buy.ExchangeAccountID != accountID {
 		t.Errorf("expected account ID %v, got %v", accountID, buy.ExchangeAccountID)
@@ -200,33 +220,32 @@ func TestFetchTradesSideDetermination(t *testing.T) {
 	resetMarketCache()
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/orderBookDetails", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(lighterOrderBookDetailsResp{
-			OrderBooks: []lighterOrderBookDetail{
-				{MarketID: 1, Symbol: "ETH", BaseAsset: "ETH", QuoteAsset: "USDC", MarketType: "perp"},
-			},
-		})
-	})
+	mux.HandleFunc("/orderBookDetails", serveOrderBookDetails(
+		[]lighterOrderBookDetail{
+			{MarketID: 1, Symbol: "ETH", MarketType: "perp"},
+		},
+		nil,
+	))
 
 	mux.HandleFunc("/trades", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiResponse[lighterTrade]{
-			Code: 0,
-			Data: []lighterTrade{
+		json.NewEncoder(w).Encode(tradesResponse{
+			Code: 200,
+			Trades: []lighterTrade{
 				{
-					TradeID:      "t-maker-buy",
+					TradeID:      1,
+					TradeIDStr:   "t-maker-buy",
 					MarketID:     1,
 					AskAccountID: 99,
-					BidAccountID: 5, // Our account is bid (buyer) and maker
+					BidAccountID: 5,      // Our account is bid (buyer)
 					Price:        "2000",
-					Quantity:     "1",
-					TakerFee:     "0.30",
-					MakerFee:     "0.10",
-					IsBuyerTaker: false, // Buyer is maker
+					Size:         "1",
+					TakerFee:     300000, // 0.3 USDC
+					MakerFee:     100000, // 0.1 USDC
+					IsMakerAsk:   false,  // bid is maker
 					Timestamp:    1700000000000,
-					AskOrderID:   "o1",
-					BidOrderID:   "o2",
+					AskIDStr:     "o1",
+					BidIDStr:     "o2",
 				},
 			},
 		})
@@ -238,8 +257,9 @@ func TestFetchTradesSideDetermination(t *testing.T) {
 	c := newTestClient(server.URL)
 
 	account := &models.ExchangeAccount{
-		ID:                uuid.New().String(),
-		AccountIdentifier: "5",
+		ID:                  uuid.New().String(),
+		AccountIdentifier:   "5",
+		AccountTypeMetadata: testAPIKeyMeta(),
 	}
 
 	trades, _, err := c.FetchTrades(context.Background(), account, time.Time{})
@@ -251,7 +271,7 @@ func TestFetchTradesSideDetermination(t *testing.T) {
 		t.Fatalf("expected 1 trade, got %d", len(trades))
 	}
 
-	// Account 5 is bid (buyer), buyer is NOT taker, so fee should be maker fee
+	// Account 5 is bid, is_maker_ask=false -> bid is maker -> maker fee
 	if trades[0].Fee != "0.1" {
 		t.Errorf("expected maker fee 0.1, got %s", trades[0].Fee)
 	}
@@ -261,33 +281,29 @@ func TestFetchFundingPaymentsWithMock(t *testing.T) {
 	resetMarketCache()
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/orderBookDetails", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(lighterOrderBookDetailsResp{
-			OrderBooks: []lighterOrderBookDetail{
-				{MarketID: 1, Symbol: "ETH", BaseAsset: "ETH", QuoteAsset: "USDC", MarketType: "perp"},
-			},
-		})
-	})
+	mux.HandleFunc("/orderBookDetails", serveOrderBookDetails(
+		[]lighterOrderBookDetail{
+			{MarketID: 1, Symbol: "ETH", MarketType: "perp"},
+		},
+		nil,
+	))
 
 	mux.HandleFunc("/positionFunding", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiResponse[lighterFunding]{
-			Code: 0,
-			Data: []lighterFunding{
+		json.NewEncoder(w).Encode(fundingResponse{
+			Code: 200,
+			PositionFundings: []lighterFunding{
 				{
-					FundingID: "f1",
-					AccountID: 10,
+					FundingID: 1,
 					MarketID:  1,
-					Amount:    "-0.50",
-					Timestamp: 1700000000000,
+					Change:    "-0.50",
+					Timestamp: 1700000000, // Unix seconds
 				},
 				{
-					FundingID: "f2",
-					AccountID: 10,
+					FundingID: 2,
 					MarketID:  1,
-					Amount:    "1.25",
-					Timestamp: 1700000001000,
+					Change:    "1.25",
+					Timestamp: 1700000001, // Unix seconds
 				},
 			},
 		})
@@ -300,8 +316,9 @@ func TestFetchFundingPaymentsWithMock(t *testing.T) {
 
 	accountID := uuid.New()
 	account := &models.ExchangeAccount{
-		ID:                accountID.String(),
-		AccountIdentifier: "10",
+		ID:                  accountID.String(),
+		AccountIdentifier:   "10",
+		AccountTypeMetadata: testAPIKeyMeta(),
 	}
 
 	payments, err := c.FetchFundingPayments(context.Background(), account, time.Time{})
@@ -325,14 +342,14 @@ func TestFetchFundingPaymentsWithMock(t *testing.T) {
 	if p.Asset != "USDC" {
 		t.Errorf("Asset = %q, want USDC", p.Asset)
 	}
-	if p.Amount != "-0.50" {
-		t.Errorf("Amount = %q, want -0.50", p.Amount)
+	if p.Amount != "-0.5" {
+		t.Errorf("Amount = %q, want -0.5", p.Amount)
 	}
 	if p.Metadata["market"] != "ETH-PERP" {
 		t.Errorf("market metadata = %q, want ETH-PERP", p.Metadata["market"])
 	}
-	if p.Metadata["payment_id"] != "f1" {
-		t.Errorf("payment_id metadata = %q, want f1", p.Metadata["payment_id"])
+	if p.Metadata["payment_id"] != "1" {
+		t.Errorf("payment_id metadata = %q, want 1", p.Metadata["payment_id"])
 	}
 	if p.ExchangeAccountID != accountID {
 		t.Errorf("ExchangeAccountID = %v, want %v", p.ExchangeAccountID, accountID)
@@ -341,39 +358,48 @@ func TestFetchFundingPaymentsWithMock(t *testing.T) {
 
 func TestFetchDepositsWithMock(t *testing.T) {
 	resetMarketCache()
+	mux := http.NewServeMux()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Need orderBookDetails for asset resolution (asset_id 3 -> USDC from spot markets)
+	mux.HandleFunc("/orderBookDetails", serveOrderBookDetails(
+		nil,
+		[]lighterOrderBookDetail{
+			{MarketID: 2051, Symbol: "UNI/USDC", MarketType: "spot", BaseAssetID: 6, QuoteAssetID: 3},
+		},
+	))
+
+	mux.HandleFunc("/deposit/history", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiResponse[lighterDeposit]{
-			Code: 0,
-			Data: []lighterDeposit{
+		json.NewEncoder(w).Encode(depositsResponse{
+			Code: 200,
+			Deposits: []lighterDeposit{
 				{
 					DepositID: "d1",
-					AccountID: 10,
-					AssetID:   0,
-					Amount:    "1000.00",
+					AssetID:   3, // USDC
+					Amount:    "1000.000000",
 					Status:    "completed",
 					Timestamp: 1700000000000,
 					TxHash:    "0xaaa",
 				},
 				{
 					DepositID: "d2",
-					AccountID: 10,
-					AssetID:   0,
-					Amount:    "-500.00",
+					AssetID:   3, // USDC
+					Amount:    "-500.000000",
 					Status:    "completed",
 					Timestamp: 1700000001000,
 					TxHash:    "0xbbb",
 				},
 			},
 		})
-	}))
+	})
+
+	server := httptest.NewServer(mux)
 	defer server.Close()
 
 	c := newTestClient(server.URL)
 
 	accountID := uuid.New()
-	meta, _ := json.Marshal(map[string]interface{}{"l1_address": "0x1234"})
+	meta, _ := json.Marshal(map[string]interface{}{"l1_address": "0x1234", "api_key": "test-key"})
 	account := &models.ExchangeAccount{
 		ID:                  accountID.String(),
 		AccountIdentifier:   "10",
@@ -427,12 +453,13 @@ func TestFetchBalancesWithMock(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(lighterAccountResp{
+			Code: 200,
 			Accounts: []lighterAccount{
 				{
 					AccountIndex: 10,
 					L1Address:    "0x1234",
 					Assets: []lighterAsset{
-						{Symbol: "USDC", AssetID: 0, Balance: "5000.50", LockedBalance: "0"},
+						{Symbol: "USDC", AssetID: 3, Balance: "5000.50", LockedBalance: "0"},
 						{Symbol: "ETH", AssetID: 1, Balance: "1.5", LockedBalance: "0.5"},
 					},
 				},
@@ -440,7 +467,7 @@ func TestFetchBalancesWithMock(t *testing.T) {
 					AccountIndex: 20,
 					L1Address:    "0x1234",
 					Assets: []lighterAsset{
-						{Symbol: "USDC", AssetID: 0, Balance: "100", LockedBalance: "0"},
+						{Symbol: "USDC", AssetID: 3, Balance: "100", LockedBalance: "0"},
 					},
 				},
 			},
@@ -503,7 +530,7 @@ func TestDiscoverAccountsWithMock(t *testing.T) {
 				{
 					AccountIndex: 0,
 					L1Address:    "0xabcdef",
-					Status:       "active",
+					Status:       1,
 					Assets: []lighterAsset{
 						{Symbol: "USDC", Balance: "1000"},
 					},
@@ -624,14 +651,12 @@ func TestPagination(t *testing.T) {
 	resetMarketCache()
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/orderBookDetails", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(lighterOrderBookDetailsResp{
-			OrderBooks: []lighterOrderBookDetail{
-				{MarketID: 1, Symbol: "ETH", BaseAsset: "ETH", QuoteAsset: "USDC", MarketType: "perp"},
-			},
-		})
-	})
+	mux.HandleFunc("/orderBookDetails", serveOrderBookDetails(
+		[]lighterOrderBookDetail{
+			{MarketID: 1, Symbol: "ETH", MarketType: "perp"},
+		},
+		nil,
+	))
 
 	callCount := 0
 	mux.HandleFunc("/trades", func(w http.ResponseWriter, r *http.Request) {
@@ -642,19 +667,19 @@ func TestPagination(t *testing.T) {
 		switch cursor {
 		case "":
 			// First page
-			json.NewEncoder(w).Encode(apiResponse[lighterTrade]{
-				Code:       0,
+			json.NewEncoder(w).Encode(tradesResponse{
+				Code:       200,
 				NextCursor: "page2",
-				Data: []lighterTrade{
-					{TradeID: "t1", MarketID: 1, BidAccountID: 5, AskAccountID: 99, Price: "2000", Quantity: "1", TakerFee: "0.1", MakerFee: "0.05", IsBuyerTaker: true, Timestamp: 1700000000000, BidOrderID: "o1", AskOrderID: "o2"},
+				Trades: []lighterTrade{
+					{TradeIDStr: "t1", MarketID: 1, BidAccountID: 5, AskAccountID: 99, Price: "2000", Size: "1", TakerFee: 100000, MakerFee: 50000, IsMakerAsk: true, Timestamp: 1700000000000, BidIDStr: "o1", AskIDStr: "o2"},
 				},
 			})
 		case "page2":
 			// Second page (last)
-			json.NewEncoder(w).Encode(apiResponse[lighterTrade]{
-				Code: 0,
-				Data: []lighterTrade{
-					{TradeID: "t2", MarketID: 1, BidAccountID: 5, AskAccountID: 99, Price: "2001", Quantity: "2", TakerFee: "0.2", MakerFee: "0.1", IsBuyerTaker: true, Timestamp: 1700000001000, BidOrderID: "o3", AskOrderID: "o4"},
+			json.NewEncoder(w).Encode(tradesResponse{
+				Code: 200,
+				Trades: []lighterTrade{
+					{TradeIDStr: "t2", MarketID: 1, BidAccountID: 5, AskAccountID: 99, Price: "2001", Size: "2", TakerFee: 200000, MakerFee: 100000, IsMakerAsk: true, Timestamp: 1700000001000, BidIDStr: "o3", AskIDStr: "o4"},
 				},
 			})
 		default:
@@ -668,8 +693,9 @@ func TestPagination(t *testing.T) {
 	c := newTestClient(server.URL)
 
 	account := &models.ExchangeAccount{
-		ID:                uuid.New().String(),
-		AccountIdentifier: "5",
+		ID:                  uuid.New().String(),
+		AccountIdentifier:   "5",
+		AccountTypeMetadata: testAPIKeyMeta(),
 	}
 
 	trades, _, err := c.FetchTrades(context.Background(), account, time.Time{})
@@ -694,22 +720,20 @@ func TestFetchTradesSinceFilter(t *testing.T) {
 	resetMarketCache()
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/orderBookDetails", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(lighterOrderBookDetailsResp{
-			OrderBooks: []lighterOrderBookDetail{
-				{MarketID: 1, Symbol: "ETH", BaseAsset: "ETH", QuoteAsset: "USDC", MarketType: "perp"},
-			},
-		})
-	})
+	mux.HandleFunc("/orderBookDetails", serveOrderBookDetails(
+		[]lighterOrderBookDetail{
+			{MarketID: 1, Symbol: "ETH", MarketType: "perp"},
+		},
+		nil,
+	))
 
 	mux.HandleFunc("/trades", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiResponse[lighterTrade]{
-			Code: 0,
-			Data: []lighterTrade{
-				{TradeID: "old", MarketID: 1, BidAccountID: 5, AskAccountID: 99, Price: "2000", Quantity: "1", TakerFee: "0.1", MakerFee: "0.05", IsBuyerTaker: true, Timestamp: 1700000000000, BidOrderID: "o1", AskOrderID: "o2"},
-				{TradeID: "new", MarketID: 1, BidAccountID: 5, AskAccountID: 99, Price: "2001", Quantity: "1", TakerFee: "0.1", MakerFee: "0.05", IsBuyerTaker: true, Timestamp: 1700000002000, BidOrderID: "o3", AskOrderID: "o4"},
+		json.NewEncoder(w).Encode(tradesResponse{
+			Code: 200,
+			Trades: []lighterTrade{
+				{TradeIDStr: "old", MarketID: 1, BidAccountID: 5, AskAccountID: 99, Price: "2000", Size: "1", TakerFee: 100000, MakerFee: 50000, IsMakerAsk: true, Timestamp: 1700000000000, BidIDStr: "o1", AskIDStr: "o2"},
+				{TradeIDStr: "new", MarketID: 1, BidAccountID: 5, AskAccountID: 99, Price: "2001", Size: "1", TakerFee: 100000, MakerFee: 50000, IsMakerAsk: true, Timestamp: 1700000002000, BidIDStr: "o3", AskIDStr: "o4"},
 			},
 		})
 	})
@@ -720,8 +744,9 @@ func TestFetchTradesSinceFilter(t *testing.T) {
 	c := newTestClient(server.URL)
 
 	account := &models.ExchangeAccount{
-		ID:                uuid.New().String(),
-		AccountIdentifier: "5",
+		ID:                  uuid.New().String(),
+		AccountIdentifier:   "5",
+		AccountTypeMetadata: testAPIKeyMeta(),
 	}
 
 	since := time.UnixMilli(1700000001000)
@@ -736,6 +761,74 @@ func TestFetchTradesSinceFilter(t *testing.T) {
 
 	if trades[0].TradeID != "new" {
 		t.Errorf("expected trade 'new', got %s", trades[0].TradeID)
+	}
+}
+
+func TestFetchFundingPaymentsSinceBoundary(t *testing.T) {
+	// Regression test: a funding payment at the exact second boundary must be
+	// filtered out when since has sub-second precision (e.g., timestamp + 1ms).
+	// The Lighter API returns timestamps in Unix seconds, but the syncer adds
+	// +1ms to the last-seen timestamp. Without proper handling, the second-
+	// precision timestamp passes the filter and causes a duplicate insert.
+	resetMarketCache()
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/orderBookDetails", serveOrderBookDetails(
+		[]lighterOrderBookDetail{
+			{MarketID: 1, Symbol: "ETH", MarketType: "perp"},
+		},
+		nil,
+	))
+
+	mux.HandleFunc("/positionFunding", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(fundingResponse{
+			Code: 200,
+			PositionFundings: []lighterFunding{
+				{
+					FundingID: 1,
+					MarketID:  1,
+					Change:    "-0.50",
+					Timestamp: 1700000000, // Unix seconds: exact boundary
+				},
+				{
+					FundingID: 2,
+					MarketID:  1,
+					Change:    "1.25",
+					Timestamp: 1700000001, // 1 second later: should pass
+				},
+			},
+		})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(server.URL)
+
+	accountID := uuid.New()
+	account := &models.ExchangeAccount{
+		ID:                  accountID.String(),
+		AccountIdentifier:   "10",
+		AccountTypeMetadata: testAPIKeyMeta(),
+	}
+
+	// since = exact timestamp + 1ms (simulates getSinceFundingPaymentTimestamp behavior)
+	since := time.Unix(1700000000, 0).Add(1 * time.Millisecond)
+
+	payments, err := c.FetchFundingPayments(context.Background(), account, since)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The funding at 1700000000 should be filtered out (it's <= since)
+	// Only the funding at 1700000001 should remain
+	if len(payments) != 1 {
+		t.Fatalf("expected 1 payment after boundary filtering, got %d", len(payments))
+	}
+
+	if payments[0].ExternalID != "2" {
+		t.Errorf("expected funding ID 2, got %s", payments[0].ExternalID)
 	}
 }
 
@@ -793,6 +886,66 @@ func TestCleanDecimal(t *testing.T) {
 		got := cleanDecimal(tt.input)
 		if got != tt.want {
 			t.Errorf("cleanDecimal(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestMicroToDecimal(t *testing.T) {
+	tests := []struct {
+		input int64
+		want  string
+	}{
+		{0, "0"},
+		{100000, "0.1"},
+		{300000, "0.3"},
+		{500000, "0.5"},
+		{1000000, "1"},
+		{1500000, "1.5"},
+		{200, "0.0002"},
+		{238, "0.000238"},
+	}
+
+	for _, tt := range tests {
+		got := microToDecimal(tt.input)
+		if got != tt.want {
+			t.Errorf("microToDecimal(%d) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestIsSuccessCode(t *testing.T) {
+	if !isSuccessCode(0) {
+		t.Error("code 0 should be success")
+	}
+	if !isSuccessCode(200) {
+		t.Error("code 200 should be success")
+	}
+	if isSuccessCode(21100) {
+		t.Error("code 21100 should not be success")
+	}
+	if isSuccessCode(400) {
+		t.Error("code 400 should not be success")
+	}
+}
+
+func TestDeriveBaseQuote(t *testing.T) {
+	tests := []struct {
+		symbol     string
+		marketType string
+		wantBase   string
+		wantQuote  string
+	}{
+		{"ETH", "perp", "ETH", "USDC"},
+		{"BTC", "perp", "BTC", "USDC"},
+		{"UNI/USDC", "spot", "UNI", "USDC"},
+		{"ETH/USDC", "spot", "ETH", "USDC"},
+	}
+
+	for _, tt := range tests {
+		base, quote := deriveBaseQuote(tt.symbol, tt.marketType)
+		if base != tt.wantBase || quote != tt.wantQuote {
+			t.Errorf("deriveBaseQuote(%q, %q) = (%q, %q), want (%q, %q)",
+				tt.symbol, tt.marketType, base, quote, tt.wantBase, tt.wantQuote)
 		}
 	}
 }

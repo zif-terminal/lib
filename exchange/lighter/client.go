@@ -46,8 +46,27 @@ func (c *Client) Name() string {
 	return "lighter"
 }
 
-// doGet performs an authenticated GET request with rate limiting and retry on 429.
+// getAPIKey extracts the API key from an exchange account's metadata.
+func getAPIKey(account *models.ExchangeAccount) string {
+	if account == nil || account.AccountTypeMetadata == nil {
+		return ""
+	}
+	var meta map[string]interface{}
+	if err := json.Unmarshal(account.AccountTypeMetadata, &meta); err == nil {
+		if key, ok := meta["api_key"].(string); ok {
+			return key
+		}
+	}
+	return ""
+}
+
+// doGet performs a GET request with rate limiting and retry on 429.
 func (c *Client) doGet(ctx context.Context, url string) (json.RawMessage, error) {
+	return c.doGetWithAuth(ctx, url, "")
+}
+
+// doGetWithAuth performs a GET request with an optional auth token.
+func (c *Client) doGetWithAuth(ctx context.Context, url string, authToken string) (json.RawMessage, error) {
 	backoff := initialBackoff
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -66,6 +85,10 @@ func (c *Client) doGet(ctx context.Context, url string) (json.RawMessage, error)
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		if authToken != "" {
+			req.Header.Set("Authorization", authToken)
 		}
 
 		resp, err := c.httpClient.Do(req)
@@ -107,8 +130,14 @@ func (c *Client) doGet(ctx context.Context, url string) (json.RawMessage, error)
 		if resp.StatusCode == http.StatusNotFound {
 			return nil, nil
 		}
-		// 400 is a client-side error — always a bug in the request we built.
+		// 400 may indicate "account not found" (code 21100) — treat as not found.
 		if resp.StatusCode == http.StatusBadRequest {
+			var errResp struct {
+				Code int `json:"code"`
+			}
+			if json.Unmarshal(body, &errResp) == nil && errResp.Code == 21100 {
+				return nil, nil
+			}
 			return nil, fmt.Errorf("lighter: 400 bad request | url=%s | body=%s", url, string(body))
 		}
 
@@ -142,14 +171,19 @@ func (c *Client) FetchTrades(
 		return nil, nil, fmt.Errorf("invalid account_index %q: %w", account.AccountIdentifier, err)
 	}
 
-	rawTrades, err := fetchAllPages[lighterTrade](ctx, c, func(cursor string) string {
+	authToken, err := buildAuthToken(getAPIKey(account), accountIndex)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to build auth token: %w", err)
+	}
+
+	rawTrades, err := fetchAllTrades(ctx, c, func(cursor string) string {
 		url := fmt.Sprintf("%s/trades?account_index=%d&sort_by=timestamp&limit=%d",
 			c.baseURL, accountIndex, defaultPageLimit)
 		if cursor != "" {
 			url += "&cursor=" + cursor
 		}
 		return url
-	})
+	}, authToken)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to fetch trades: %w", err)
 	}
@@ -168,31 +202,41 @@ func (c *Client) FetchTrades(
 			return nil, nil, fmt.Errorf("failed to resolve market %d: %w", rt.MarketID, err)
 		}
 
-		// Determine side: if account is the bid account, they're buying; if ask, selling
+		// Determine side: if account is the bid account, they're buying; if ask, selling.
+		// Determine fee: the API field is_maker_ask tells us which side was maker.
+		// If is_maker_ask=true, ask is maker, bid is taker. If false, bid is maker, ask is taker.
 		side := "buy"
-		orderID := rt.BidOrderID
+		orderID := rt.BidIDStr
+		var fee int64
 		if rt.AskAccountID == accountIndex {
 			side = "sell"
-			orderID = rt.AskOrderID
-		}
-
-		// Determine fee: taker vs maker
-		fee := rt.MakerFee
-		if (side == "buy" && rt.IsBuyerTaker) || (side == "sell" && !rt.IsBuyerTaker) {
-			fee = rt.TakerFee
+			orderID = rt.AskIDStr
+			// Ask is our account: if is_maker_ask, we're maker; otherwise taker
+			if rt.IsMakerAsk {
+				fee = rt.MakerFee
+			} else {
+				fee = rt.TakerFee
+			}
+		} else {
+			// Bid is our account: if is_maker_ask, we're taker; otherwise maker
+			if rt.IsMakerAsk {
+				fee = rt.TakerFee
+			} else {
+				fee = rt.MakerFee
+			}
 		}
 
 		ts := time.UnixMilli(rt.Timestamp).UTC()
 
 		trades = append(trades, &models.TradeInput{
-			TradeID:           rt.TradeID,
+			TradeID:           rt.TradeIDStr,
 			OrderID:           orderID,
 			BaseAsset:         market.BaseAsset,
 			QuoteAsset:        market.QuoteAsset,
 			Side:              side,
 			Price:             cleanDecimal(rt.Price),
-			Quantity:          cleanDecimal(rt.Quantity),
-			Fee:               cleanDecimal(fee),
+			Quantity:          cleanDecimal(rt.Size),
+			Fee:               microToDecimal(fee),
 			Timestamp:         ts,
 			ExchangeAccountID: accountUUID,
 			MarketType:        market.MarketType,
@@ -241,23 +285,31 @@ func (c *Client) FetchFundingPayments(
 		return nil, fmt.Errorf("invalid account_index %q: %w", account.AccountIdentifier, err)
 	}
 
-	rawFunding, err := fetchAllPages[lighterFunding](ctx, c, func(cursor string) string {
+	authToken, err := buildAuthToken(getAPIKey(account), accountIndex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build auth token: %w", err)
+	}
+
+	rawFunding, err := fetchAllFunding(ctx, c, func(cursor string) string {
 		url := fmt.Sprintf("%s/positionFunding?account_index=%d&limit=%d",
 			c.baseURL, accountIndex, defaultPageLimit)
 		if cursor != "" {
 			url += "&cursor=" + cursor
 		}
 		return url
-	})
+	}, authToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch funding: %w", err)
 	}
 
-	sinceMs := since.UnixMilli()
 	payments := make([]*models.TransferInput, 0, len(rawFunding))
 
 	for _, rf := range rawFunding {
-		if !since.IsZero() && rf.Timestamp < sinceMs {
+		// Lighter funding timestamps are Unix seconds. Compare against the
+		// original `since` (which may have sub-second precision from the +1ms
+		// increment in account_syncer). Using time.Time comparison ensures a
+		// funding payment at second X is correctly skipped when since is X+1ms.
+		if !since.IsZero() && !time.Unix(rf.Timestamp, 0).After(since) {
 			continue
 		}
 
@@ -266,16 +318,18 @@ func (c *Client) FetchFundingPayments(
 			return nil, fmt.Errorf("failed to resolve market %d: %w", rf.MarketID, err)
 		}
 
+		fundingIDStr := strconv.FormatInt(rf.FundingID, 10)
+
 		payments = append(payments, &models.TransferInput{
 			ExchangeAccountID: accountUUID,
 			Type:              models.TypeFunding,
 			Asset:             market.QuoteAsset,
-			Amount:            rf.Amount,
-			Timestamp:         time.UnixMilli(rf.Timestamp).UTC(),
-			ExternalID:        rf.FundingID,
+			Amount:            cleanDecimal(rf.Change),
+			Timestamp:         time.Unix(rf.Timestamp, 0).UTC(),
+			ExternalID:        fundingIDStr,
 			Metadata: map[string]string{
 				"market":     market.Symbol + "-PERP",
-				"payment_id": rf.FundingID,
+				"payment_id": fundingIDStr,
 			},
 		})
 	}
@@ -308,27 +362,64 @@ func (c *Client) FetchDeposits(
 		return nil, nil, fmt.Errorf("invalid account_index %q: %w", account.AccountIdentifier, err)
 	}
 
+	authToken, err := buildAuthToken(getAPIKey(account), accountIndex)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to build auth token: %w", err)
+	}
+
 	// Extract l1_address from account metadata or use wallet address
 	l1Address := extractL1Address(account)
 
-	rawDeposits, err := fetchAllPages[lighterDeposit](ctx, c, func(cursor string) string {
+	rawDeposits, err := fetchAllDeposits(ctx, c, func(cursor string) string {
 		url := fmt.Sprintf("%s/deposit/history?account_index=%d&l1_address=%s&filter=all&limit=%d",
 			c.baseURL, accountIndex, l1Address, defaultPageLimit)
 		if cursor != "" {
 			url += "&cursor=" + cursor
 		}
 		return url
-	})
+	}, authToken)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to fetch deposits: %w", err)
 	}
 
+	// Fetch L2 internal transfers (spot<->perp, cross-account)
+	rawTransfers, err := fetchAllTransfers(ctx, c, func(cursor string) string {
+		url := fmt.Sprintf("%s/transfer/history?account_index=%d&limit=%d",
+			c.baseURL, accountIndex, defaultPageLimit)
+		if cursor != "" {
+			url += "&cursor=" + cursor
+		}
+		return url
+	}, authToken)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch transfers: %w", err)
+	}
+
+	// Fetch L1 withdrawals (not captured by deposit/history)
+	rawWithdraws, err := fetchAllWithdraws(ctx, c, func(cursor string) string {
+		url := fmt.Sprintf("%s/withdraw/history?account_index=%d&limit=%d",
+			c.baseURL, accountIndex, defaultPageLimit)
+		if cursor != "" {
+			url += "&cursor=" + cursor
+		}
+		return url
+	}, authToken)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch withdrawals: %w", err)
+	}
+
 	sinceMs := since.UnixMilli()
-	transfers := make([]*models.TransferInput, 0, len(rawDeposits))
+	transfers := make([]*models.TransferInput, 0, len(rawDeposits)+len(rawTransfers)+len(rawWithdraws))
 
 	for _, rd := range rawDeposits {
 		if !since.IsZero() && rd.Timestamp < sinceMs {
 			continue
+		}
+
+		// Resolve asset symbol from asset_id using spot order book data
+		assetSymbol, err := c.resolveAsset(ctx, rd.AssetID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("lighter: unsupported asset_id %d in deposit %s: %w", rd.AssetID, rd.DepositID, err)
 		}
 
 		// Determine deposit vs withdrawal from amount sign
@@ -339,18 +430,92 @@ func (c *Client) FetchDeposits(
 			amount = amount[1:] // Make positive
 		}
 
-		// Resolve asset from asset_id (0 = USDC on Lighter)
-		asset := "USDC"
+		transfers = append(transfers, &models.TransferInput{
+			ExchangeAccountID: accountUUID,
+			Type:              transferType,
+			Asset:             assetSymbol,
+			Amount:            cleanDecimal(amount),
+			Timestamp:         time.UnixMilli(rd.Timestamp).UTC(),
+			ExternalID:        rd.DepositID,
+			Metadata: map[string]string{
+				"deposit_id": rd.DepositID,
+				"tx_hash":    rd.TxHash,
+			},
+		})
+	}
+
+	// Process L2 internal transfers
+	for _, rt := range rawTransfers {
+		if !since.IsZero() && rt.Timestamp < sinceMs {
+			continue
+		}
+
+		// Skip self-transfers (spot<->perp within same account)
+		if rt.Type == "L2SelfTransfer" {
+			continue
+		}
+
+		assetSymbol, err := c.resolveAsset(ctx, rt.AssetID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("lighter: unsupported asset_id %d in transfer %s: %w", rt.AssetID, rt.ID, err)
+		}
+
+		var transferType string
+		switch rt.Type {
+		case "L2TransferInflow":
+			transferType = models.TypeDeposit
+		case "L2TransferOutflow", "L2StakeAssetOutflow":
+			transferType = models.TypeWithdraw
+		default:
+			continue // Unknown type, skip
+		}
+
+		amount := rt.Amount
+		if strings.HasPrefix(amount, "-") {
+			amount = amount[1:]
+		}
 
 		transfers = append(transfers, &models.TransferInput{
 			ExchangeAccountID: accountUUID,
 			Type:              transferType,
-			Asset:             asset,
+			Asset:             assetSymbol,
 			Amount:            cleanDecimal(amount),
-			Timestamp:         time.UnixMilli(rd.Timestamp).UTC(),
+			Timestamp:         time.UnixMilli(rt.Timestamp).UTC(),
+			ExternalID:        fmt.Sprintf("transfer_%s", rt.ID),
 			Metadata: map[string]string{
-				"deposit_id": rd.DepositID,
-				"tx_hash":    rd.TxHash,
+				"transfer_id":  rt.ID,
+				"tx_hash":      rt.TxHash,
+				"transfer_type": rt.Type,
+			},
+		})
+	}
+
+	// Process L1 withdrawals
+	for _, rw := range rawWithdraws {
+		if !since.IsZero() && rw.Timestamp < sinceMs {
+			continue
+		}
+
+		assetSymbol, err := c.resolveAsset(ctx, rw.AssetID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("lighter: unsupported asset_id %d in withdrawal %s: %w", rw.AssetID, rw.ID, err)
+		}
+
+		amount := rw.Amount
+		if strings.HasPrefix(amount, "-") {
+			amount = amount[1:]
+		}
+
+		transfers = append(transfers, &models.TransferInput{
+			ExchangeAccountID: accountUUID,
+			Type:              models.TypeWithdraw,
+			Asset:             assetSymbol,
+			Amount:            cleanDecimal(amount),
+			Timestamp:         time.UnixMilli(rw.Timestamp).UTC(),
+			ExternalID:        fmt.Sprintf("withdraw_%s", rw.ID),
+			Metadata: map[string]string{
+				"withdraw_id": rw.ID,
+				"l1_tx_hash":  rw.L1TxHash,
 			},
 		})
 	}
@@ -454,6 +619,23 @@ func extractL1Address(account *models.ExchangeAccount) string {
 		}
 	}
 	return ""
+}
+
+// microToDecimal converts a micro-USDC integer (1e-6 USDC) to a clean decimal string.
+func microToDecimal(v int64) string {
+	if v == 0 {
+		return "0"
+	}
+	s := fmt.Sprintf("%d.%06d", v/1000000, v%1000000)
+	if v < 0 {
+		// Handle negative: fmt already puts the sign on the integer part
+		abs := v
+		if abs < 0 {
+			abs = -abs
+		}
+		s = fmt.Sprintf("-%d.%06d", abs/1000000, abs%1000000)
+	}
+	return cleanDecimal(s)
 }
 
 // cleanDecimal cleans a decimal string: trims trailing zeros and dots.
