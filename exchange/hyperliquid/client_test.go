@@ -543,21 +543,36 @@ func TestTransformLedgerEntry(t *testing.T) {
 		}
 	})
 
-	t.Run("vaultWithdraw skipped", func(t *testing.T) {
+	t.Run("vaultWithdraw as deposit", func(t *testing.T) {
 		entry := hlLedgerEntry{
 			Time: 1700000000000,
 			Hash: "0xvaultwithdraw",
 			Delta: hlLedgerDelta{
-				Type: "vaultWithdraw",
-				Usdc: "500.00",
+				Type:            "vaultWithdraw",
+				NetWithdrawnUsd: "5229.047513",
 			},
 		}
 		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if transfer != nil {
-			t.Error("expected nil transfer for vaultWithdraw")
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer for vaultWithdraw")
+		}
+		if transfer.Type != models.TypeDeposit {
+			t.Errorf("expected type %q, got %q", models.TypeDeposit, transfer.Type)
+		}
+		if transfer.Asset != "USDC" {
+			t.Errorf("expected asset USDC, got %q", transfer.Asset)
+		}
+		if transfer.Amount != "5229.047513" {
+			t.Errorf("expected amount 5229.047513, got %q", transfer.Amount)
+		}
+		if transfer.Metadata["source_type"] != "vaultwithdraw" {
+			t.Errorf("expected source_type vaultwithdraw, got %q", transfer.Metadata["source_type"])
+		}
+		if transfer.ExternalID != "0xvaultwithdraw_vaultwithdraw" {
+			t.Errorf("expected disambiguated external_id, got %q", transfer.ExternalID)
 		}
 	})
 
@@ -981,8 +996,19 @@ func TestFetchDepositsWithMockServer(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(entries)
+
+		reqType := body["type"].(string)
+		switch reqType {
+		case "userNonFundingLedgerUpdates":
+			json.NewEncoder(w).Encode(entries)
+		case "userBorrowLendInterest":
+			json.NewEncoder(w).Encode([]hlBorrowLendInterest{})
+		default:
+			json.NewEncoder(w).Encode([]interface{}{})
+		}
 	}))
 	defer server.Close()
 
@@ -1054,12 +1080,18 @@ func TestDiscoverAccountsWithMockServer(t *testing.T) {
 			json.NewEncoder(w).Encode(hlClearinghouseState{
 				MarginSummary: struct {
 					AccountValue string `json:"accountValue"`
+					TotalRawUsd  string `json:"totalRawUsd"`
 				}{
-					AccountValue: "5000.50",
+					AccountValue: "5500.50",
+					TotalRawUsd:  "5000.50",
 				},
 			})
 		case "spotClearinghouseState":
 			json.NewEncoder(w).Encode(hlSpotClearinghouseState{})
+		case "subAccounts":
+			w.Write([]byte("null"))
+		case "userVaultEquities":
+			w.Write([]byte("null"))
 		}
 	}))
 	defer server.Close()
@@ -1103,12 +1135,16 @@ func TestDiscoverAccountsNoActivityWithMockServer(t *testing.T) {
 			json.NewEncoder(w).Encode(hlClearinghouseState{
 				MarginSummary: struct {
 					AccountValue string `json:"accountValue"`
+					TotalRawUsd  string `json:"totalRawUsd"`
 				}{
 					AccountValue: "0.00",
+					TotalRawUsd:  "0.00",
 				},
 			})
 		case "spotClearinghouseState":
 			json.NewEncoder(w).Encode(hlSpotClearinghouseState{})
+		case "userNonFundingLedgerUpdates":
+			json.NewEncoder(w).Encode([]interface{}{})
 		}
 	}))
 	defer server.Close()
@@ -1128,6 +1164,71 @@ func TestDiscoverAccountsNoActivityWithMockServer(t *testing.T) {
 	}
 }
 
+func TestDiscoverAccountsViaLedgerHistory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+
+		reqType := body["type"].(string)
+		switch reqType {
+		case "clearinghouseState":
+			// Zero balance — wallet has withdrawn everything
+			json.NewEncoder(w).Encode(hlClearinghouseState{
+				MarginSummary: struct {
+					AccountValue string `json:"accountValue"`
+					TotalRawUsd  string `json:"totalRawUsd"`
+				}{
+					AccountValue: "0.00",
+					TotalRawUsd:  "0.00",
+				},
+			})
+		case "spotClearinghouseState":
+			json.NewEncoder(w).Encode(hlSpotClearinghouseState{})
+		case "userNonFundingLedgerUpdates":
+			// Has historical activity — deposited, traded, then withdrew
+			json.NewEncoder(w).Encode([]interface{}{
+				map[string]interface{}{
+					"time": 1700000000000,
+					"hash": "0xabc",
+					"delta": map[string]interface{}{
+						"type": "deposit",
+						"usdc": "1000.00",
+					},
+				},
+			})
+		case "subAccounts":
+			w.Write([]byte("null"))
+		case "userVaultEquities":
+			w.Write([]byte("null"))
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	wallet := "0x83C362925a1821FCdB1d250Fef0b2dBab2098e98"
+	accounts, err := c.DiscoverAccounts(context.Background(), wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account for wallet with historical activity, got %d", len(accounts))
+	}
+
+	acc := accounts[0]
+	if acc.AccountIdentifier != wallet {
+		t.Errorf("AccountIdentifier = %q, want %q", acc.AccountIdentifier, wallet)
+	}
+	if acc.AccountType != "main" {
+		t.Errorf("AccountType = %q, want main", acc.AccountType)
+	}
+}
+
 func TestFetchBalancesWithMockServer(t *testing.T) {
 	requestCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1141,8 +1242,10 @@ func TestFetchBalancesWithMockServer(t *testing.T) {
 			json.NewEncoder(w).Encode(hlClearinghouseState{
 				MarginSummary: struct {
 					AccountValue string `json:"accountValue"`
+					TotalRawUsd  string `json:"totalRawUsd"`
 				}{
-					AccountValue: "5000.50",
+					AccountValue: "5500.50", // includes unrealized PnL — should NOT be used
+					TotalRawUsd:  "5000.50", // raw USDC margin — this is what we want
 				},
 			})
 		case "spotClearinghouseState":
@@ -1152,6 +1255,7 @@ func TestFetchBalancesWithMockServer(t *testing.T) {
 					Total string `json:"total"`
 					Hold  string `json:"hold"`
 				}{
+					{Coin: "USDC", Total: "200.25", Hold: "0"},
 					{Coin: "ETH", Total: "1.5", Hold: "0"},
 				},
 			})
@@ -1193,8 +1297,9 @@ func TestFetchBalancesWithMockServer(t *testing.T) {
 	if usdcBalance == nil {
 		t.Fatal("expected USDC balance")
 	}
-	if usdcBalance.Balance != "5000.50" {
-		t.Errorf("USDC balance = %s, want 5000.50", usdcBalance.Balance)
+	// Combined: perp totalRawUsd (5000.50) + spot USDC (200.25) = 5200.75
+	if usdcBalance.Balance != "5200.75" {
+		t.Errorf("USDC balance = %s, want 5200.75 (perp 5000.50 + spot 200.25)", usdcBalance.Balance)
 	}
 
 	if ethBalance == nil {
@@ -1938,6 +2043,242 @@ func TestTransformLedgerEntrySpotTransferWithoutUsdcValue(t *testing.T) {
 	}
 }
 
+func TestTransformBorrowLendInterest(t *testing.T) {
+	accountUUID := uuid.New()
+
+	t.Run("net positive (supply > borrow)", func(t *testing.T) {
+		entry := hlBorrowLendInterest{
+			Time:   1700000000000,
+			Token:  "USDC",
+			Borrow: "0.0",
+			Supply: "0.03754258",
+		}
+		transfer := transformBorrowLendInterest(entry, accountUUID)
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeInterest {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeInterest)
+		}
+		if transfer.Asset != "USDC" {
+			t.Errorf("Asset = %q, want USDC", transfer.Asset)
+		}
+		if transfer.Amount != "0.03754258" {
+			t.Errorf("Amount = %q, want 0.03754258", transfer.Amount)
+		}
+		if transfer.ExternalID != "bli_USDC_1700000000000" {
+			t.Errorf("ExternalID = %q, want bli_USDC_1700000000000", transfer.ExternalID)
+		}
+		if transfer.Metadata["source_type"] != "borrow_lend_interest" {
+			t.Errorf("source_type = %q, want borrow_lend_interest", transfer.Metadata["source_type"])
+		}
+		if transfer.Metadata["borrow"] != "0.0" {
+			t.Errorf("borrow metadata = %q, want 0.0", transfer.Metadata["borrow"])
+		}
+		if transfer.Metadata["supply"] != "0.03754258" {
+			t.Errorf("supply metadata = %q, want 0.03754258", transfer.Metadata["supply"])
+		}
+		if transfer.ExchangeAccountID != accountUUID {
+			t.Errorf("ExchangeAccountID = %v, want %v", transfer.ExchangeAccountID, accountUUID)
+		}
+	})
+
+	t.Run("net negative (borrow > supply)", func(t *testing.T) {
+		entry := hlBorrowLendInterest{
+			Time:   1700000000000,
+			Token:  "HYPE",
+			Borrow: "0.5",
+			Supply: "0.1",
+		}
+		transfer := transformBorrowLendInterest(entry, accountUUID)
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeInterest {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeInterest)
+		}
+		if transfer.Asset != "HYPE" {
+			t.Errorf("Asset = %q, want HYPE", transfer.Asset)
+		}
+		// Amount should be positive (0.4), direction is from Type
+		if transfer.Amount != "0.4" {
+			t.Errorf("Amount = %q, want 0.4", transfer.Amount)
+		}
+	})
+
+	t.Run("net zero skipped", func(t *testing.T) {
+		entry := hlBorrowLendInterest{
+			Time:   1700000000000,
+			Token:  "USDC",
+			Borrow: "0.5",
+			Supply: "0.5",
+		}
+		transfer := transformBorrowLendInterest(entry, accountUUID)
+		if transfer != nil {
+			t.Errorf("expected nil transfer for zero net interest, got %+v", transfer)
+		}
+	})
+
+	t.Run("both zero skipped", func(t *testing.T) {
+		entry := hlBorrowLendInterest{
+			Time:   1700000000000,
+			Token:  "USDC",
+			Borrow: "0.0",
+			Supply: "0.0",
+		}
+		transfer := transformBorrowLendInterest(entry, accountUUID)
+		if transfer != nil {
+			t.Errorf("expected nil transfer for zero borrow and supply, got %+v", transfer)
+		}
+	})
+
+	t.Run("non-USDC token", func(t *testing.T) {
+		entry := hlBorrowLendInterest{
+			Time:   1700000000000,
+			Token:  "HYPE",
+			Borrow: "0.0",
+			Supply: "1.23456789",
+		}
+		transfer := transformBorrowLendInterest(entry, accountUUID)
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Asset != "HYPE" {
+			t.Errorf("Asset = %q, want HYPE", transfer.Asset)
+		}
+		if transfer.Amount != "1.23456789" {
+			t.Errorf("Amount = %q, want 1.23456789", transfer.Amount)
+		}
+		if transfer.ExternalID != "bli_HYPE_1700000000000" {
+			t.Errorf("ExternalID = %q, want bli_HYPE_1700000000000", transfer.ExternalID)
+		}
+	})
+
+	t.Run("exact arithmetic no floating point error", func(t *testing.T) {
+		// These values would cause floating point errors if using float64
+		entry := hlBorrowLendInterest{
+			Time:   1700000000000,
+			Token:  "USDC",
+			Borrow: "0.1",
+			Supply: "0.3",
+		}
+		transfer := transformBorrowLendInterest(entry, accountUUID)
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		// 0.3 - 0.1 = 0.2 exactly with big.Rat
+		if transfer.Amount != "0.2" {
+			t.Errorf("Amount = %q, want 0.2 (exact arithmetic)", transfer.Amount)
+		}
+	})
+}
+
+func TestFetchDepositsIncludesBorrowLendInterest(t *testing.T) {
+	ledgerEntries := []hlLedgerEntry{
+		{
+			Time: 1700000000000,
+			Hash: "0xaaa",
+			Delta: hlLedgerDelta{
+				Type: "deposit",
+				Usdc: "1000.00",
+			},
+		},
+	}
+
+	bliEntries := []hlBorrowLendInterest{
+		{
+			Time:   1700000001000,
+			Token:  "USDC",
+			Borrow: "0.0",
+			Supply: "0.05",
+		},
+		{
+			Time:   1700000002000,
+			Token:  "HYPE",
+			Borrow: "0.0",
+			Supply: "1.5",
+		},
+		{
+			Time:   1700000003000,
+			Token:  "USDC",
+			Borrow: "0.0",
+			Supply: "0.0", // zero — should be skipped
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+
+		reqType := body["type"].(string)
+		switch reqType {
+		case "userNonFundingLedgerUpdates":
+			json.NewEncoder(w).Encode(ledgerEntries)
+		case "userBorrowLendInterest":
+			json.NewEncoder(w).Encode(bliEntries)
+		default:
+			json.NewEncoder(w).Encode([]interface{}{})
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	accountID := uuid.New()
+	account := &models.ExchangeAccount{
+		ID:                accountID.String(),
+		AccountIdentifier: "0x1234567890abcdef1234567890abcdef12345678",
+	}
+
+	transfers, _, err := c.FetchDeposits(context.Background(), account, time.UnixMilli(1700000000000))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 1 deposit + 2 interest (the zero one is skipped) = 3
+	if len(transfers) != 3 {
+		t.Fatalf("expected 3 transfers (1 deposit + 2 interest), got %d", len(transfers))
+	}
+
+	// Verify sorted ascending
+	for i := 1; i < len(transfers); i++ {
+		if transfers[i].Timestamp.Before(transfers[i-1].Timestamp) {
+			t.Errorf("transfers not sorted: [%d] %v before [%d] %v", i, transfers[i].Timestamp, i-1, transfers[i-1].Timestamp)
+		}
+	}
+
+	// Find interest transfers
+	var interestTransfers []*models.TransferInput
+	for _, tr := range transfers {
+		if tr.Type == models.TypeInterest {
+			interestTransfers = append(interestTransfers, tr)
+		}
+	}
+	if len(interestTransfers) != 2 {
+		t.Fatalf("expected 2 interest transfers, got %d", len(interestTransfers))
+	}
+
+	// First interest: USDC
+	if interestTransfers[0].Asset != "USDC" {
+		t.Errorf("interest[0] Asset = %q, want USDC", interestTransfers[0].Asset)
+	}
+	if interestTransfers[0].Amount != "0.05" {
+		t.Errorf("interest[0] Amount = %q, want 0.05", interestTransfers[0].Amount)
+	}
+
+	// Second interest: HYPE
+	if interestTransfers[1].Asset != "HYPE" {
+		t.Errorf("interest[1] Asset = %q, want HYPE", interestTransfers[1].Asset)
+	}
+	if interestTransfers[1].Amount != "1.5" {
+		t.Errorf("interest[1] Amount = %q, want 1.5", interestTransfers[1].Amount)
+	}
+}
+
 func TestFetchDepositsReturnsPriceRecords(t *testing.T) {
 	entries := []hlLedgerEntry{
 		{
@@ -1971,8 +2312,19 @@ func TestFetchDepositsReturnsPriceRecords(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(entries)
+
+		reqType := body["type"].(string)
+		switch reqType {
+		case "userNonFundingLedgerUpdates":
+			json.NewEncoder(w).Encode(entries)
+		case "userBorrowLendInterest":
+			json.NewEncoder(w).Encode([]hlBorrowLendInterest{})
+		default:
+			json.NewEncoder(w).Encode([]interface{}{})
+		}
 	}))
 	defer server.Close()
 

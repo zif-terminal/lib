@@ -18,9 +18,21 @@ type ExchangeAccountInput = models.ExchangeAccountInput
 // AccountListFilter controls which accounts ListAccounts returns.
 // Nil fields mean "don't filter on this flag". When both are nil, all
 // accounts are returned.
+//
+// OrSyncResetRequested / OrProcessorResetRequested widen the query with
+// an _or clause so that accounts with a pending reset are also returned
+// even when the corresponding enabled flag is false. Example: setting
+// SyncEnabled=true + OrSyncResetRequested=true produces:
+//
+//	_or: [{sync_enabled: {_eq: true}}, {sync_reset_requested: {_eq: true}}]
 type AccountListFilter struct {
 	SyncEnabled       *bool
 	ProcessingEnabled *bool
+
+	// When true, adds an _or branch for sync_reset_requested = true.
+	OrSyncResetRequested *bool
+	// When true, adds an _or branch for processor_reset_requested = true.
+	OrProcessorResetRequested *bool
 }
 
 // GetAccount retrieves a single exchange account by ID
@@ -70,11 +82,36 @@ func (c *Client) GetAccount(ctx context.Context, id string) (*ExchangeAccount, e
 // Pass AccountListFilter{} to get all accounts.
 func (c *Client) ListAccounts(ctx context.Context, f AccountListFilter) ([]*ExchangeAccount, error) {
 	where := map[string]interface{}{}
-	if f.SyncEnabled != nil {
+
+	// Build _or branches when a reset flag should widen the result set.
+	// e.g. SyncEnabled=true + OrSyncResetRequested=true →
+	//   _or: [{sync_enabled: {_eq: true}}, {sync_reset_requested: {_eq: true}}]
+	var orBranches []map[string]interface{}
+
+	if f.SyncEnabled != nil && f.OrSyncResetRequested != nil && *f.OrSyncResetRequested {
+		orBranches = append(orBranches,
+			map[string]interface{}{"sync_enabled": map[string]interface{}{"_eq": *f.SyncEnabled}},
+			map[string]interface{}{"sync_reset_requested": map[string]interface{}{"_eq": true}},
+		)
+	} else if f.SyncEnabled != nil {
 		where["sync_enabled"] = map[string]interface{}{"_eq": *f.SyncEnabled}
+	} else if f.OrSyncResetRequested != nil && *f.OrSyncResetRequested {
+		where["sync_reset_requested"] = map[string]interface{}{"_eq": true}
 	}
-	if f.ProcessingEnabled != nil {
+
+	if f.ProcessingEnabled != nil && f.OrProcessorResetRequested != nil && *f.OrProcessorResetRequested {
+		orBranches = append(orBranches,
+			map[string]interface{}{"processing_enabled": map[string]interface{}{"_eq": *f.ProcessingEnabled}},
+			map[string]interface{}{"processor_reset_requested": map[string]interface{}{"_eq": true}},
+		)
+	} else if f.ProcessingEnabled != nil {
 		where["processing_enabled"] = map[string]interface{}{"_eq": *f.ProcessingEnabled}
+	} else if f.OrProcessorResetRequested != nil && *f.OrProcessorResetRequested {
+		where["processor_reset_requested"] = map[string]interface{}{"_eq": true}
+	}
+
+	if len(orBranches) > 0 {
+		where["_or"] = orBranches
 	}
 
 	query := `

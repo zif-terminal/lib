@@ -2,6 +2,7 @@ package hyperliquid
 
 import (
 	"context"
+	"sort"
 	"time"
 )
 
@@ -56,12 +57,67 @@ func (c *Client) fetchAllFills(ctx context.Context, user string, since time.Time
 			break
 		}
 
-		// Paginate: set startTime to last fill's timestamp + 1ms
+		// Paginate: set startTime to last fill's timestamp (not +1).
+		// Multiple fills can share the same millisecond. Using +1 would
+		// skip fills at the page boundary. We dedup by tid below.
 		lastTime := fills[len(fills)-1].Time
-		startTime = lastTime + 1
+		if lastTime == startTime {
+			// All fills on this page share the same timestamp — cannot
+			// paginate further without skipping. Move +1ms to avoid
+			// an infinite loop. Fills at this exact ms are already captured.
+			startTime = lastTime + 1
+		} else {
+			startTime = lastTime
+		}
 	}
 
-	return all, nil
+	// Supplement with userFills (most recent 2000). userFillsByTime misses
+	// certain fill types (e.g., Spot Dust Conversions) that userFills returns.
+	if ctx.Err() == nil {
+		var recentFills []hlFill
+		recentReq := map[string]interface{}{
+			"type": "userFills",
+			"user": user,
+		}
+		if err := c.doPost(ctx, recentReq, &recentFills); err == nil {
+			// Only include fills at or after the original since time
+			sinceMs := clampUnixMilli(since)
+			for _, f := range recentFills {
+				if f.Time >= sinceMs {
+					all = append(all, f)
+				}
+			}
+		}
+		// Ignore errors — userFills is supplementary
+	}
+
+	// Dedup by tid: overlapping pages and userFills may return duplicates.
+	// tid=0 fills (e.g., dust conversions) use a composite key to avoid
+	// collapsing distinct fills that share tid=0.
+	type dedupKey struct {
+		Tid  int64
+		Time int64
+		Coin string
+	}
+	seen := make(map[dedupKey]bool, len(all))
+	deduped := make([]hlFill, 0, len(all))
+	for _, f := range all {
+		k := dedupKey{Tid: f.Tid, Time: f.Time, Coin: f.Coin}
+		if f.Tid != 0 {
+			k = dedupKey{Tid: f.Tid} // non-zero tid is globally unique
+		}
+		if !seen[k] {
+			seen[k] = true
+			deduped = append(deduped, f)
+		}
+	}
+
+	// Sort by time ascending for consistent processing order.
+	sort.Slice(deduped, func(i, j int) bool {
+		return deduped[i].Time < deduped[j].Time
+	})
+
+	return deduped, nil
 }
 
 // fetchAllFunding fetches all funding entries for a user since the given time.
@@ -79,6 +135,50 @@ func (c *Client) fetchAllFunding(ctx context.Context, user string, since time.Ti
 	}
 
 	return entries, nil
+}
+
+// maxBorrowLendEntriesPerPage is the number of borrow/lend interest entries we expect before paginating.
+const maxBorrowLendEntriesPerPage = 500
+
+// fetchAllBorrowLendInterest fetches all borrow/lend interest entries for a user since the given time.
+// The API returns entries ascending by time when startTime is set.
+func (c *Client) fetchAllBorrowLendInterest(ctx context.Context, user string, since time.Time) ([]hlBorrowLendInterest, error) {
+	startTime := clampUnixMilli(since)
+	var all []hlBorrowLendInterest
+
+	for {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		req := map[string]interface{}{
+			"type":      "userBorrowLendInterest",
+			"user":      user,
+			"startTime": startTime,
+		}
+
+		var entries []hlBorrowLendInterest
+		if err := c.doPost(ctx, req, &entries); err != nil {
+			return nil, err
+		}
+
+		if len(entries) == 0 {
+			break
+		}
+
+		all = append(all, entries...)
+
+		// If we got fewer than threshold, we've likely got everything
+		if len(entries) < maxBorrowLendEntriesPerPage {
+			break
+		}
+
+		// Paginate by setting startTime to last entry's timestamp + 1ms
+		lastTime := entries[len(entries)-1].Time
+		startTime = lastTime + 1
+	}
+
+	return all, nil
 }
 
 // fetchAllLedgerUpdates fetches all non-funding ledger updates for a user since the given time.

@@ -59,8 +59,11 @@ type hlLedgerDelta struct {
 	Nonce       int64  `json:"nonce"`       // Nonce
 	Destination string `json:"destination"` // Destination address (for withdrawals/spotTransfer)
 	User        string `json:"user"`        // Source user address (for spotTransfer outbound)
-	ToPerp      bool   `json:"toPerp"`      // Direction for accountClassTransfer (true = spot→perp)
-	UsdcValue   string `json:"usdcValue"`   // USDC value of spot transfer (for price derivation)
+	ToPerp          bool   `json:"toPerp"`          // Direction for accountClassTransfer (true = spot→perp)
+	UsdcValue       string `json:"usdcValue"`       // USDC value of spot transfer (for price derivation)
+	NetWithdrawnUsd string `json:"netWithdrawnUsd"` // Actual USDC returned to user on vaultWithdraw
+	IsDeposit       bool   `json:"isDeposit"`       // Direction for cStakingTransfer (true = stake/leave balance)
+	Vault           string `json:"vault"`           // Vault address (for vault-related entries)
 }
 
 // hlClearinghouseState represents the clearinghouse state for a user
@@ -77,6 +80,7 @@ type hlClearinghouseState struct {
 	} `json:"assetPositions"`
 	MarginSummary struct {
 		AccountValue string `json:"accountValue"`
+		TotalRawUsd  string `json:"totalRawUsd"`
 	} `json:"marginSummary"`
 }
 
@@ -88,4 +92,38 @@ type hlSpotClearinghouseState struct {
 		Total string `json:"total"`
 		Hold  string `json:"hold"`
 	} `json:"balances"`
+}
+
+// hlSubAccount represents a subaccount returned by the subAccounts API
+// Request: {"type": "subAccounts", "user": "0x..."}
+// Returns null (no subaccounts) or a list of hlSubAccount.
+type hlSubAccount struct {
+	SubAccountUser string `json:"subAccountUser"`
+	Name           string `json:"name"`
+	Master         string `json:"master"`
+}
+
+// hlBorrowLendInterest represents a single borrow/lend interest entry from Hyperliquid API
+// Request: {"type": "userBorrowLendInterest", "user": "0x...", "startTime": 0}
+// Returns hourly interest entries per token, sorted ascending by time.
+type hlBorrowLendInterest struct {
+	Time   int64  `json:"time"`   // Unix milliseconds
+	Token  string `json:"token"`  // e.g., "USDC", "HYPE"
+	Borrow string `json:"borrow"` // Interest paid (cost)
+	Supply string `json:"supply"` // Interest earned (yield)
+}
+
+// hlVaultEquity represents a vault the user participates in
+// Request: {"type": "userVaultEquities", "user": "0x..."}
+type hlVaultEquity struct {
+	VaultAddress string `json:"vaultAddress"`
+	Equity       string `json:"equity"`
+}
+
+// hlVaultDetails represents vault details from the API
+// Request: {"type": "vaultDetails", "vaultAddress": "0x..."}
+type hlVaultDetails struct {
+	Name       string `json:"name"`
+	VaultAddress string `json:"vaultAddress"`
+	Leader     string `json:"leader"`
 }
