@@ -100,6 +100,7 @@ type DBClient interface {
 	ListAccounts(ctx context.Context, filter AccountListFilter) ([]*ExchangeAccount, error)
 	CreateAccount(ctx context.Context, input *ExchangeAccountInput) (*ExchangeAccount, error)
 	UpdateAccount(ctx context.Context, id string, input *ExchangeAccountInput) (*ExchangeAccount, error)
+	UpdateAccountLabel(ctx context.Context, accountID string, label string) error
 	DeleteAccount(ctx context.Context, id string) error
 
 	// Trade methods

@@ -640,6 +640,60 @@ func TestClient_UpdateAccountLastSynced_NotFound(t *testing.T) {
 	}
 }
 
+func TestClient_UpdateAccountLabel(t *testing.T) {
+	ctx := context.Background()
+	id := "test-account-id"
+	label := "arb"
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"update_exchange_accounts_by_pk": map[string]interface{}{
+					"id": id,
+				},
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	if err := client.UpdateAccountLabel(ctx, id, label); err != nil {
+		t.Fatalf("UpdateAccountLabel failed: %v", err)
+	}
+}
+
+func TestClient_UpdateAccountLabel_NotFound(t *testing.T) {
+	ctx := context.Background()
+
+	mockClient := &mockGraphQLClient{
+		runFunc: func(ctx context.Context, req *graphql.Request, resp interface{}) error {
+			respData := map[string]interface{}{
+				"update_exchange_accounts_by_pk": nil,
+			}
+			data, _ := json.Marshal(respData)
+			return json.Unmarshal(data, resp)
+		},
+	}
+
+	client := NewClientWithGraphQL(mockClient, ClientConfig{
+		URL:         "http://localhost:8080/v1/graphql",
+		AdminSecret: "test-secret",
+	})
+
+	err := client.UpdateAccountLabel(ctx, "non-existent-id", "some-label")
+	if err == nil {
+		t.Fatal("Expected error for non-existent account")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("Expected ErrNotFound, got: %v", err)
+	}
+}
+
 func TestClient_UpdateAccountTags(t *testing.T) {
 	ctx := context.Background()
 	accountID := "test-account-id"

@@ -366,6 +366,46 @@ func (c *Client) UpdateAccountTags(ctx context.Context, accountID string, tags [
 	return nil
 }
 
+// UpdateAccountLabel sets the label column on an exchange account.
+//
+// Intended for one-shot discovery-time population of labels, e.g. from
+// FetchAccountName. The caller is responsible for the "only fill when empty"
+// guard — this method unconditionally overwrites whatever is there, so
+// callers must check label == nil / "" first to avoid clobbering user-set
+// values.
+//
+// Updates ONLY the label column; all other columns are untouched.
+func (c *Client) UpdateAccountLabel(ctx context.Context, accountID string, label string) error {
+	query := `
+		mutation UpdateAccountLabel($id: uuid!, $label: String!) {
+			update_exchange_accounts_by_pk(pk_columns: {id: $id}, _set: {label: $label}) {
+				id
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id":    accountID,
+		"label": label,
+	})
+
+	var resp struct {
+		UpdateExchangeAccountsByPk *struct {
+			ID string `json:"id"`
+		} `json:"update_exchange_accounts_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to update account label: %w", err)
+	}
+
+	if resp.UpdateExchangeAccountsByPk == nil {
+		return notFoundError("account", accountID)
+	}
+
+	return nil
+}
+
 // UpdateAccountLastSynced updates the last_synced_at timestamp for an account
 func (c *Client) UpdateAccountLastSynced(ctx context.Context, accountID string) error {
 	query := `
