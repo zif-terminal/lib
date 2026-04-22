@@ -2369,3 +2369,209 @@ func TestFetchDepositsReturnsPriceRecords(t *testing.T) {
 		t.Errorf("prices[1].Price = %q, want 25", prices[1].Price)
 	}
 }
+
+// newHLFetchAccountNameServer stands up a mock Hyperliquid info server that
+// responds to subAccounts requests with a fixed payload. Returns the server
+// and a pointer to the number of subAccounts calls observed.
+func newHLFetchAccountNameServer(t *testing.T, expectedMaster string, payload string) (*httptest.Server, *int32) {
+	t.Helper()
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("failed to decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		if body["type"] != "subAccounts" {
+			t.Errorf("unexpected request type: %v", body["type"])
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		atomic.AddInt32(&calls, 1)
+		if expectedMaster != "" && body["user"] != expectedMaster {
+			t.Errorf("unexpected user: got %v, want %q", body["user"], expectedMaster)
+		}
+		w.Write([]byte(payload))
+	}))
+	return server, &calls
+}
+
+func TestFetchAccountName_MasterReturnsEmptyWithoutHTTPCall(t *testing.T) {
+	calls := int32(0)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Write([]byte("null"))
+	}))
+	defer server.Close()
+
+	c := &Client{apiURL: server.URL, httpClient: &http.Client{Timeout: 5 * time.Second}}
+	acct := &models.ExchangeAccount{
+		ID:                uuid.NewString(),
+		AccountIdentifier: "0xabc",
+		AccountType:       "main",
+	}
+
+	name, err := c.FetchAccountName(context.Background(), acct)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "" {
+		t.Errorf("name = %q, want empty", name)
+	}
+	if atomic.LoadInt32(&calls) != 0 {
+		t.Errorf("expected 0 HTTP calls for master account, got %d", calls)
+	}
+}
+
+func TestFetchAccountName_SubAccountMatchByAddress(t *testing.T) {
+	master := "0x1111111111111111111111111111111111111111"
+	sub := "0x2222222222222222222222222222222222222222"
+	payload := `[
+		{"subAccountUser":"0x9999999999999999999999999999999999999999","name":"Other","master":"` + master + `"},
+		{"subAccountUser":"` + sub + `","name":"Trading Sub","master":"` + master + `"}
+	]`
+	server, calls := newHLFetchAccountNameServer(t, master, payload)
+	defer server.Close()
+
+	c := &Client{apiURL: server.URL, httpClient: &http.Client{Timeout: 5 * time.Second}}
+	meta, _ := json.Marshal(map[string]interface{}{"master_wallet": master})
+	acct := &models.ExchangeAccount{
+		ID:                  uuid.NewString(),
+		AccountIdentifier:   sub,
+		AccountType:         "sub_account",
+		AccountTypeMetadata: meta,
+	}
+
+	name, err := c.FetchAccountName(context.Background(), acct)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "Trading Sub" {
+		t.Errorf("name = %q, want %q", name, "Trading Sub")
+	}
+	if atomic.LoadInt32(calls) != 1 {
+		t.Errorf("expected 1 HTTP call, got %d", *calls)
+	}
+}
+
+func TestFetchAccountName_SubAccountMatchCaseInsensitive(t *testing.T) {
+	master := "0x1111111111111111111111111111111111111111"
+	// Account identifier lowercased; API returns uppercase — must still match.
+	subUpper := "0xAAAABBBBCCCCDDDDEEEEFFFF0000111122223333"
+	subLower := strings.ToLower(subUpper)
+	payload := `[
+		{"subAccountUser":"` + subUpper + `","name":"Mixed Case Sub","master":"` + master + `"}
+	]`
+	server, _ := newHLFetchAccountNameServer(t, master, payload)
+	defer server.Close()
+
+	c := &Client{apiURL: server.URL, httpClient: &http.Client{Timeout: 5 * time.Second}}
+	meta, _ := json.Marshal(map[string]interface{}{"master_wallet": master})
+	acct := &models.ExchangeAccount{
+		ID:                  uuid.NewString(),
+		AccountIdentifier:   subLower,
+		AccountType:         "sub_account",
+		AccountTypeMetadata: meta,
+	}
+
+	name, err := c.FetchAccountName(context.Background(), acct)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "Mixed Case Sub" {
+		t.Errorf("name = %q, want %q", name, "Mixed Case Sub")
+	}
+}
+
+func TestFetchAccountName_SubAccountNoMatchReturnsEmpty(t *testing.T) {
+	// API returns a different subaccount; ours isn't in the list (removed upstream).
+	master := "0x1111111111111111111111111111111111111111"
+	payload := `[
+		{"subAccountUser":"0x9999999999999999999999999999999999999999","name":"Other","master":"` + master + `"}
+	]`
+	server, _ := newHLFetchAccountNameServer(t, master, payload)
+	defer server.Close()
+
+	c := &Client{apiURL: server.URL, httpClient: &http.Client{Timeout: 5 * time.Second}}
+	meta, _ := json.Marshal(map[string]interface{}{"master_wallet": master})
+	acct := &models.ExchangeAccount{
+		ID:                  uuid.NewString(),
+		AccountIdentifier:   "0x2222222222222222222222222222222222222222",
+		AccountType:         "sub_account",
+		AccountTypeMetadata: meta,
+	}
+
+	name, err := c.FetchAccountName(context.Background(), acct)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "" {
+		t.Errorf("name = %q, want empty (no match)", name)
+	}
+}
+
+func TestFetchAccountName_SubAccountNullResponseReturnsEmpty(t *testing.T) {
+	// subAccounts returns "null" (master has no subaccounts).
+	master := "0x1111111111111111111111111111111111111111"
+	server, _ := newHLFetchAccountNameServer(t, master, `null`)
+	defer server.Close()
+
+	c := &Client{apiURL: server.URL, httpClient: &http.Client{Timeout: 5 * time.Second}}
+	meta, _ := json.Marshal(map[string]interface{}{"master_wallet": master})
+	acct := &models.ExchangeAccount{
+		ID:                  uuid.NewString(),
+		AccountIdentifier:   "0x2222222222222222222222222222222222222222",
+		AccountType:         "sub_account",
+		AccountTypeMetadata: meta,
+	}
+
+	name, err := c.FetchAccountName(context.Background(), acct)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "" {
+		t.Errorf("name = %q, want empty", name)
+	}
+}
+
+func TestFetchAccountName_SubAccountMissingMasterErrors(t *testing.T) {
+	c := NewClient()
+	acct := &models.ExchangeAccount{
+		ID:                uuid.NewString(),
+		AccountIdentifier: "0x2222222222222222222222222222222222222222",
+		AccountType:       "sub_account",
+		// No AccountTypeMetadata → master_wallet missing.
+	}
+	_, err := c.FetchAccountName(context.Background(), acct)
+	if err == nil {
+		t.Fatal("expected error for missing master_wallet")
+	}
+}
+
+func TestFetchAccountName_VaultReturnsEmpty(t *testing.T) {
+	calls := int32(0)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Write([]byte("null"))
+	}))
+	defer server.Close()
+
+	c := &Client{apiURL: server.URL, httpClient: &http.Client{Timeout: 5 * time.Second}}
+	acct := &models.ExchangeAccount{
+		ID:                uuid.NewString(),
+		AccountIdentifier: "0xvault",
+		AccountType:       "vault",
+	}
+
+	name, err := c.FetchAccountName(context.Background(), acct)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "" {
+		t.Errorf("name = %q, want empty for vault", name)
+	}
+	if atomic.LoadInt32(&calls) != 0 {
+		t.Errorf("expected 0 HTTP calls for vault, got %d", calls)
+	}
+}

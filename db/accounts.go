@@ -154,7 +154,7 @@ func (c *Client) ListAccounts(ctx context.Context, f AccountListFilter) ([]*Exch
 // CreateAccount creates a new exchange account
 func (c *Client) CreateAccount(ctx context.Context, input *ExchangeAccountInput) (*ExchangeAccount, error) {
 	query := `
-		mutation CreateAccount($exchange_id: uuid!, $account_identifier: String!, $account_type: String!, $account_type_metadata: jsonb, $wallet_id: uuid, $status: String) {
+		mutation CreateAccount($exchange_id: uuid!, $account_identifier: String!, $account_type: String!, $account_type_metadata: jsonb, $wallet_id: uuid, $status: String, $label: String) {
 			insert_exchange_accounts_one(object: {
 				exchange_id: $exchange_id
 				account_identifier: $account_identifier
@@ -162,6 +162,7 @@ func (c *Client) CreateAccount(ctx context.Context, input *ExchangeAccountInput)
 				account_type_metadata: $account_type_metadata
 				wallet_id: $wallet_id
 				status: $status
+				label: $label
 			}) {
 				id
 				account_identifier
@@ -169,6 +170,7 @@ func (c *Client) CreateAccount(ctx context.Context, input *ExchangeAccountInput)
 				account_type_metadata
 				wallet_id
 				status
+				label
 				exchange {
 					id
 					name
@@ -200,6 +202,11 @@ func (c *Client) CreateAccount(ctx context.Context, input *ExchangeAccountInput)
 	// Include status if provided
 	if input.Status != "" {
 		vars["status"] = input.Status
+	}
+
+	// Include label if provided (non-nil, non-empty)
+	if input.Label != nil && *input.Label != "" {
+		vars["label"] = *input.Label
 	}
 
 	req := c.graphqlRequestWithVars(query, vars)

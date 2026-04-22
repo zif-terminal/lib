@@ -949,3 +949,101 @@ func TestDeriveBaseQuote(t *testing.T) {
 		}
 	}
 }
+
+func TestFetchAccountName_ReturnsNameFromAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("by"); got != "index" {
+			t.Errorf("expected by=index, got %q", got)
+		}
+		if got := r.URL.Query().Get("value"); got != "42" {
+			t.Errorf("expected value=42, got %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"code": 200,
+			"accounts": []map[string]interface{}{
+				{"account_index": 42, "name": "My Trading Account"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	c := &Client{baseURL: server.URL, httpClient: &http.Client{Timeout: 5 * time.Second}}
+	acct := &models.ExchangeAccount{
+		ID:                uuid.NewString(),
+		AccountIdentifier: "42",
+	}
+
+	name, err := c.FetchAccountName(context.Background(), acct)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "My Trading Account" {
+		t.Errorf("name = %q, want %q", name, "My Trading Account")
+	}
+}
+
+func TestFetchAccountName_EmptyNameReturnsEmpty(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"code": 200,
+			"accounts": []map[string]interface{}{
+				{"account_index": 7, "name": ""},
+			},
+		})
+	}))
+	defer server.Close()
+
+	c := &Client{baseURL: server.URL, httpClient: &http.Client{Timeout: 5 * time.Second}}
+	acct := &models.ExchangeAccount{
+		ID:                uuid.NewString(),
+		AccountIdentifier: "7",
+	}
+
+	name, err := c.FetchAccountName(context.Background(), acct)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "" {
+		t.Errorf("name = %q, want empty", name)
+	}
+}
+
+func TestFetchAccountName_AccountNotFoundReturnsEmpty(t *testing.T) {
+	// Lighter returns HTTP 200 with code 21100 for unknown accounts.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"code":    21100,
+			"message": "account not found",
+		})
+	}))
+	defer server.Close()
+
+	c := &Client{baseURL: server.URL, httpClient: &http.Client{Timeout: 5 * time.Second}}
+	acct := &models.ExchangeAccount{
+		ID:                uuid.NewString(),
+		AccountIdentifier: "99",
+	}
+
+	name, err := c.FetchAccountName(context.Background(), acct)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != "" {
+		t.Errorf("name = %q, want empty for not-found", name)
+	}
+}
+
+func TestFetchAccountName_InvalidAccountIndexErrors(t *testing.T) {
+	c := NewClient()
+	acct := &models.ExchangeAccount{
+		ID:                uuid.NewString(),
+		AccountIdentifier: "not-a-number",
+	}
+	_, err := c.FetchAccountName(context.Background(), acct)
+	if err == nil {
+		t.Fatal("expected error for non-numeric account_identifier")
+	}
+}

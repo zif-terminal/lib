@@ -73,4 +73,14 @@ type ExchangeClient interface {
 		account *models.ExchangeAccount,
 		since time.Time,
 	) ([]*models.Settlement, error)
+
+	// FetchAccountName fetches the exchange-assigned display name for an account.
+	// Returns ("", nil) when the exchange does not surface a name for the account
+	// (e.g., master/main accounts, exchanges without a naming API, account not found).
+	// Only intended for one-shot discovery-time population of account labels; callers
+	// should NOT use this for periodic refreshes — names may be user-edited downstream.
+	FetchAccountName(
+		ctx context.Context,
+		account *models.ExchangeAccount,
+	) (string, error)
 }

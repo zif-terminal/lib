@@ -19,6 +19,7 @@ type ExchangeAccount struct {
 	AccountIdentifier   string          `json:"account_identifier" db:"account_identifier"`
 	AccountType         string          `json:"account_type" db:"account_type"` // "main", "sub_account", "vault" - FK to exchange_account_types.code
 	AccountTypeMetadata json.RawMessage `json:"account_type_metadata" db:"account_type_metadata"` // JSONB
+	Label               *string         `json:"label,omitempty" db:"label"`                       // Display label (user-editable; auto-populated at discovery)
 	WalletID            *string         `json:"wallet_id,omitempty" db:"wallet_id"`               // FK to wallets.id
 	Status              string          `json:"status" db:"status"`                               // "active", "needs_token", "disabled"
 	SyncEnabled             bool   `json:"sync_enabled" db:"sync_enabled"`
@@ -37,6 +38,7 @@ type ExchangeAccountInput struct {
 	AccountIdentifier   string          `json:"account_identifier"`
 	AccountType         string          `json:"account_type"` // Uses code string ('main', 'sub_account', 'vault')
 	AccountTypeMetadata json.RawMessage `json:"account_type_metadata,omitempty"`
+	Label               *string         `json:"label,omitempty"`
 	WalletID            *string         `json:"wallet_id,omitempty"`
 	Status              string          `json:"status,omitempty"` // "active", "needs_token", "disabled"
 }

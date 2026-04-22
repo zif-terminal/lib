@@ -218,6 +218,65 @@ func (c *Client) discoverLeaderVaults(ctx context.Context, walletAddress string)
 	return accounts, nil
 }
 
+// FetchAccountName returns the exchange-assigned subaccount name from the
+// Hyperliquid subAccounts endpoint. Master/main accounts and vaults return "" —
+// Hyperliquid does not surface names for them via this API.
+//
+// Looks up the master wallet from account.AccountTypeMetadata["master_wallet"]
+// (populated by DiscoverAccounts), calls POST /info {type:"subAccounts",user:master},
+// and returns the name of the entry whose subAccountUser matches account.AccountIdentifier
+// (case-insensitive). Returns "" if the subaccount was removed upstream.
+func (c *Client) FetchAccountName(ctx context.Context, account *models.ExchangeAccount) (string, error) {
+	if account == nil {
+		return "", fmt.Errorf("account is required")
+	}
+
+	// Only subaccounts have names surfaced via the API.
+	if account.AccountType != "sub_account" {
+		return "", nil
+	}
+
+	// Extract master wallet address from metadata.
+	master := ""
+	if account.AccountTypeMetadata != nil {
+		var meta map[string]interface{}
+		if err := json.Unmarshal(account.AccountTypeMetadata, &meta); err == nil {
+			if v, ok := meta["master_wallet"].(string); ok {
+				master = v
+			}
+		}
+	}
+	if master == "" {
+		return "", fmt.Errorf("master_wallet missing from account metadata")
+	}
+
+	// The API returns null when the master has no subaccounts.
+	var raw json.RawMessage
+	if err := c.doPost(ctx, map[string]string{
+		"type": "subAccounts",
+		"user": master,
+	}, &raw); err != nil {
+		return "", fmt.Errorf("failed to fetch subaccounts: %w", err)
+	}
+	if raw == nil || string(raw) == "null" {
+		return "", nil
+	}
+
+	var subs []hlSubAccount
+	if err := json.Unmarshal(raw, &subs); err != nil {
+		return "", fmt.Errorf("failed to parse subaccounts response: %w", err)
+	}
+
+	for _, s := range subs {
+		if strings.EqualFold(s.SubAccountUser, account.AccountIdentifier) {
+			return s.Name, nil
+		}
+	}
+
+	// Subaccount was removed upstream — no match is not an error.
+	return "", nil
+}
+
 // fetchVaultDetails fetches the details of a specific vault.
 func (c *Client) fetchVaultDetails(ctx context.Context, vaultAddress string) (*hlVaultDetails, error) {
 	// The vaultDetails response wraps vault info in various fields.

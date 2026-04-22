@@ -259,6 +259,15 @@ func (c *Client) DiscoverAccounts(
 	return nil, iface.ErrNotImplemented
 }
 
+// FetchAccountName is a no-op for Variational — accounts are created manually
+// via the OMNI integration and labels are set by the user at creation time.
+func (c *Client) FetchAccountName(
+	ctx context.Context,
+	account *models.ExchangeAccount,
+) (string, error) {
+	return "", nil
+}
+
 // derefString safely dereferences a *string, returning "" if nil.
 func derefString(s *string) string {
 	if s == nil {

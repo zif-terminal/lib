@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/zif-terminal/lib/models"
 )
 
 func TestDriftClient_DiscoverAccounts_Success(t *testing.T) {
@@ -169,5 +173,52 @@ func TestDriftClient_DiscoverAccounts_APIError(t *testing.T) {
 	_, err := client.DiscoverAccounts(ctx, "some-wallet")
 	if err == nil {
 		t.Fatal("Expected error for API error")
+	}
+}
+
+// FetchAccountName on Drift is a stub that always returns "" without making
+// any HTTP calls. We verify both behaviors: the empty string and the absence
+// of network activity (a bare client with no baseURL would fail any call).
+func TestDriftClient_FetchAccountName_StubReturnsEmpty(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := &Client{
+		baseURL:     server.URL,
+		httpClient:  &http.Client{Timeout: 5 * time.Second},
+		marketCache: newMarketCache(1 * time.Hour),
+	}
+
+	cases := []struct {
+		name        string
+		accountType string
+	}{
+		{"main", "main"},
+		{"sub_account", "sub_account"},
+		{"vault", "vault"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			acct := &models.ExchangeAccount{
+				ID:                uuid.NewString(),
+				AccountIdentifier: "C13FZykQ123abc",
+				AccountType:       tc.accountType,
+			}
+			name, err := client.FetchAccountName(context.Background(), acct)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if name != "" {
+				t.Errorf("name = %q, want empty", name)
+			}
+		})
+	}
+
+	if got := atomic.LoadInt32(&calls); got != 0 {
+		t.Errorf("expected zero HTTP calls for stub, got %d", got)
 	}
 }

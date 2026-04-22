@@ -8,6 +8,19 @@ import (
 	"github.com/zif-terminal/lib/models"
 )
 
+// FetchAccountName is a no-op stub for Drift.
+//
+// Drift does not expose subaccount names via its public data API — the name
+// field visible in the Drift UI is stored on-chain inside each subaccount's
+// UserAccount struct, which requires RPC access to the Solana program. Pulling
+// it is out of scope for discovery-time label population, so we return "".
+//
+// If/when on-chain name fetching is added, this method is the single place
+// to wire it up without touching the detector.
+func (c *Client) FetchAccountName(ctx context.Context, account *models.ExchangeAccount) (string, error) {
+	return "", nil
+}
+
 // DiscoverAccounts discovers all syncable accounts for a given Solana wallet address
 // Drift uses subaccounts tied to a wallet authority
 // GET /authority/{walletAddress}/accounts
