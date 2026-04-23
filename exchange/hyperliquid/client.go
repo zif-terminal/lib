@@ -164,7 +164,10 @@ func (c *Client) FetchTrades(
 	trades := make([]*models.TradeInput, 0, len(fills))
 	prices := make([]*models.PriceRecord, 0, len(fills))
 	for _, fill := range fills {
-		trade := transformFill(fill, accountUUID)
+		trade, err := transformFill(fill, accountUUID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to transform fill: %w", err)
+		}
 		if err := c.resolveSpotTradeNames(ctx, trade); err != nil {
 			return nil, nil, fmt.Errorf("failed to resolve spot coin name for %q: %w", fill.Coin, err)
 		}
@@ -429,7 +432,13 @@ func (c *Client) resolveSpotTradeNames(ctx context.Context, trade *models.TradeI
 // transformFill converts a Hyperliquid fill to a TradeInput.
 // Note: spot fills with @N coin names will have BaseAsset="@N" after this call.
 // Call resolveSpotTradeNames to resolve them to real token names.
-func transformFill(fill hlFill, accountUUID uuid.UUID) *models.TradeInput {
+//
+// Returns an error if the fill is malformed — in particular, if it carries a
+// non-zero fee with an empty feeToken. Hyperliquid spot fees are denominated in
+// the asset RECEIVED (e.g., USDH on USDH buys, USDC on sells); blindly defaulting
+// to USDC produces phantom balance deltas in the processor, so we refuse to
+// guess and fail loudly instead.
+func transformFill(fill hlFill, accountUUID uuid.UUID) (*models.TradeInput, error) {
 	coin := fill.Coin
 	marketType := "perp"
 	baseAsset := coin
@@ -469,6 +478,11 @@ func transformFill(fill hlFill, accountUUID uuid.UUID) *models.TradeInput {
 
 	fee := cleanDecimal(fill.Fee)
 
+	feeAsset, err := deriveFeeAsset(fill)
+	if err != nil {
+		return nil, err
+	}
+
 	tradeID := strconv.FormatInt(fill.Tid, 10)
 	if fill.Tid == 0 {
 		h := fmt.Sprintf("%d|%s|%s|%s|%s|%d", fill.Time, fill.Coin, fill.Side, fill.Px, fill.Sz, fill.Oid)
@@ -487,8 +501,32 @@ func transformFill(fill hlFill, accountUUID uuid.UUID) *models.TradeInput {
 		Timestamp:         time.UnixMilli(fill.Time).UTC(),
 		ExchangeAccountID: accountUUID,
 		MarketType:        marketType,
-		FeeAsset:          "USDC",
+		FeeAsset:          feeAsset,
+	}, nil
+}
+
+// deriveFeeAsset returns the fee denomination for a fill, enforcing that every
+// non-zero-fee fill MUST carry a feeToken. Hyperliquid spot fills charge fees in
+// the asset RECEIVED (USDH on USDH buys, USDC on sells), which is why we must
+// honour feeToken rather than hardcoding USDC.
+//
+// Fails loudly on malformed fills (non-zero fee with empty feeToken) instead of
+// silently defaulting — a silent default is exactly how the original bug
+// produced phantom USDH/USDC positions.
+func deriveFeeAsset(fill hlFill) (string, error) {
+	token := strings.ToUpper(strings.TrimSpace(fill.FeeToken))
+	fee := cleanDecimal(fill.Fee)
+	if token == "" {
+		// A zero fee with no token is acceptable (e.g., synthetic opens, some
+		// pre-fee-token fills), but still needs a deterministic label. Default
+		// to USDC per HL perp convention — safe because the fee is 0 so the
+		// token is purely a label, never used in balance math.
+		if fee == "" || fee == "0" || fee == "-0" {
+			return "USDC", nil
+		}
+		return "", fmt.Errorf("hyperliquid fill %d has non-zero fee %s but empty feeToken — refusing to default", fill.Tid, fill.Fee)
 	}
+	return token, nil
 }
 
 // transformFunding converts a Hyperliquid funding entry to a TransferInput.
@@ -842,6 +880,9 @@ func synthesizePrelaunchOpenings(fills []hlFill, accountUUID uuid.UUID) []hlFill
 		// Synthesize an opening buy fill 1ms before the earliest real fill.
 		// Price = $0 (pre-launch airdrop/auction cost basis is effectively zero).
 		// TradeID uses a deterministic negative TID so it's unique and reproducible.
+		// FeeToken is set explicitly (USDC) to satisfy the deriveFeeAsset
+		// invariant that every fill carries a fee denomination. The fee itself
+		// is zero so the token is purely a label.
 		synthetic = append(synthetic, hlFill{
 			Time:          earliest.Time - 1,
 			Coin:          coin,
@@ -855,6 +896,7 @@ func synthesizePrelaunchOpenings(fills []hlFill, accountUUID uuid.UUID) []hlFill
 			StartPosition: "0",
 			Dir:           "Synthetic Open Long",
 			Oid:           0,
+			FeeToken:      "USDC",
 		})
 	}
 

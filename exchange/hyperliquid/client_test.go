@@ -72,14 +72,15 @@ func TestTransformFill(t *testing.T) {
 		{
 			name: "perp buy",
 			fill: hlFill{
-				Time: 1700000000000,
-				Coin: "ETH",
-				Side: "B",
-				Px:   "2000.50",
-				Sz:   "1.5",
-				Fee:  "0.30",
-				Tid:  12345,
-				Oid:  100,
+				Time:     1700000000000,
+				Coin:     "ETH",
+				Side:     "B",
+				Px:       "2000.50",
+				Sz:       "1.5",
+				Fee:      "0.30",
+				Tid:      12345,
+				Oid:      100,
+				FeeToken: "USDC",
 			},
 			wantBase:   "ETH",
 			wantMarket: "perp",
@@ -88,14 +89,15 @@ func TestTransformFill(t *testing.T) {
 		{
 			name: "perp sell",
 			fill: hlFill{
-				Time: 1700000000000,
-				Coin: "BTC",
-				Side: "A",
-				Px:   "35000.00",
-				Sz:   "0.1",
-				Fee:  "0.50",
-				Tid:  12346,
-				Oid:  101,
+				Time:     1700000000000,
+				Coin:     "BTC",
+				Side:     "A",
+				Px:       "35000.00",
+				Sz:       "0.1",
+				Fee:      "0.50",
+				Tid:      12346,
+				Oid:      101,
+				FeeToken: "USDC",
 			},
 			wantBase:   "BTC",
 			wantMarket: "perp",
@@ -104,14 +106,15 @@ func TestTransformFill(t *testing.T) {
 		{
 			name: "spot buy",
 			fill: hlFill{
-				Time: 1700000000000,
-				Coin: "SOL-SPOT",
-				Side: "B",
-				Px:   "60.00",
-				Sz:   "10",
-				Fee:  "0.05",
-				Tid:  12347,
-				Oid:  102,
+				Time:     1700000000000,
+				Coin:     "SOL-SPOT",
+				Side:     "B",
+				Px:       "60.00",
+				Sz:       "10",
+				Fee:      "0.05",
+				Tid:      12347,
+				Oid:      102,
+				FeeToken: "SOL",
 			},
 			wantBase:   "SOL",
 			wantMarket: "spot",
@@ -121,7 +124,10 @@ func TestTransformFill(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			trade := transformFill(tt.fill, accountUUID)
+			trade, err := transformFill(tt.fill, accountUUID)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
 			if trade.BaseAsset != tt.wantBase {
 				t.Errorf("BaseAsset = %q, want %q", trade.BaseAsset, tt.wantBase)
@@ -184,16 +190,20 @@ func TestTransformFunding(t *testing.T) {
 func TestTransformFillSlashCoin(t *testing.T) {
 	accountUUID := uuid.New()
 	fill := hlFill{
-		Time: 1700000000000,
-		Coin: "PURR/USDC",
-		Side: "B",
-		Px:   "0.001",
-		Sz:   "1000",
-		Fee:  "0.01",
-		Tid:  99,
-		Oid:  50,
+		Time:     1700000000000,
+		Coin:     "PURR/USDC",
+		Side:     "B",
+		Px:       "0.001",
+		Sz:       "1000",
+		Fee:      "0.01",
+		Tid:      99,
+		Oid:      50,
+		FeeToken: "PURR",
 	}
-	trade := transformFill(fill, accountUUID)
+	trade, err := transformFill(fill, accountUUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if trade.BaseAsset != "PURR" {
 		t.Errorf("BaseAsset = %q, want PURR", trade.BaseAsset)
 	}
@@ -809,24 +819,26 @@ func TestCleanDecimal(t *testing.T) {
 func TestFetchTradesWithMockServer(t *testing.T) {
 	fills := []hlFill{
 		{
-			Time: 1700000000000,
-			Coin: "ETH",
-			Side: "B",
-			Px:   "2000.00",
-			Sz:   "1.0",
-			Fee:  "0.20",
-			Tid:  1,
-			Oid:  10,
+			Time:     1700000000000,
+			Coin:     "ETH",
+			Side:     "B",
+			Px:       "2000.00",
+			Sz:       "1.0",
+			Fee:      "0.20",
+			Tid:      1,
+			Oid:      10,
+			FeeToken: "USDC",
 		},
 		{
-			Time: 1700000001000,
-			Coin: "BTC",
-			Side: "A",
-			Px:   "35000.00",
-			Sz:   "0.5",
-			Fee:  "0.50",
-			Tid:  2,
-			Oid:  11,
+			Time:     1700000001000,
+			Coin:     "BTC",
+			Side:     "A",
+			Px:       "35000.00",
+			Sz:       "0.5",
+			Fee:      "0.50",
+			Tid:      2,
+			Oid:      11,
+			FeeToken: "USDC",
 		},
 	}
 
@@ -1313,16 +1325,20 @@ func TestFetchBalancesWithMockServer(t *testing.T) {
 func TestTransformFillAtIndexedSpotCoin(t *testing.T) {
 	accountUUID := uuid.New()
 	fill := hlFill{
-		Time: 1700000000000,
-		Coin: "@13-SPOT",
-		Side: "B",
-		Px:   "25.00",
-		Sz:   "10",
-		Fee:  "0.01",
-		Tid:  200,
-		Oid:  300,
+		Time:     1700000000000,
+		Coin:     "@13-SPOT",
+		Side:     "B",
+		Px:       "25.00",
+		Sz:       "10",
+		Fee:      "0.01",
+		Tid:      200,
+		Oid:      300,
+		FeeToken: "USDC",
 	}
-	trade := transformFill(fill, accountUUID)
+	trade, err := transformFill(fill, accountUUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	// Before resolution, base asset should be @13
 	if trade.BaseAsset != "@13" {
@@ -1356,34 +1372,37 @@ func spotMetaHandler() http.HandlerFunc {
 		case "userFillsByTime":
 			json.NewEncoder(w).Encode([]hlFill{
 				{
-					Time: 1700000000000,
-					Coin: "@1-SPOT",
-					Side: "B",
-					Px:   "25.00",
-					Sz:   "10",
-					Fee:  "0.01",
-					Tid:  200,
-					Oid:  300,
+					Time:     1700000000000,
+					Coin:     "@1-SPOT",
+					Side:     "B",
+					Px:       "25.00",
+					Sz:       "10",
+					Fee:      "0.01",
+					Tid:      200,
+					Oid:      300,
+					FeeToken: "HYPE",
 				},
 				{
-					Time: 1700000001000,
-					Coin: "PURR/USDC",
-					Side: "A",
-					Px:   "0.001",
-					Sz:   "1000",
-					Fee:  "0.005",
-					Tid:  201,
-					Oid:  301,
+					Time:     1700000001000,
+					Coin:     "PURR/USDC",
+					Side:     "A",
+					Px:       "0.001",
+					Sz:       "1000",
+					Fee:      "0.005",
+					Tid:      201,
+					Oid:      301,
+					FeeToken: "USDC",
 				},
 				{
-					Time: 1700000002000,
-					Coin: "ETH",
-					Side: "B",
-					Px:   "2000.00",
-					Sz:   "1",
-					Fee:  "0.20",
-					Tid:  202,
-					Oid:  302,
+					Time:     1700000002000,
+					Coin:     "ETH",
+					Side:     "B",
+					Px:       "2000.00",
+					Sz:       "1",
+					Fee:      "0.20",
+					Tid:      202,
+					Oid:      302,
+					FeeToken: "USDC",
 				},
 			})
 		}
@@ -1546,7 +1565,10 @@ func TestTransformFillSpotDustConversion(t *testing.T) {
 		Oid:           40950466295,
 	}
 
-	trade := transformFill(fill, accountUUID)
+	trade, err := transformFill(fill, accountUUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if trade.MarketType != "spot" {
 		t.Errorf("MarketType = %q, want spot (dust conversion should be spot)", trade.MarketType)
@@ -1598,8 +1620,14 @@ func TestTransformFillTidZeroDeterministicUnique(t *testing.T) {
 		Oid:           40950466300,
 	}
 
-	trade1 := transformFill(fill1, accountUUID)
-	trade2 := transformFill(fill2, accountUUID)
+	trade1, err := transformFill(fill1, accountUUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	trade2, err := transformFill(fill2, accountUUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if trade1.TradeID == "0" || trade2.TradeID == "0" {
 		t.Fatal("TradeID should not be \"0\" for Tid=0 fills")
@@ -1930,7 +1958,10 @@ func TestTransformFillBareAtCoinIsSpot(t *testing.T) {
 				Fee:  "0",
 				Tid:  1,
 			}
-			trade := transformFill(fill, accountUUID)
+			trade, err := transformFill(fill, accountUUID)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if trade.BaseAsset != tt.wantBase {
 				t.Errorf("BaseAsset = %q, want %q", trade.BaseAsset, tt.wantBase)
 			}
@@ -2573,5 +2604,197 @@ func TestFetchAccountName_VaultReturnsEmpty(t *testing.T) {
 	}
 	if atomic.LoadInt32(&calls) != 0 {
 		t.Errorf("expected 0 HTTP calls for vault, got %d", calls)
+	}
+}
+
+// TestDeriveFeeAsset exercises the strict fail-fast fee-asset derivation. The
+// motivating bug: Hyperliquid spot buys charge fees in the asset RECEIVED
+// (e.g., USDH on a USDH buy, USDC on a sell), but the old code hardcoded
+// USDC, producing phantom +USDH / -USDC positions in the processor. We now
+// reject any non-zero-fee fill with an empty feeToken rather than guess.
+func TestDeriveFeeAsset(t *testing.T) {
+	tests := []struct {
+		name     string
+		fill     hlFill
+		want     string
+		wantErr  bool
+		errMatch string
+	}{
+		{
+			name: "zero fee empty token defaults to USDC",
+			fill: hlFill{Tid: 1, Fee: "0", FeeToken: ""},
+			want: "USDC",
+		},
+		{
+			name: "zero fee explicit token is honoured",
+			fill: hlFill{Tid: 2, Fee: "0", FeeToken: "USDH"},
+			want: "USDH",
+		},
+		{
+			name: "zero fee with empty string and empty token",
+			fill: hlFill{Tid: 3, Fee: "", FeeToken: ""},
+			want: "USDC",
+		},
+		{
+			name:     "non-zero fee with empty token fails loudly",
+			fill:     hlFill{Tid: 42, Fee: "1.0", FeeToken: ""},
+			wantErr:  true,
+			errMatch: "feeToken",
+		},
+		{
+			name: "lowercase feeToken is normalized",
+			fill: hlFill{Tid: 4, Fee: "1.0", FeeToken: "usdh"},
+			want: "USDH",
+		},
+		{
+			name: "feeToken with whitespace is trimmed",
+			fill: hlFill{Tid: 5, Fee: "1.0", FeeToken: " USDC "},
+			want: "USDC",
+		},
+		{
+			name: "negative fee (rebate) with token",
+			fill: hlFill{Tid: 6, Fee: "-0.5", FeeToken: "USDC"},
+			want: "USDC",
+		},
+		{
+			name:     "negative fee with empty token fails loudly",
+			fill:     hlFill{Tid: 7, Fee: "-0.5", FeeToken: ""},
+			wantErr:  true,
+			errMatch: "feeToken",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := deriveFeeAsset(tt.fill)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil (returned %q)", got)
+				}
+				if tt.errMatch != "" && !strings.Contains(err.Error(), tt.errMatch) {
+					t.Errorf("error = %q, want substring %q", err.Error(), tt.errMatch)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("deriveFeeAsset = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTransformFillRejectsMissingFeeToken verifies that a fill with a non-zero
+// fee but empty feeToken causes transformFill (and therefore FetchTrades) to
+// fail loudly rather than silently defaulting. This is the invariant that
+// prevents the original phantom-USDH-position bug from recurring.
+func TestTransformFillRejectsMissingFeeToken(t *testing.T) {
+	accountUUID := uuid.New()
+	fill := hlFill{
+		Time:     1700000000000,
+		Coin:     "ETH",
+		Side:     "B",
+		Px:       "2000.00",
+		Sz:       "1.0",
+		Fee:      "1.0",
+		Tid:      42,
+		Oid:      99,
+		FeeToken: "", // malformed fill — should error
+	}
+
+	trade, err := transformFill(fill, accountUUID)
+	if err == nil {
+		t.Fatalf("expected error for missing feeToken, got trade=%+v", trade)
+	}
+	if trade != nil {
+		t.Errorf("expected nil trade on error, got %+v", trade)
+	}
+	if !strings.Contains(err.Error(), "feeToken") {
+		t.Errorf("error = %q, want substring 'feeToken'", err.Error())
+	}
+	if !strings.Contains(err.Error(), "42") {
+		t.Errorf("error = %q, want the fill's Tid (42) to be mentioned", err.Error())
+	}
+}
+
+// TestTransformFillSpotBuyHonoursFeeToken — the specific scenario from the
+// production bug: a HL spot buy of USDH where the fee is charged in USDH, not
+// USDC. The transform must surface FeeAsset="USDH" so the downstream processor
+// debits USDH (the asset received) rather than USDC.
+func TestTransformFillSpotBuyHonoursFeeToken(t *testing.T) {
+	accountUUID := uuid.New()
+	fill := hlFill{
+		Time:     1700000000000,
+		Coin:     "USDH/USDC",
+		Side:     "B",
+		Px:       "1.0",
+		Sz:       "100",
+		Fee:      "0.04",
+		Tid:      777,
+		Oid:      555,
+		FeeToken: "USDH",
+	}
+
+	trade, err := transformFill(fill, accountUUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if trade.FeeAsset != "USDH" {
+		t.Errorf("FeeAsset = %q, want USDH (fee charged in asset received on spot buy)", trade.FeeAsset)
+	}
+	if trade.BaseAsset != "USDH" {
+		t.Errorf("BaseAsset = %q, want USDH", trade.BaseAsset)
+	}
+	if trade.QuoteAsset != "USDC" {
+		t.Errorf("QuoteAsset = %q, want USDC", trade.QuoteAsset)
+	}
+	if trade.MarketType != "spot" {
+		t.Errorf("MarketType = %q, want spot", trade.MarketType)
+	}
+}
+
+// TestFetchTradesPropagatesMalformedFillError verifies that a malformed fill
+// (non-zero fee, empty feeToken) returned by the HL API causes FetchTrades to
+// return an error rather than silently fabricating a USDC label.
+func TestFetchTradesPropagatesMalformedFillError(t *testing.T) {
+	malformed := []hlFill{
+		{
+			Time:     1700000000000,
+			Coin:     "ETH",
+			Side:     "B",
+			Px:       "2000",
+			Sz:       "1",
+			Fee:      "0.5",
+			Tid:      888,
+			Oid:      999,
+			FeeToken: "", // intentionally missing — should cause FetchTrades to fail loudly
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(malformed)
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	accountID := uuid.New()
+	account := &models.ExchangeAccount{
+		ID:                accountID.String(),
+		AccountIdentifier: "0x1234567890abcdef1234567890abcdef12345678",
+	}
+
+	trades, _, err := c.FetchTrades(context.Background(), account, time.UnixMilli(1700000000000))
+	if err == nil {
+		t.Fatalf("expected error from FetchTrades for malformed fill, got trades=%v", trades)
+	}
+	if !strings.Contains(err.Error(), "feeToken") {
+		t.Errorf("error = %q, want substring 'feeToken'", err.Error())
 	}
 }

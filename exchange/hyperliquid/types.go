@@ -12,7 +12,7 @@ type hlFill struct {
 	Side      string `json:"side"`      // "B" (buy) or "A" (sell/ask)
 	Px        string `json:"px"`        // Price
 	Sz        string `json:"sz"`        // Size/quantity
-	Fee       string `json:"fee"`       // Fee in USDC
+	Fee       string `json:"fee"`       // Fee amount (denominated in FeeToken)
 	Tid       int64  `json:"tid"`       // Trade ID (unique)
 	ClosedPnl string `json:"closedPnl"` // Realized PnL on this fill
 	Hash      string `json:"hash"`      // Transaction hash
