@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"math/big"
 	"net/http"
@@ -571,6 +572,12 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		if entry.Delta.Token != "" {
 			asset = entry.Delta.Token
 		}
+		// Defensive: HL deposits typically have fee=0, but if a non-zero fee
+		// is ever reported we want it folded in (and logged so we can diagnose).
+		// We treat deposit fee as an additional inflow reduction: actual wallet
+		// delta into HL is (usdc - fee) from the user's perspective. Using
+		// absolute-value arithmetic via addSignedDecimals handles either sign.
+		amountStr = foldLedgerFee(amountStr, entry.Delta.Fee, deltaType, entry.Hash)
 
 	case "withdraw":
 		transferType = models.TypeWithdraw
@@ -582,6 +589,12 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		if entry.Delta.Token != "" {
 			asset = entry.Delta.Token
 		}
+		// Fold HL bridge fee into the withdraw amount so the transfer row
+		// matches the user's actual wallet-level cashflow. HL ledger encodes
+		// withdraws as {"type":"withdraw","usdc":"47999","fee":"1.0"} — the
+		// user is out 48,000 total. Without this, we'd record a 47,999
+		// debit and leave a phantom +fee residual on the account.
+		amountStr = foldLedgerFee(amountStr, entry.Delta.Fee, deltaType, entry.Hash)
 
 	case "spotgenesis":
 		transferType = models.TypeDeposit
@@ -800,6 +813,61 @@ func transformBorrowLendInterest(entry hlBorrowLendInterest, accountUUID uuid.UU
 			"supply":      entry.Supply,
 		},
 	}
+}
+
+// foldLedgerFee adds the ledger entry's Fee into the base amount (in absolute
+// terms) so that the resulting transfer row reflects the user's actual
+// wallet-level cashflow, not just the net that landed on the exchange.
+//
+// HL withdraws are reported as {usdc: "47999", fee: "1.0"} meaning the user
+// was debited 48,000 total (47,999 delivered + 1 bridge fee). Recording only
+// 47,999 leaves a phantom fee-sized USDC residual on the account.
+//
+// For deposits, HL typically reports fee="0"; this function is applied
+// defensively and logs a warning if it ever sees a non-zero deposit fee so
+// we can diagnose. The fold direction is the same (|amount| + |fee|) —
+// conservative by always attributing the fee to the user's wallet-side
+// outflow (which is the semantically meaningful cashflow).
+//
+// The sign of `base` is preserved so downstream absolute-value normalisation
+// continues to work unchanged. Empty/zero fees are a no-op.
+func foldLedgerFee(base, fee, deltaType, hash string) string {
+	feeRat := new(big.Rat)
+	if fee == "" {
+		return base
+	}
+	if _, ok := feeRat.SetString(fee); !ok {
+		// Unparseable fee — leave base untouched; this matches the
+		// permissive style of cleanDecimal elsewhere.
+		return base
+	}
+	if feeRat.Sign() == 0 {
+		return base
+	}
+
+	baseRat := new(big.Rat)
+	if base != "" {
+		if _, ok := baseRat.SetString(base); !ok {
+			return base
+		}
+	}
+
+	// Use absolute magnitudes for both operands, then reapply base's sign.
+	// This keeps behaviour consistent regardless of how HL signs usdc/fee.
+	absBase := new(big.Rat).Abs(baseRat)
+	absFee := new(big.Rat).Abs(feeRat)
+	sum := new(big.Rat).Add(absBase, absFee)
+
+	if deltaType == "deposit" {
+		log.Printf("hyperliquid/ledger: deposit with non-zero fee observed — folding fee into amount | hash=%s base=%s fee=%s folded=%s",
+			hash, base, fee, sum.FloatString(18))
+	}
+
+	if baseRat.Sign() < 0 {
+		sum.Neg(sum)
+	}
+
+	return sum.FloatString(18)
 }
 
 // cleanDecimal cleans a decimal string: trims trailing zeros and dots.

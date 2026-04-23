@@ -794,6 +794,166 @@ func TestTransformLedgerEntry(t *testing.T) {
 	})
 }
 
+// TestTransformLedgerEntry_WithdrawFoldsFee verifies that the HL bridge fee
+// is folded into the withdraw amount so the recorded transfer matches the
+// user's actual wallet-level cashflow. Real HL payload:
+//   {"type":"withdraw","usdc":"47999","fee":"1.0"} → user is out 48000 total.
+func TestTransformLedgerEntry_WithdrawFoldsFee(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xwithdrawfee",
+		Delta: hlLedgerDelta{
+			Type: "withdraw",
+			Usdc: "47999",
+			Fee:  "1.0",
+		},
+	}
+	transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer == nil {
+		t.Fatal("expected non-nil transfer")
+	}
+	if transfer.Type != models.TypeWithdraw {
+		t.Errorf("Type = %q, want %q", transfer.Type, models.TypeWithdraw)
+	}
+	if transfer.Amount != "48000" {
+		t.Errorf("Amount = %q, want 48000 (fee folded in)", transfer.Amount)
+	}
+}
+
+// TestTransformLedgerEntry_WithdrawSignedUsdcFoldsFee covers the case where
+// HL reports usdc as a signed negative value (our historical tests assume
+// this shape). Fee is absolute-value added then the sign is preserved so
+// the downstream abs-value normalisation still yields 48000.
+func TestTransformLedgerEntry_WithdrawSignedUsdcFoldsFee(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xwithdrawfeesigned",
+		Delta: hlLedgerDelta{
+			Type: "withdraw",
+			Usdc: "-47999",
+			Fee:  "1.0",
+		},
+	}
+	transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer == nil {
+		t.Fatal("expected non-nil transfer")
+	}
+	if transfer.Amount != "48000" {
+		t.Errorf("Amount = %q, want 48000", transfer.Amount)
+	}
+}
+
+// TestTransformLedgerEntry_WithdrawNoFee: empty fee string leaves amount
+// unchanged.
+func TestTransformLedgerEntry_WithdrawNoFee(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xwithdrawnofee",
+		Delta: hlLedgerDelta{
+			Type: "withdraw",
+			Usdc: "500",
+			// Fee unset
+		},
+	}
+	transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer.Amount != "500" {
+		t.Errorf("Amount = %q, want 500 (unchanged when fee empty)", transfer.Amount)
+	}
+}
+
+// TestTransformLedgerEntry_WithdrawZeroFee: fee="0" or "0.0" is a no-op.
+func TestTransformLedgerEntry_WithdrawZeroFee(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	for _, feeStr := range []string{"0", "0.0", "0.00000"} {
+		entry := hlLedgerEntry{
+			Time: 1700000000000,
+			Hash: "0xwithdrawzerofee_" + feeStr,
+			Delta: hlLedgerDelta{
+				Type: "withdraw",
+				Usdc: "1234.5",
+				Fee:  feeStr,
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("fee=%q: unexpected error: %v", feeStr, err)
+		}
+		if transfer.Amount != "1234.5" {
+			t.Errorf("fee=%q: Amount = %q, want 1234.5", feeStr, transfer.Amount)
+		}
+	}
+}
+
+// TestTransformLedgerEntry_DepositNoFee: baseline — deposit with no fee is
+// unchanged.
+func TestTransformLedgerEntry_DepositNoFee(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xdepnofee",
+		Delta: hlLedgerDelta{
+			Type: "deposit",
+			Usdc: "2500.00",
+		},
+	}
+	transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer.Amount != "2500" {
+		t.Errorf("Amount = %q, want 2500", transfer.Amount)
+	}
+}
+
+// TestTransformLedgerEntry_DepositNonZeroFee: unusual but defensively
+// handled — the fee is folded into the deposit amount and a warning is
+// logged. We don't assert the log text (stable-log-assertion is brittle),
+// but we do assert the fold arithmetic is correct so we notice if the
+// behaviour changes silently.
+func TestTransformLedgerEntry_DepositNonZeroFee(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xdepfee",
+		Delta: hlLedgerDelta{
+			Type: "deposit",
+			Usdc: "1000",
+			Fee:  "0.5",
+		},
+	}
+	transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer.Amount != "1000.5" {
+		t.Errorf("Amount = %q, want 1000.5 (fee folded)", transfer.Amount)
+	}
+}
+
 func TestCleanDecimal(t *testing.T) {
 	tests := []struct {
 		input string
