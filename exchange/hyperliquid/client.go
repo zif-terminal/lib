@@ -689,7 +689,8 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		if strings.EqualFold(entry.Delta.User, walletAddress) && strings.EqualFold(entry.Delta.Destination, walletAddress) {
 			return nil, nil, nil
 		}
-		if strings.EqualFold(entry.Delta.Destination, walletAddress) {
+		incoming := strings.EqualFold(entry.Delta.Destination, walletAddress)
+		if incoming {
 			transferType = models.TypeDeposit
 		} else {
 			transferType = models.TypeWithdraw
@@ -715,6 +716,16 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		} else {
 			asset = "USDC"
 			amountStr = entry.Delta.Usdc
+		}
+		// Fold the HL transfer fee into the amount for OUTGOING sends only.
+		// HL reports the fee on both sides of the ledger, but the fee is
+		// debited from the sender's wallet — so for incoming sends the
+		// recipient's credit already reflects the net (fee was paid by the
+		// other party). For outgoing sends the user is out (amount + fee);
+		// without this fold we'd under-record the debit and leave a phantom
+		// fee-sized residual on the account.
+		if !incoming {
+			amountStr = foldLedgerFee(amountStr, entry.Delta.Fee, deltaType, entry.Hash)
 		}
 
 	case "liquidation":

@@ -954,6 +954,109 @@ func TestTransformLedgerEntry_DepositNonZeroFee(t *testing.T) {
 	}
 }
 
+// TestTransformLedgerEntry_OutgoingSendFoldsFee verifies that the HL transfer
+// fee is folded into the amount for outgoing sends. Real HL payload shape
+// (user=us, destination=other): {"type":"send","token":"USDC","amount":"100",
+// "fee":"1.0"} → the user is out 101 total (100 delivered + 1 fee).
+func TestTransformLedgerEntry_OutgoingSendFoldsFee(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xsendoutfee",
+		Delta: hlLedgerDelta{
+			Type:        "send",
+			Token:       "USDC",
+			Amount:      "100",
+			Fee:         "1.0",
+			User:        wallet,
+			Destination: "0xOtherAddress",
+		},
+	}
+	transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer == nil {
+		t.Fatal("expected non-nil transfer")
+	}
+	if transfer.Type != models.TypeWithdraw {
+		t.Errorf("Type = %q, want %q", transfer.Type, models.TypeWithdraw)
+	}
+	if transfer.Amount != "101" {
+		t.Errorf("Amount = %q, want 101 (fee folded in)", transfer.Amount)
+	}
+}
+
+// TestTransformLedgerEntry_IncomingSendNoFold verifies that fees on incoming
+// sends are NOT folded — the fee was paid by the sender's wallet, and the
+// recipient's credit already reflects the net delivered amount. Folding the
+// fee here would over-record the deposit.
+func TestTransformLedgerEntry_IncomingSendNoFold(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xsendinfee",
+		Delta: hlLedgerDelta{
+			Type:        "send",
+			Token:       "USDC",
+			Amount:      "100",
+			Fee:         "1.0",
+			User:        "0xOtherAddress",
+			Destination: wallet,
+		},
+	}
+	transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer == nil {
+		t.Fatal("expected non-nil transfer")
+	}
+	if transfer.Type != models.TypeDeposit {
+		t.Errorf("Type = %q, want %q", transfer.Type, models.TypeDeposit)
+	}
+	if transfer.Amount != "100" {
+		t.Errorf("Amount = %q, want 100 (incoming — fee paid by sender, not folded)", transfer.Amount)
+	}
+}
+
+// TestTransformLedgerEntry_SendNoFee: baseline — an outgoing send with
+// fee="0" leaves the amount unchanged.
+func TestTransformLedgerEntry_SendNoFee(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xsendoutnofee",
+		Delta: hlLedgerDelta{
+			Type:        "send",
+			Token:       "USDC",
+			Amount:      "250",
+			Fee:         "0.0",
+			User:        wallet,
+			Destination: "0xOtherAddress",
+		},
+	}
+	transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer == nil {
+		t.Fatal("expected non-nil transfer")
+	}
+	if transfer.Type != models.TypeWithdraw {
+		t.Errorf("Type = %q, want %q", transfer.Type, models.TypeWithdraw)
+	}
+	if transfer.Amount != "250" {
+		t.Errorf("Amount = %q, want 250 (no fee to fold)", transfer.Amount)
+	}
+}
+
 func TestCleanDecimal(t *testing.T) {
 	tests := []struct {
 		input string
