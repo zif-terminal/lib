@@ -84,9 +84,15 @@ type lighterAccountResp struct {
 	Accounts []lighterAccount `json:"accounts"`
 }
 
-// lighterAccount represents a single account within the response
+// lighterAccount represents a single account within the response.
+//
+// AccountType distinguishes the layout of balance data:
+//   - 0 = main account: spot balances live in Assets[].Balance.
+//   - 1 = sub-account (cross-margin): Assets[].Balance is always 0; the real
+//     USDC collateral is in Collateral / AvailableBalance at the top level.
 type lighterAccount struct {
 	AccountIndex    int                 `json:"account_index"`
+	AccountType     int                 `json:"account_type"`
 	L1Address       string              `json:"l1_address"`
 	Status          int                 `json:"status"`
 	TotalAssetValue string              `json:"total_asset_value"`

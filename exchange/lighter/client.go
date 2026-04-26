@@ -570,6 +570,36 @@ func (c *Client) FetchBalances(
 			continue
 		}
 
+		// Sub-accounts (account_type=1) are cross-margin perp accounts: the
+		// per-asset Balance fields are always 0 because the collateral is
+		// pooled at the account level. The canonical USDC balance for these
+		// accounts lives in `collateral`. Without this branch, FetchBalances
+		// returns an empty slice for any sub-account that has never held a
+		// non-margin spot asset, and no spot_balance_snapshots row is ever
+		// written.
+		if acct.AccountType == 1 {
+			if acct.Collateral == "" {
+				return nil, nil
+			}
+			collateral, err := strconv.ParseFloat(acct.Collateral, 64)
+			if err != nil {
+				return nil, fmt.Errorf("lighter: failed to parse collateral %q (account_index=%d): %w", acct.Collateral, accountIndex, err)
+			}
+			if math.Abs(collateral) < 0.000001 {
+				// Zero collateral — fall through to return an empty slice so
+				// the snapshot syncer's empty-balances path writes a zero
+				// snapshot for any previously-seen asset.
+				return nil, nil
+			}
+			balances = append(balances, &models.BalanceSnapshot{
+				Asset:       "USDC",
+				Balance:     acct.Collateral,
+				TimestampMs: nowMs,
+			})
+			return balances, nil
+		}
+
+		// Main account (account_type=0): use per-asset balances.
 		for _, a := range acct.Assets {
 			bal, err := strconv.ParseFloat(a.Balance, 64)
 			if err != nil {

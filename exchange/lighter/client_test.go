@@ -519,6 +519,100 @@ func TestFetchBalancesWithMock(t *testing.T) {
 	}
 }
 
+// TestFetchBalancesSubAccountUsesCollateral verifies that for cross-margin
+// sub-accounts (account_type=1), FetchBalances reads the USDC balance from
+// the top-level `collateral` field rather than `assets[].balance` (which the
+// API always reports as 0 for sub-accounts).
+func TestFetchBalancesSubAccountUsesCollateral(t *testing.T) {
+	resetMarketCache()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(lighterAccountResp{
+			Code: 200,
+			Accounts: []lighterAccount{
+				{
+					AccountIndex:     281474976624365,
+					AccountType:      1,
+					L1Address:        "0x1234",
+					Collateral:       "1973.495134",
+					AvailableBalance: "1973.495134",
+					Assets: []lighterAsset{
+						// Sub-account assets always show 0 balance.
+						{Symbol: "USDC", AssetID: 3, Balance: "0.000000", LockedBalance: "0"},
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	c := newTestClient(server.URL)
+
+	meta, _ := json.Marshal(map[string]interface{}{"l1_address": "0x1234"})
+	account := &models.ExchangeAccount{
+		ID:                  uuid.New().String(),
+		AccountIdentifier:   "281474976624365",
+		AccountTypeMetadata: meta,
+	}
+
+	balances, err := c.FetchBalances(context.Background(), account)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(balances) != 1 {
+		t.Fatalf("expected 1 balance (USDC from collateral), got %d", len(balances))
+	}
+	if balances[0].Asset != "USDC" {
+		t.Errorf("expected asset USDC, got %s", balances[0].Asset)
+	}
+	if balances[0].Balance != "1973.495134" {
+		t.Errorf("expected balance 1973.495134, got %s", balances[0].Balance)
+	}
+}
+
+// TestFetchBalancesSubAccountZeroCollateral verifies that a sub-account with
+// zero collateral returns an empty slice (so the snapshot syncer's
+// empty-balances path can write zero snapshots for previously seen assets).
+func TestFetchBalancesSubAccountZeroCollateral(t *testing.T) {
+	resetMarketCache()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(lighterAccountResp{
+			Code: 200,
+			Accounts: []lighterAccount{
+				{
+					AccountIndex: 281474976624366,
+					AccountType:  1,
+					L1Address:    "0x1234",
+					Collateral:   "0.000000",
+					Assets:       []lighterAsset{},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	c := newTestClient(server.URL)
+
+	meta, _ := json.Marshal(map[string]interface{}{"l1_address": "0x1234"})
+	account := &models.ExchangeAccount{
+		ID:                  uuid.New().String(),
+		AccountIdentifier:   "281474976624366",
+		AccountTypeMetadata: meta,
+	}
+
+	balances, err := c.FetchBalances(context.Background(), account)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(balances) != 0 {
+		t.Fatalf("expected 0 balances for zero-collateral sub-account, got %d", len(balances))
+	}
+}
+
 func TestDiscoverAccountsWithMock(t *testing.T) {
 	resetMarketCache()
 
