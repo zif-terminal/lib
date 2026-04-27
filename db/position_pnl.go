@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zif-terminal/lib/models"
@@ -14,7 +15,13 @@ type PositionPnLInput = models.PositionPnLInput
 // MissingPositionPnL type alias
 type MissingPositionPnL = models.MissingPositionPnL
 
-// ListMissingPositionPnL returns closed positions that are missing PnL for supported denominations.
+// ListMissingPositionPnL returns (position_id, denomination) pairs that need
+// realized PnL (re)computed. The underlying view surfaces:
+//   - any position with no position_pnl row for a supported denomination, AND
+//   - any position whose position_pnl row is stale (a position_event has been
+//     inserted since the row's created_at).
+// This covers both closed positions and open positions accruing realized PnL
+// from FIFO partial closes.
 // Results are limited by the limit parameter to support batch processing.
 func (c *Client) ListMissingPositionPnL(ctx context.Context, limit int) ([]*MissingPositionPnL, error) {
 	query := `
@@ -69,13 +76,18 @@ func (c *Client) AddPositionPnL(ctx context.Context, inputs []*PositionPnLInput)
 }
 
 func (c *Client) addPositionPnLChunk(ctx context.Context, inputs []*PositionPnLInput) (int, error) {
+	// created_at is bumped on every upsert so it acts as last-computed-at: the
+	// missing_position_pnl view uses it to detect stale rows on open positions
+	// (rows where a newer position_event has landed since last computation).
+	// Without this bump, the view would re-surface the same row forever and
+	// the processor's ProcessPositionPnL loop would never terminate.
 	query := `
 		mutation AddPositionPnL($objects: [position_pnl_insert_input!]!) {
 			insert_position_pnl(
 				objects: $objects
 				on_conflict: {
 					constraint: position_pnl_position_id_denomination_key
-					update_columns: [realized_pnl, trade_pnl, funding_pnl, fee_pnl, interest_pnl]
+					update_columns: [realized_pnl, trade_pnl, funding_pnl, fee_pnl, interest_pnl, created_at]
 				}
 			) {
 				affected_rows
@@ -83,6 +95,7 @@ func (c *Client) addPositionPnLChunk(ctx context.Context, inputs []*PositionPnLI
 		}
 	`
 
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	objects := make([]map[string]interface{}, len(inputs))
 	for i, input := range inputs {
 		objects[i] = map[string]interface{}{
@@ -93,6 +106,7 @@ func (c *Client) addPositionPnLChunk(ctx context.Context, inputs []*PositionPnLI
 			"funding_pnl":  input.FundingPnL,
 			"fee_pnl":      input.FeePnL,
 			"interest_pnl": input.InterestPnL,
+			"created_at":   now,
 		}
 	}
 
