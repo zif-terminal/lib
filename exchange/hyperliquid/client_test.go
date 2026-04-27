@@ -1156,6 +1156,75 @@ func TestTransformLedgerEntry_SendNoFee(t *testing.T) {
 	}
 }
 
+// TestTransformLedgerEntry_SelfSendIsNoOp verifies that a wallet sending to
+// itself (delta.user == delta.destination) is silently skipped. On chain this
+// is a no-op, but without the guard our direction logic (which keys off
+// walletAddress matching destination) would record a phantom deposit and
+// double-credit the account.
+func TestTransformLedgerEntry_SelfSendIsNoOp(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	cases := []struct {
+		name  string
+		delta hlLedgerDelta
+	}{
+		{
+			name: "send_self",
+			delta: hlLedgerDelta{
+				Type:        "send",
+				Token:       "USDC",
+				Amount:      "100",
+				Fee:         "1.0",
+				User:        wallet,
+				Destination: wallet,
+			},
+		},
+		{
+			name: "send_self_mixed_case",
+			delta: hlLedgerDelta{
+				Type:        "send",
+				Token:       "USDE",
+				Amount:      "54.56",
+				User:        strings.ToLower(wallet),
+				Destination: strings.ToUpper(wallet),
+				UsdcValue:   "54.56",
+			},
+		},
+		{
+			name: "spottransfer_self",
+			delta: hlLedgerDelta{
+				Type:        "spotTransfer",
+				Token:       "USDE",
+				Amount:      "15.17",
+				User:        wallet,
+				Destination: wallet,
+				UsdcValue:   "15.17",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := hlLedgerEntry{
+				Time:  1700000000000,
+				Hash:  "0xselfsend_" + tc.name,
+				Delta: tc.delta,
+			}
+			transfer, price, err := transformLedgerEntry(entry, accountUUID, wallet)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if transfer != nil {
+				t.Errorf("expected nil transfer for self-send, got %+v", transfer)
+			}
+			if price != nil {
+				t.Errorf("expected nil priceRecord for self-send, got %+v", price)
+			}
+		})
+	}
+}
+
 func TestCleanDecimal(t *testing.T) {
 	tests := []struct {
 		input string

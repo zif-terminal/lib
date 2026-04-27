@@ -697,6 +697,13 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		}
 
 	case "spottransfer":
+		// Skip self-sends — wallet sending to itself is a no-op on chain but
+		// would otherwise be recorded as a deposit (since destination == wallet),
+		// double-crediting the account.
+		if entry.Delta.User != "" && entry.Delta.Destination != "" &&
+			strings.EqualFold(entry.Delta.User, entry.Delta.Destination) {
+			return nil, nil, nil
+		}
 		if strings.EqualFold(entry.Delta.Destination, walletAddress) {
 			transferType = models.TypeDeposit
 		} else {
@@ -784,8 +791,10 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		amountStr = entry.Delta.Usdc
 
 	case "send":
-		// Skip self-sends (spot<->perp within same wallet)
-		if strings.EqualFold(entry.Delta.User, walletAddress) && strings.EqualFold(entry.Delta.Destination, walletAddress) {
+		// Skip self-sends — when user == destination the event is a no-op on
+		// chain, but our deposit/withdraw direction logic (based on which side
+		// matches walletAddress) would otherwise double-credit or mis-handle it.
+		if strings.EqualFold(entry.Delta.User, entry.Delta.Destination) {
 			return nil, nil, nil
 		}
 		incoming := strings.EqualFold(entry.Delta.Destination, walletAddress)
