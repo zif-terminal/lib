@@ -195,8 +195,17 @@ const maxDelegatorHistoryEntriesPerPage = 500
 // The HL API returns entries sorted ascending by time when startTime is set.
 // We paginate by setting startTime to lastTime + 1ms when a full page is
 // returned, matching fetchAllLedgerUpdates.
+//
+// Defensive client-side filter: in practice the delegatorHistory endpoint has
+// been observed to return entries from BEFORE the requested startTime
+// (re-emitting historical cDeposit/cWithdraw events on every poll). Without
+// filtering, the same hash gets re-ingested every cycle and trips the
+// transfers.idx_transfers_external_id_unique constraint, blocking all
+// downstream sync. Mirror fetchAllFills' approach and drop entries with
+// Time < sinceMs ourselves.
 func (c *Client) fetchAllDelegatorHistory(ctx context.Context, user string, since time.Time) ([]hlDelegatorHistoryEntry, error) {
-	startTime := clampUnixMilli(since)
+	sinceMs := clampUnixMilli(since)
+	startTime := sinceMs
 	var all []hlDelegatorHistoryEntry
 
 	for {
@@ -219,7 +228,12 @@ func (c *Client) fetchAllDelegatorHistory(ctx context.Context, user string, sinc
 			break
 		}
 
-		all = append(all, entries...)
+		// Drop entries the API returned despite being older than `since`.
+		for _, e := range entries {
+			if e.Time >= sinceMs {
+				all = append(all, e)
+			}
+		}
 
 		if len(entries) < maxDelegatorHistoryEntriesPerPage {
 			break
