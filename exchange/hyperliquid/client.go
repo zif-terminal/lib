@@ -633,11 +633,23 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 			}
 		}
 
-	case "internaltransfer":
+	case "internaltransfer", "subaccounttransfer":
+		if entry.Delta.Usdc == "" {
+			return nil, nil, fmt.Errorf("hyperliquid %s ledger entry %s missing usdc field", deltaType, entry.Hash)
+		}
+		if entry.Delta.User == "" {
+			return nil, nil, fmt.Errorf("hyperliquid %s ledger entry %s missing user field", deltaType, entry.Hash)
+		}
+		if entry.Delta.Destination == "" {
+			return nil, nil, fmt.Errorf("hyperliquid %s ledger entry %s missing destination field", deltaType, entry.Hash)
+		}
 		if strings.EqualFold(entry.Delta.Destination, walletAddress) {
 			transferType = models.TypeDeposit
-		} else {
+		} else if strings.EqualFold(entry.Delta.User, walletAddress) {
 			transferType = models.TypeWithdraw
+		} else {
+			return nil, nil, fmt.Errorf("hyperliquid %s ledger entry %s neither user (%s) nor destination (%s) matches account wallet (%s)",
+				deltaType, entry.Hash, entry.Delta.User, entry.Delta.Destination, walletAddress)
 		}
 		asset = "USDC"
 		amountStr = entry.Delta.Usdc

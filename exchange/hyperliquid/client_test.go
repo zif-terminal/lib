@@ -410,6 +410,7 @@ func TestTransformLedgerEntry(t *testing.T) {
 			Delta: hlLedgerDelta{
 				Type:        "internalTransfer",
 				Usdc:        "100.00",
+				User:        wallet,
 				Destination: "0xOtherAddress",
 			},
 		}
@@ -438,6 +439,7 @@ func TestTransformLedgerEntry(t *testing.T) {
 			Delta: hlLedgerDelta{
 				Type:        "internalTransfer",
 				Usdc:        "200.00",
+				User:        "0xOtherAddress",
 				Destination: wallet,
 			},
 		}
@@ -453,6 +455,103 @@ func TestTransformLedgerEntry(t *testing.T) {
 		}
 		if transfer.Amount != "200" {
 			t.Errorf("Amount = %q, want 200", transfer.Amount)
+		}
+	})
+
+	t.Run("SubAccountTransferIncoming", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1746921028293,
+			Hash: "0xsubacctin",
+			Delta: hlLedgerDelta{
+				Type:        "subAccountTransfer",
+				Usdc:        "600.0",
+				User:        "0xOtherAddress",
+				Destination: wallet,
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeDeposit {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeDeposit)
+		}
+		if transfer.Asset != "USDC" {
+			t.Errorf("Asset = %q, want USDC", transfer.Asset)
+		}
+		if transfer.Amount != "600" {
+			t.Errorf("Amount = %q, want 600", transfer.Amount)
+		}
+	})
+
+	t.Run("SubAccountTransferOutgoing", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1746921028293,
+			Hash: "0xsubacctout",
+			Delta: hlLedgerDelta{
+				Type:        "subAccountTransfer",
+				Usdc:        "600.0",
+				User:        wallet,
+				Destination: "0xOtherAddress",
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Type != models.TypeWithdraw {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeWithdraw)
+		}
+		if transfer.Asset != "USDC" {
+			t.Errorf("Asset = %q, want USDC", transfer.Asset)
+		}
+		if transfer.Amount != "600" {
+			t.Errorf("Amount = %q, want 600", transfer.Amount)
+		}
+	})
+
+	t.Run("SubAccountTransferMissingUsdc", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1746921028293,
+			Hash: "0xsubacctnousdc",
+			Delta: hlLedgerDelta{
+				Type:        "subAccountTransfer",
+				User:        wallet,
+				Destination: "0xOtherAddress",
+			},
+		}
+		_, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err == nil {
+			t.Fatal("expected error for missing usdc, got nil")
+		}
+		if !strings.Contains(err.Error(), "missing usdc") {
+			t.Errorf("error = %q, want substring 'missing usdc'", err.Error())
+		}
+	})
+
+	t.Run("SubAccountTransferUnrelatedWallet", func(t *testing.T) {
+		entry := hlLedgerEntry{
+			Time: 1746921028293,
+			Hash: "0xsubacctunrelated",
+			Delta: hlLedgerDelta{
+				Type:        "subAccountTransfer",
+				Usdc:        "600.0",
+				User:        "0xUserAddress",
+				Destination: "0xOtherAddress",
+			},
+		}
+		_, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err == nil {
+			t.Fatal("expected error for unrelated wallet, got nil")
+		}
+		if !strings.Contains(err.Error(), "neither user") {
+			t.Errorf("error = %q, want substring 'neither user'", err.Error())
 		}
 	})
 
@@ -1265,6 +1364,7 @@ func TestFetchDepositsWithMockServer(t *testing.T) {
 			Delta: hlLedgerDelta{
 				Type:        "internalTransfer",
 				Usdc:        "200.00",
+				User:        "0xOtherAddress",
 				Destination: "0x1234567890abcdef1234567890abcdef12345678",
 			},
 		},
