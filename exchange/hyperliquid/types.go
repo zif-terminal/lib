@@ -150,15 +150,17 @@ type hlDelegatorHistoryEntry struct {
 // and silently ignored.
 type hlDelegatorHistoryDelta struct {
 	// CDeposit: HYPE leaving trading balance into consensus staking.
-	// Critically, this event does NOT appear in userNonFundingLedgerUpdates,
-	// so we MUST surface it from delegatorHistory or we'll miss the outflow
-	// and end up with a phantom HYPE long position.
+	// Some wallets see this event ONLY in delegatorHistory; others see it
+	// in BOTH delegatorHistory AND userNonFundingLedgerUpdates (as
+	// cStakingTransfer{isDeposit:true}). FetchDeposits dedupes by hash so
+	// we never emit two transfer rows for one on-chain event regardless
+	// of which endpoint(s) reported it.
 	CDeposit *hlCDepositDelta `json:"cDeposit,omitempty"`
 
-	// CWithdraw: HYPE returning from consensus staking. Defensive — the
-	// matching return is observed in non-funding ledger as
-	// cStakingTransfer{isDeposit:false}. We handle it here too in case the
-	// shape ever changes.
+	// CWithdraw: HYPE returning from consensus staking. Same dual-endpoint
+	// situation as cDeposit — the primary path is cStakingTransfer
+	// {isDeposit:false} in non-funding ledger, but some wallets also see
+	// it here. Dedup happens in FetchDeposits.
 	CWithdraw *hlCWithdrawDelta `json:"cWithdraw,omitempty"`
 }
 

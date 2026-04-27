@@ -258,9 +258,19 @@ func (c *Client) FetchDeposits(
 		return nil, nil, fmt.Errorf("failed to fetch ledger updates: %w", err)
 	}
 
+	// Track hashes of cStakingTransfer entries observed in the non-funding
+	// ledger. For some HL wallets the same on-chain consensus staking event
+	// surfaces in BOTH userNonFundingLedgerUpdates (as cStakingTransfer) AND
+	// delegatorHistory (as cDeposit/cWithdraw). Without dedup we'd emit two
+	// transfer rows for one event and double the balance impact.
+	stakingHashesFromLedger := make(map[string]bool)
+
 	transfers := make([]*models.TransferInput, 0)
 	var prices []*models.PriceRecord
 	for _, entry := range entries {
+		if strings.EqualFold(entry.Delta.Type, "cStakingTransfer") && entry.Hash != "" {
+			stakingHashesFromLedger[entry.Hash] = true
+		}
 		transfer, price, err := transformLedgerEntry(entry, accountUUID, user)
 		if err != nil {
 			return nil, nil, err
@@ -287,15 +297,26 @@ func (c *Client) FetchDeposits(
 	}
 
 	// Fetch consensus staking history. cDeposit events (HYPE moving into
-	// staking) are NOT reported by userNonFundingLedgerUpdates, so without
-	// this we'd miss the outflow and accumulate a phantom HYPE long
-	// position equal to the staked amount.
+	// staking) may not always appear in userNonFundingLedgerUpdates, so we
+	// fold delegatorHistory in defensively. When the SAME hash appears in
+	// both endpoints we skip the delegatorHistory copy — the ledger path
+	// already produced an equivalent transfer and a second insert would
+	// hit the unique-on-external_id constraint and abort the whole batch
+	// (or, worse, slip in with a different external_id and double the
+	// balance impact).
 	dhEntries, err := c.fetchAllDelegatorHistory(ctx, user, since)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to fetch delegator history: %w", err)
 	}
 
 	for _, entry := range dhEntries {
+		// Only cDeposit/cWithdraw deltas could collide with the ledger
+		// path; other delegatorHistory event types (delegate, undelegate,
+		// withdrawal lifecycle) are dropped inside transformDelegatorHistoryEntry.
+		if (entry.Delta.CDeposit != nil || entry.Delta.CWithdraw != nil) &&
+			stakingHashesFromLedger[entry.Hash] {
+			continue
+		}
 		transfer, err := transformDelegatorHistoryEntry(entry, accountUUID)
 		if err != nil {
 			return nil, nil, err
@@ -319,15 +340,16 @@ func (c *Client) FetchDeposits(
 // happen entirely inside consensus staking and are skipped here.
 //
 // cDeposit  -> TypeWithdraw (HYPE leaving the trading balance into staking)
-// cWithdraw -> TypeDeposit  (HYPE returning from staking; defensive — the
+// cWithdraw -> TypeDeposit  (HYPE returning from staking)
 //
-//	primary path is cStakingTransfer{isDeposit:false} in
-//	non-funding ledger, but if HL ever changes that we still
-//	pick it up here)
-//
-// The synthetic ExternalID is prefixed so it can never collide with a real
-// non-funding ledger hash even if, for some reason, both endpoints reported
-// the same event.
+// Some HL wallets emit the same on-chain consensus event in BOTH
+// delegatorHistory AND userNonFundingLedgerUpdates (as cStakingTransfer).
+// FetchDeposits is responsible for dropping any delegatorHistory entry whose
+// hash already produced a cStakingTransfer transfer in the same sync — that
+// dedup MUST happen before this function is called. The synthetic ExternalID
+// here is prefixed (cdeposit_/cwithdraw_) so that for wallets where ONLY
+// delegatorHistory reports the event, the row is still distinguishable from
+// any future non-staking event that might share the same hash.
 func transformDelegatorHistoryEntry(entry hlDelegatorHistoryEntry, accountUUID uuid.UUID) (*models.TransferInput, error) {
 	switch {
 	case entry.Delta.CDeposit != nil:

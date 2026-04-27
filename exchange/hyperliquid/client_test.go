@@ -3426,3 +3426,172 @@ func TestFetchDeposits_DelegatorHistoryEmpty(t *testing.T) {
 		t.Errorf("Type = %q, want %q", transfers[0].Type, models.TypeDeposit)
 	}
 }
+
+// TestFetchDeposits_DeduplicatesCDepositInBothEndpoints verifies that when
+// the same on-chain consensus staking event surfaces in BOTH
+// userNonFundingLedgerUpdates (as cStakingTransfer{isDeposit:true}) AND
+// delegatorHistory (as cDeposit), FetchDeposits emits exactly one transfer
+// row — the ledger-path one — and drops the delegatorHistory copy. Without
+// this dedup the same hash produces two transfer rows with different
+// external_ids ("<hash>" and "cdeposit_<hash>"), bypassing the unique
+// constraint and doubling the HYPE outflow.
+func TestFetchDeposits_DeduplicatesCDepositInBothEndpoints(t *testing.T) {
+	sharedHash := "0xd6e8514d683106a95806042383be9302080f005d4b2d6af83f1cc6cbaef52478"
+
+	ledgerEntries := []hlLedgerEntry{
+		{
+			Time: 1747323884335,
+			Hash: sharedHash,
+			Delta: hlLedgerDelta{
+				Type:      "cStakingTransfer",
+				Token:     "HYPE",
+				Amount:    "1000.0",
+				IsDeposit: true,
+			},
+		},
+	}
+
+	dhEntries := []hlDelegatorHistoryEntry{
+		{
+			Time: 1747323884335,
+			Hash: sharedHash, // same on-chain event
+			Delta: hlDelegatorHistoryDelta{
+				CDeposit: &hlCDepositDelta{Amount: "1000.0"},
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+
+		reqType := body["type"].(string)
+		switch reqType {
+		case "userNonFundingLedgerUpdates":
+			json.NewEncoder(w).Encode(ledgerEntries)
+		case "userBorrowLendInterest":
+			json.NewEncoder(w).Encode([]hlBorrowLendInterest{})
+		case "delegatorHistory":
+			json.NewEncoder(w).Encode(dhEntries)
+		default:
+			json.NewEncoder(w).Encode([]interface{}{})
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	accountID := uuid.New()
+	account := &models.ExchangeAccount{
+		ID:                accountID.String(),
+		AccountIdentifier: "0x1234567890abcdef1234567890abcdef12345678",
+	}
+
+	transfers, _, err := c.FetchDeposits(context.Background(), account, time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(transfers) != 1 {
+		t.Fatalf("expected exactly 1 transfer (dedup of cDeposit / cStakingTransfer for hash %s), got %d", sharedHash, len(transfers))
+	}
+
+	tr := transfers[0]
+	if tr.Type != models.TypeWithdraw {
+		t.Errorf("Type = %q, want %q (HYPE leaving trading balance)", tr.Type, models.TypeWithdraw)
+	}
+	if tr.Asset != "HYPE" {
+		t.Errorf("Asset = %q, want HYPE", tr.Asset)
+	}
+	if tr.Amount != "1000" {
+		t.Errorf("Amount = %q, want 1000", tr.Amount)
+	}
+	// The ledger path wins — its ExternalID is the bare hash, not "cdeposit_<hash>".
+	if tr.ExternalID != sharedHash {
+		t.Errorf("ExternalID = %q, want %q (ledger-path bare hash)", tr.ExternalID, sharedHash)
+	}
+	if tr.Metadata["source_type"] != "cstakingtransfer" {
+		t.Errorf("Metadata[source_type] = %q, want cstakingtransfer (ledger path)", tr.Metadata["source_type"])
+	}
+}
+
+// TestFetchDeposits_DeduplicatesCWithdrawInBothEndpoints is the cWithdraw
+// counterpart of the cDeposit dedup test — same on-chain unstake event in
+// both endpoints should produce exactly one transfer row.
+func TestFetchDeposits_DeduplicatesCWithdrawInBothEndpoints(t *testing.T) {
+	sharedHash := "0xabc1234567890abcdef1234567890abcdef1234567890abcdef1234567890abc"
+
+	ledgerEntries := []hlLedgerEntry{
+		{
+			Time: 1747400000000,
+			Hash: sharedHash,
+			Delta: hlLedgerDelta{
+				Type:      "cStakingTransfer",
+				Token:     "HYPE",
+				Amount:    "500.0",
+				IsDeposit: false,
+			},
+		},
+	}
+
+	dhEntries := []hlDelegatorHistoryEntry{
+		{
+			Time: 1747400000000,
+			Hash: sharedHash,
+			Delta: hlDelegatorHistoryDelta{
+				CWithdraw: &hlCWithdrawDelta{Amount: "500.0"},
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+
+		reqType := body["type"].(string)
+		switch reqType {
+		case "userNonFundingLedgerUpdates":
+			json.NewEncoder(w).Encode(ledgerEntries)
+		case "userBorrowLendInterest":
+			json.NewEncoder(w).Encode([]hlBorrowLendInterest{})
+		case "delegatorHistory":
+			json.NewEncoder(w).Encode(dhEntries)
+		default:
+			json.NewEncoder(w).Encode([]interface{}{})
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	accountID := uuid.New()
+	account := &models.ExchangeAccount{
+		ID:                accountID.String(),
+		AccountIdentifier: "0x1234567890abcdef1234567890abcdef12345678",
+	}
+
+	transfers, _, err := c.FetchDeposits(context.Background(), account, time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(transfers) != 1 {
+		t.Fatalf("expected exactly 1 transfer (dedup of cWithdraw / cStakingTransfer for hash %s), got %d", sharedHash, len(transfers))
+	}
+
+	tr := transfers[0]
+	if tr.Type != models.TypeDeposit {
+		t.Errorf("Type = %q, want %q (HYPE returning to trading balance)", tr.Type, models.TypeDeposit)
+	}
+	if tr.ExternalID != sharedHash {
+		t.Errorf("ExternalID = %q, want %q (ledger-path bare hash)", tr.ExternalID, sharedHash)
+	}
+}
