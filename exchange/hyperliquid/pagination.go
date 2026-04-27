@@ -181,6 +181,57 @@ func (c *Client) fetchAllBorrowLendInterest(ctx context.Context, user string, si
 	return all, nil
 }
 
+// maxDelegatorHistoryEntriesPerPage is the threshold we use to decide whether
+// to paginate the delegatorHistory endpoint. The endpoint may or may not page
+// in practice (typical user volumes are small — tens of events at most), but
+// we mirror the existing fetchAllLedgerUpdates pattern so we don't silently
+// truncate heavy stakers.
+const maxDelegatorHistoryEntriesPerPage = 500
+
+// fetchAllDelegatorHistory fetches all consensus staking history entries for a
+// user since the given time. We use this to surface cDeposit events (HYPE
+// moving into staking) which don't appear in userNonFundingLedgerUpdates.
+//
+// The HL API returns entries sorted ascending by time when startTime is set.
+// We paginate by setting startTime to lastTime + 1ms when a full page is
+// returned, matching fetchAllLedgerUpdates.
+func (c *Client) fetchAllDelegatorHistory(ctx context.Context, user string, since time.Time) ([]hlDelegatorHistoryEntry, error) {
+	startTime := clampUnixMilli(since)
+	var all []hlDelegatorHistoryEntry
+
+	for {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		req := map[string]interface{}{
+			"type":      "delegatorHistory",
+			"user":      user,
+			"startTime": startTime,
+		}
+
+		var entries []hlDelegatorHistoryEntry
+		if err := c.doPost(ctx, req, &entries); err != nil {
+			return nil, err
+		}
+
+		if len(entries) == 0 {
+			break
+		}
+
+		all = append(all, entries...)
+
+		if len(entries) < maxDelegatorHistoryEntriesPerPage {
+			break
+		}
+
+		lastTime := entries[len(entries)-1].Time
+		startTime = lastTime + 1
+	}
+
+	return all, nil
+}
+
 // fetchAllLedgerUpdates fetches all non-funding ledger updates for a user since the given time.
 func (c *Client) fetchAllLedgerUpdates(ctx context.Context, user string, since time.Time) ([]hlLedgerEntry, error) {
 	startTime := clampUnixMilli(since)

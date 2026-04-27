@@ -3161,3 +3161,199 @@ func TestFetchTradesPropagatesMalformedFillError(t *testing.T) {
 		t.Errorf("error = %q, want substring 'feeToken'", err.Error())
 	}
 }
+
+// TestFetchDeposits_IncludesCDepositFromDelegatorHistory verifies that cDeposit
+// events from the delegatorHistory endpoint are surfaced as synthetic
+// TypeWithdraw transfers. cDeposits don't appear in userNonFundingLedgerUpdates
+// — without this synthesis we'd miss the HYPE outflow into staking and end up
+// with a phantom long position equal to the staked amount.
+func TestFetchDeposits_IncludesCDepositFromDelegatorHistory(t *testing.T) {
+	dhEntries := []hlDelegatorHistoryEntry{
+		{
+			Time: 1747323884335,
+			Hash: "0xd6e8514d683106a95806042383be9302080f005d4b2d6af83f1cc6cbaef52478",
+			Delta: hlDelegatorHistoryDelta{
+				CDeposit: &hlCDepositDelta{Amount: "1000.0"},
+			},
+		},
+		{
+			Time: 1747323900169,
+			Hash: "0x016dd7758acad490d482042383bf5c0202c5005b70862c4d4f3a86dcde4e7393",
+			Delta: hlDelegatorHistoryDelta{
+				// delegate event — should be ignored, no trading balance impact
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+
+		reqType := body["type"].(string)
+		switch reqType {
+		case "userNonFundingLedgerUpdates":
+			json.NewEncoder(w).Encode([]hlLedgerEntry{})
+		case "userBorrowLendInterest":
+			json.NewEncoder(w).Encode([]hlBorrowLendInterest{})
+		case "delegatorHistory":
+			json.NewEncoder(w).Encode(dhEntries)
+		default:
+			json.NewEncoder(w).Encode([]interface{}{})
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	accountID := uuid.New()
+	account := &models.ExchangeAccount{
+		ID:                accountID.String(),
+		AccountIdentifier: "0x1234567890abcdef1234567890abcdef12345678",
+	}
+
+	transfers, _, err := c.FetchDeposits(context.Background(), account, time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(transfers) != 1 {
+		t.Fatalf("expected exactly 1 transfer (cDeposit), got %d", len(transfers))
+	}
+
+	tr := transfers[0]
+	if tr.Type != models.TypeWithdraw {
+		t.Errorf("Type = %q, want %q (HYPE leaving trading balance)", tr.Type, models.TypeWithdraw)
+	}
+	if tr.Asset != "HYPE" {
+		t.Errorf("Asset = %q, want HYPE", tr.Asset)
+	}
+	if tr.Amount != "1000" {
+		t.Errorf("Amount = %q, want 1000", tr.Amount)
+	}
+	if tr.ExchangeAccountID != accountID {
+		t.Errorf("ExchangeAccountID = %v, want %v", tr.ExchangeAccountID, accountID)
+	}
+	if tr.ExternalID != "cdeposit_0xd6e8514d683106a95806042383be9302080f005d4b2d6af83f1cc6cbaef52478" {
+		t.Errorf("ExternalID = %q, want prefixed cdeposit_<hash>", tr.ExternalID)
+	}
+	if tr.Metadata["source_type"] != "cdeposit" {
+		t.Errorf("Metadata[source_type] = %q, want cdeposit", tr.Metadata["source_type"])
+	}
+	if !tr.Timestamp.Equal(time.UnixMilli(1747323884335).UTC()) {
+		t.Errorf("Timestamp = %v, want %v", tr.Timestamp, time.UnixMilli(1747323884335).UTC())
+	}
+}
+
+// TestFetchDeposits_CDepositMissingAmount asserts that a cDeposit with an
+// empty/zero amount fails loudly rather than silently emitting a zero-value
+// transfer (which would mask the real outflow we're trying to capture).
+func TestFetchDeposits_CDepositMissingAmount(t *testing.T) {
+	dhEntries := []hlDelegatorHistoryEntry{
+		{
+			Time: 1747323884335,
+			Hash: "0xbroken",
+			Delta: hlDelegatorHistoryDelta{
+				CDeposit: &hlCDepositDelta{Amount: ""},
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+
+		reqType := body["type"].(string)
+		switch reqType {
+		case "userNonFundingLedgerUpdates":
+			json.NewEncoder(w).Encode([]hlLedgerEntry{})
+		case "userBorrowLendInterest":
+			json.NewEncoder(w).Encode([]hlBorrowLendInterest{})
+		case "delegatorHistory":
+			json.NewEncoder(w).Encode(dhEntries)
+		default:
+			json.NewEncoder(w).Encode([]interface{}{})
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	accountID := uuid.New()
+	account := &models.ExchangeAccount{
+		ID:                accountID.String(),
+		AccountIdentifier: "0x1234567890abcdef1234567890abcdef12345678",
+	}
+
+	_, _, err := c.FetchDeposits(context.Background(), account, time.UnixMilli(0))
+	if err == nil {
+		t.Fatal("expected error for cDeposit with empty amount, got nil")
+	}
+	if !strings.Contains(err.Error(), "cDeposit") {
+		t.Errorf("error = %q, want substring 'cDeposit'", err.Error())
+	}
+}
+
+// TestFetchDeposits_DelegatorHistoryEmpty is the baseline — when the user has
+// never staked, FetchDeposits should behave exactly like before.
+func TestFetchDeposits_DelegatorHistoryEmpty(t *testing.T) {
+	ledgerEntries := []hlLedgerEntry{
+		{
+			Time: 1700000000000,
+			Hash: "0xaaa",
+			Delta: hlLedgerDelta{
+				Type: "deposit",
+				Usdc: "1000.00",
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+
+		reqType := body["type"].(string)
+		switch reqType {
+		case "userNonFundingLedgerUpdates":
+			json.NewEncoder(w).Encode(ledgerEntries)
+		case "userBorrowLendInterest":
+			json.NewEncoder(w).Encode([]hlBorrowLendInterest{})
+		case "delegatorHistory":
+			json.NewEncoder(w).Encode([]hlDelegatorHistoryEntry{})
+		default:
+			json.NewEncoder(w).Encode([]interface{}{})
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	accountID := uuid.New()
+	account := &models.ExchangeAccount{
+		ID:                accountID.String(),
+		AccountIdentifier: "0x1234567890abcdef1234567890abcdef12345678",
+	}
+
+	transfers, _, err := c.FetchDeposits(context.Background(), account, time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(transfers) != 1 {
+		t.Fatalf("expected exactly 1 transfer (the deposit), got %d", len(transfers))
+	}
+	if transfers[0].Type != models.TypeDeposit {
+		t.Errorf("Type = %q, want %q", transfers[0].Type, models.TypeDeposit)
+	}
+}

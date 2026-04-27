@@ -127,3 +127,45 @@ type hlVaultDetails struct {
 	VaultAddress string `json:"vaultAddress"`
 	Leader     string `json:"leader"`
 }
+
+// hlDelegatorHistoryEntry models entries from the HL delegatorHistory endpoint.
+// These cover HYPE consensus staking events (cDeposit, delegate, undelegate,
+// withdrawal lifecycle). cDeposit and cWithdraw are the only event types here
+// that move HYPE in or out of the trading balance — the rest happen entirely
+// inside consensus staking and don't affect the trading wallet.
+//
+// Request: {"type": "delegatorHistory", "user": "0x...", "startTime": ...}
+// Sample response (real call):
+//
+//	[{"time":1747323884335,"hash":"0xd6e8514d...","delta":{"cDeposit":{"amount":"1000.0"}}}]
+type hlDelegatorHistoryEntry struct {
+	Time  int64                   `json:"time"` // Unix milliseconds
+	Hash  string                  `json:"hash"` // Transaction hash
+	Delta hlDelegatorHistoryDelta `json:"delta"`
+}
+
+// hlDelegatorHistoryDelta wraps the various delta payloads. Only one field is
+// set per entry. Other event types (delegate, undelegate, withdrawal-initiated,
+// withdrawal-finalized) don't affect trading balance — they're left unmodelled
+// and silently ignored.
+type hlDelegatorHistoryDelta struct {
+	// CDeposit: HYPE leaving trading balance into consensus staking.
+	// Critically, this event does NOT appear in userNonFundingLedgerUpdates,
+	// so we MUST surface it from delegatorHistory or we'll miss the outflow
+	// and end up with a phantom HYPE long position.
+	CDeposit *hlCDepositDelta `json:"cDeposit,omitempty"`
+
+	// CWithdraw: HYPE returning from consensus staking. Defensive — the
+	// matching return is observed in non-funding ledger as
+	// cStakingTransfer{isDeposit:false}. We handle it here too in case the
+	// shape ever changes.
+	CWithdraw *hlCWithdrawDelta `json:"cWithdraw,omitempty"`
+}
+
+type hlCDepositDelta struct {
+	Amount string `json:"amount"`
+}
+
+type hlCWithdrawDelta struct {
+	Amount string `json:"amount"`
+}

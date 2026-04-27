@@ -286,12 +286,99 @@ func (c *Client) FetchDeposits(
 		}
 	}
 
+	// Fetch consensus staking history. cDeposit events (HYPE moving into
+	// staking) are NOT reported by userNonFundingLedgerUpdates, so without
+	// this we'd miss the outflow and accumulate a phantom HYPE long
+	// position equal to the staked amount.
+	dhEntries, err := c.fetchAllDelegatorHistory(ctx, user, since)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch delegator history: %w", err)
+	}
+
+	for _, entry := range dhEntries {
+		transfer, err := transformDelegatorHistoryEntry(entry, accountUUID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if transfer != nil {
+			transfers = append(transfers, transfer)
+		}
+	}
+
 	// Sort by timestamp ascending
 	sort.Slice(transfers, func(i, j int) bool {
 		return transfers[i].Timestamp.Before(transfers[j].Timestamp)
 	})
 
 	return transfers, prices, nil
+}
+
+// transformDelegatorHistoryEntry converts a Hyperliquid delegatorHistory entry
+// into a TransferInput. Only cDeposit and cWithdraw deltas affect the trading
+// balance; all other event types (delegate, undelegate, withdrawal lifecycle)
+// happen entirely inside consensus staking and are skipped here.
+//
+// cDeposit  -> TypeWithdraw (HYPE leaving the trading balance into staking)
+// cWithdraw -> TypeDeposit  (HYPE returning from staking; defensive — the
+//
+//	primary path is cStakingTransfer{isDeposit:false} in
+//	non-funding ledger, but if HL ever changes that we still
+//	pick it up here)
+//
+// The synthetic ExternalID is prefixed so it can never collide with a real
+// non-funding ledger hash even if, for some reason, both endpoints reported
+// the same event.
+func transformDelegatorHistoryEntry(entry hlDelegatorHistoryEntry, accountUUID uuid.UUID) (*models.TransferInput, error) {
+	switch {
+	case entry.Delta.CDeposit != nil:
+		amount := cleanDecimal(entry.Delta.CDeposit.Amount)
+		if amount == "" || amount == "0" {
+			return nil, fmt.Errorf("hyperliquid: cDeposit entry %s has empty/zero amount %q",
+				entry.Hash, entry.Delta.CDeposit.Amount)
+		}
+		if strings.HasPrefix(amount, "-") {
+			amount = amount[1:]
+		}
+		return &models.TransferInput{
+			ExchangeAccountID: accountUUID,
+			Type:              models.TypeWithdraw,
+			Asset:             "HYPE",
+			Amount:            amount,
+			Timestamp:         time.UnixMilli(entry.Time).UTC(),
+			ExternalID:        "cdeposit_" + entry.Hash,
+			Metadata: map[string]string{
+				"payment_id":  entry.Hash,
+				"source_type": "cdeposit",
+			},
+		}, nil
+
+	case entry.Delta.CWithdraw != nil:
+		amount := cleanDecimal(entry.Delta.CWithdraw.Amount)
+		if amount == "" || amount == "0" {
+			return nil, fmt.Errorf("hyperliquid: cWithdraw entry %s has empty/zero amount %q",
+				entry.Hash, entry.Delta.CWithdraw.Amount)
+		}
+		if strings.HasPrefix(amount, "-") {
+			amount = amount[1:]
+		}
+		return &models.TransferInput{
+			ExchangeAccountID: accountUUID,
+			Type:              models.TypeDeposit,
+			Asset:             "HYPE",
+			Amount:            amount,
+			Timestamp:         time.UnixMilli(entry.Time).UTC(),
+			ExternalID:        "cwithdraw_" + entry.Hash,
+			Metadata: map[string]string{
+				"payment_id":  entry.Hash,
+				"source_type": "cwithdraw",
+			},
+		}, nil
+
+	default:
+		// delegate, undelegate, withdrawal-initiated, withdrawal-finalized,
+		// etc. — these don't affect trading balance, ignore.
+		return nil, nil
+	}
 }
 
 // FetchBalances fetches current spot and perp balances from Hyperliquid.
