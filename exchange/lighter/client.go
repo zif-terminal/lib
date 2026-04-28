@@ -585,21 +585,50 @@ func (c *Client) FetchBalances(
 			if err != nil {
 				return nil, fmt.Errorf("lighter: failed to parse collateral %q (account_index=%d): %w", acct.Collateral, accountIndex, err)
 			}
-			if math.Abs(collateral) < 0.000001 {
-				// Zero collateral — fall through to return an empty slice so
-				// the snapshot syncer's empty-balances path writes a zero
-				// snapshot for any previously-seen asset.
+			// Emit USDC collateral row tagged wallet_type=perp. Even with zero
+			// collateral, we still iterate positions below so a previously-open
+			// position that just closed gets a zero row written by the syncer.
+			if math.Abs(collateral) >= 0.000001 {
+				balances = append(balances, &models.BalanceSnapshot{
+					Asset:       "USDC",
+					Balance:     acct.Collateral,
+					TimestampMs: nowMs,
+					WalletType:  "perp",
+				})
+			}
+
+			// Emit one row per open perp position. `position` is signed
+			// (positive=long, negative=short). Skip zero-size to avoid noise.
+			for _, p := range acct.Positions {
+				if p.Position == "" {
+					continue
+				}
+				size, err := strconv.ParseFloat(p.Position, 64)
+				if err != nil {
+					return nil, fmt.Errorf("lighter: failed to parse position size %q for symbol %s (account_index=%d): %w", p.Position, p.Symbol, accountIndex, err)
+				}
+				if math.Abs(size) < 0.000000001 {
+					continue
+				}
+				balances = append(balances, &models.BalanceSnapshot{
+					Asset:       p.Symbol,
+					Balance:     cleanDecimal(p.Position),
+					TimestampMs: nowMs,
+					WalletType:  "perp",
+				})
+			}
+
+			// If we emitted nothing (zero collateral and no open positions),
+			// return nil so the snapshot syncer's empty-balances path writes
+			// zero snapshots for previously-seen assets.
+			if len(balances) == 0 {
 				return nil, nil
 			}
-			balances = append(balances, &models.BalanceSnapshot{
-				Asset:       "USDC",
-				Balance:     acct.Collateral,
-				TimestampMs: nowMs,
-			})
 			return balances, nil
 		}
 
-		// Main account (account_type=0): use per-asset balances.
+		// Main account (account_type=0): use per-asset balances tagged
+		// wallet_type=spot.
 		for _, a := range acct.Assets {
 			bal, err := strconv.ParseFloat(a.Balance, 64)
 			if err != nil {
@@ -613,6 +642,7 @@ func (c *Client) FetchBalances(
 				Asset:       a.Symbol,
 				Balance:     a.Balance,
 				TimestampMs: nowMs,
+				WalletType:  "spot",
 			})
 		}
 	}

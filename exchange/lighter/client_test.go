@@ -510,12 +510,18 @@ func TestFetchBalancesWithMock(t *testing.T) {
 	if usdcBalance.Balance != "5000.50" {
 		t.Errorf("USDC balance = %s, want 5000.50", usdcBalance.Balance)
 	}
+	if usdcBalance.WalletType != "spot" {
+		t.Errorf("USDC WalletType = %q, want \"spot\"", usdcBalance.WalletType)
+	}
 
 	if ethBalance == nil {
 		t.Fatal("expected ETH balance")
 	}
 	if ethBalance.Balance != "1.5" {
 		t.Errorf("ETH balance = %s, want 1.5", ethBalance.Balance)
+	}
+	if ethBalance.WalletType != "spot" {
+		t.Errorf("ETH WalletType = %q, want \"spot\"", ethBalance.WalletType)
 	}
 }
 
@@ -569,6 +575,102 @@ func TestFetchBalancesSubAccountUsesCollateral(t *testing.T) {
 	}
 	if balances[0].Balance != "1973.495134" {
 		t.Errorf("expected balance 1973.495134, got %s", balances[0].Balance)
+	}
+	if balances[0].WalletType != "perp" {
+		t.Errorf("expected WalletType=perp for sub-account collateral, got %q", balances[0].WalletType)
+	}
+}
+
+// TestFetchBalancesSubAccountEmitsPerpPositions verifies that for sub-accounts
+// (account_type=1) FetchBalances emits both the USDC collateral row AND one
+// row per non-zero open perp position, all tagged wallet_type=perp. Position
+// sizes are signed so shorts pass through as negatives.
+func TestFetchBalancesSubAccountEmitsPerpPositions(t *testing.T) {
+	resetMarketCache()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(lighterAccountResp{
+			Code: 200,
+			Accounts: []lighterAccount{
+				{
+					AccountIndex:     281474976624365,
+					AccountType:      1,
+					L1Address:        "0x1234",
+					Collateral:       "1973.495134",
+					AvailableBalance: "1500.00",
+					Positions: []lighterPosition{
+						{Symbol: "BTC", MarketID: 1, Position: "-0.5", AvgEntryPrice: "65000"},
+						{Symbol: "ETH", MarketID: 2, Position: "1.2", AvgEntryPrice: "3500"},
+						{Symbol: "SOL", MarketID: 3, Position: "0", AvgEntryPrice: "0"}, // zero — skipped
+					},
+					Assets: []lighterAsset{
+						{Symbol: "USDC", AssetID: 3, Balance: "0.000000", LockedBalance: "0"},
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	c := newTestClient(server.URL)
+
+	meta, _ := json.Marshal(map[string]interface{}{"l1_address": "0x1234"})
+	account := &models.ExchangeAccount{
+		ID:                  uuid.New().String(),
+		AccountIdentifier:   "281474976624365",
+		AccountTypeMetadata: meta,
+	}
+
+	balances, err := c.FetchBalances(context.Background(), account)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(balances) != 3 {
+		t.Fatalf("expected 3 balances (USDC perp + BTC + ETH), got %d", len(balances))
+	}
+
+	byAsset := map[string]*models.BalanceSnapshot{}
+	for _, b := range balances {
+		byAsset[b.Asset] = b
+	}
+
+	usdc, ok := byAsset["USDC"]
+	if !ok {
+		t.Fatal("expected USDC perp collateral row")
+	}
+	if usdc.WalletType != "perp" {
+		t.Errorf("USDC WalletType = %q, want \"perp\"", usdc.WalletType)
+	}
+	if usdc.Balance != "1973.495134" {
+		t.Errorf("USDC Balance = %q, want 1973.495134", usdc.Balance)
+	}
+
+	btc, ok := byAsset["BTC"]
+	if !ok {
+		t.Fatal("expected BTC position row")
+	}
+	if btc.WalletType != "perp" {
+		t.Errorf("BTC WalletType = %q, want \"perp\"", btc.WalletType)
+	}
+	if btc.Balance != "-0.5" {
+		t.Errorf("BTC Balance = %q, want -0.5 (signed)", btc.Balance)
+	}
+
+	eth, ok := byAsset["ETH"]
+	if !ok {
+		t.Fatal("expected ETH position row")
+	}
+	if eth.WalletType != "perp" {
+		t.Errorf("ETH WalletType = %q, want \"perp\"", eth.WalletType)
+	}
+	if eth.Balance != "1.2" {
+		t.Errorf("ETH Balance = %q, want 1.2", eth.Balance)
+	}
+
+	if _, present := byAsset["SOL"]; present {
+		t.Error("SOL row should not be present (zero position)")
 	}
 }
 
