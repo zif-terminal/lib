@@ -440,10 +440,12 @@ func (c *Client) FetchBalances(
 	nowMs := time.Now().UnixMilli()
 	var balances []*models.BalanceSnapshot
 
-	// Combine perp USDC (totalRawUsd) and spot USDC into a single snapshot.
-	// Use totalRawUsd (NOT accountValue) — accountValue includes unrealized PnL
-	// from open positions, which would cause phantom balance changes every time
-	// the market moves.
+	// Emit perp USDC and spot USDC as SEPARATE rows tagged with wallet_type.
+	// This gives the activity processor visibility into each sub-wallet
+	// independently — required for tracking transfers between perp and spot.
+	// Use totalRawUsd (NOT accountValue) for the perp side — accountValue
+	// includes unrealized PnL from open positions, which would cause phantom
+	// balance changes every time the market moves.
 	perpUSDC, err := strconv.ParseFloat(perpState.MarginSummary.TotalRawUsd, 64)
 	if err != nil {
 		return nil, fmt.Errorf("hyperliquid: failed to parse perp totalRawUsd %q: %w", perpState.MarginSummary.TotalRawUsd, err)
@@ -460,19 +462,31 @@ func (c *Client) FetchBalances(
 		}
 	}
 
-	totalUSDC := perpUSDC + spotUSDC
-	if math.Abs(totalUSDC) > 0.000001 {
+	// Spot USDC row (always emitted, even when zero, because activity_processor
+	// relies on the row's existence to anchor reconciliation).
+	if math.Abs(spotUSDC) > 0.000001 {
 		balances = append(balances, &models.BalanceSnapshot{
 			Asset:       "USDC",
-			Balance:     cleanDecimal(strconv.FormatFloat(totalUSDC, 'f', -1, 64)),
+			Balance:     cleanDecimal(strconv.FormatFloat(spotUSDC, 'f', -1, 64)),
 			TimestampMs: nowMs,
+			WalletType:  "spot",
 		})
 	}
 
-	// Add non-USDC spot balances
+	// Perp USDC row (margin balance held in the perp clearinghouse).
+	if math.Abs(perpUSDC) > 0.000001 {
+		balances = append(balances, &models.BalanceSnapshot{
+			Asset:       "USDC",
+			Balance:     cleanDecimal(strconv.FormatFloat(perpUSDC, 'f', -1, 64)),
+			TimestampMs: nowMs,
+			WalletType:  "perp",
+		})
+	}
+
+	// Add non-USDC spot balances (tagged wallet_type=spot).
 	for _, b := range spotState.Balances {
 		if b.Coin == "USDC" {
-			continue // already combined above
+			continue // already emitted above
 		}
 		total, err := strconv.ParseFloat(b.Total, 64)
 		if err != nil {
@@ -494,6 +508,29 @@ func (c *Client) FetchBalances(
 			Asset:       asset,
 			Balance:     b.Total,
 			TimestampMs: nowMs,
+			WalletType:  "spot",
+		})
+	}
+
+	// Emit one row per open perp position. szi is signed (positive=long,
+	// negative=short). Skip zero-size positions to avoid noise.
+	for _, p := range perpState.AssetPositions {
+		szi := p.Position.Szi
+		if szi == "" {
+			continue
+		}
+		sziFloat, err := strconv.ParseFloat(szi, 64)
+		if err != nil {
+			return nil, fmt.Errorf("hyperliquid: failed to parse perp szi %q for coin %s: %w", szi, p.Position.Coin, err)
+		}
+		if math.Abs(sziFloat) < 0.000000001 {
+			continue
+		}
+		balances = append(balances, &models.BalanceSnapshot{
+			Asset:       p.Position.Coin,
+			Balance:     cleanDecimal(szi),
+			TimestampMs: nowMs,
+			WalletType:  "perp",
 		})
 	}
 

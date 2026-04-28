@@ -1723,27 +1723,37 @@ func TestFetchBalancesWithMockServer(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(balances) != 2 {
-		t.Fatalf("expected 2 balances (USDC + ETH), got %d", len(balances))
+	// Expect 3 rows: spot USDC, perp USDC, spot ETH.
+	if len(balances) != 3 {
+		t.Fatalf("expected 3 balances (spot USDC + perp USDC + ETH), got %d", len(balances))
 	}
 
-	// Find USDC and ETH balances
-	var usdcBalance, ethBalance *models.BalanceSnapshot
+	var spotUSDC, perpUSDC, ethBalance *models.BalanceSnapshot
 	for _, b := range balances {
-		switch b.Asset {
-		case "USDC":
-			usdcBalance = b
-		case "ETH":
+		switch {
+		case b.Asset == "USDC" && b.WalletType == "spot":
+			spotUSDC = b
+		case b.Asset == "USDC" && b.WalletType == "perp":
+			perpUSDC = b
+		case b.Asset == "ETH":
 			ethBalance = b
 		}
 	}
 
-	if usdcBalance == nil {
-		t.Fatal("expected USDC balance")
+	if spotUSDC == nil {
+		t.Fatal("expected spot USDC balance")
 	}
-	// Combined: perp totalRawUsd (5000.50) + spot USDC (200.25) = 5200.75
-	if usdcBalance.Balance != "5200.75" {
-		t.Errorf("USDC balance = %s, want 5200.75 (perp 5000.50 + spot 200.25)", usdcBalance.Balance)
+	if spotUSDC.Balance != "200.25" {
+		t.Errorf("spot USDC balance = %s, want 200.25", spotUSDC.Balance)
+	}
+
+	if perpUSDC == nil {
+		t.Fatal("expected perp USDC balance")
+	}
+	// strconv.FormatFloat with -1 precision strips trailing zeros, so
+	// "5000.50" round-trips through float64 → string as "5000.5".
+	if perpUSDC.Balance != "5000.5" {
+		t.Errorf("perp USDC balance = %s, want 5000.5", perpUSDC.Balance)
 	}
 
 	if ethBalance == nil {
@@ -1751,6 +1761,168 @@ func TestFetchBalancesWithMockServer(t *testing.T) {
 	}
 	if ethBalance.Balance != "1.5" {
 		t.Errorf("ETH balance = %s, want 1.5", ethBalance.Balance)
+	}
+	if ethBalance.WalletType != "spot" {
+		t.Errorf("ETH wallet_type = %q, want spot", ethBalance.WalletType)
+	}
+}
+
+// TestFetchBalancesEmitsPerpRows verifies that FetchBalances produces:
+//   - One spot USDC row (wallet_type=spot)
+//   - One perp USDC row (wallet_type=perp, from totalRawUsd)
+//   - One row per open perp position (wallet_type=perp, signed szi)
+func TestFetchBalancesEmitsPerpRows(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+
+		switch body["type"].(string) {
+		case "clearinghouseState":
+			json.NewEncoder(w).Encode(hlClearinghouseState{
+				AssetPositions: []struct {
+					Position struct {
+						Coin          string `json:"coin"`
+						Szi           string `json:"szi"`
+						EntryPx       string `json:"entryPx"`
+						PositionValue string `json:"positionValue"`
+						UnrealizedPnl string `json:"unrealizedPnl"`
+					} `json:"position"`
+				}{
+					{Position: struct {
+						Coin          string `json:"coin"`
+						Szi           string `json:"szi"`
+						EntryPx       string `json:"entryPx"`
+						PositionValue string `json:"positionValue"`
+						UnrealizedPnl string `json:"unrealizedPnl"`
+					}{Coin: "HYPE", Szi: "10", EntryPx: "20.0", PositionValue: "200.0", UnrealizedPnl: "0"}},
+				},
+				MarginSummary: struct {
+					AccountValue string `json:"accountValue"`
+					TotalRawUsd  string `json:"totalRawUsd"`
+				}{AccountValue: "500", TotalRawUsd: "500"},
+			})
+		case "spotClearinghouseState":
+			json.NewEncoder(w).Encode(hlSpotClearinghouseState{
+				Balances: []struct {
+					Coin  string `json:"coin"`
+					Total string `json:"total"`
+					Hold  string `json:"hold"`
+				}{
+					{Coin: "USDC", Total: "100", Hold: "0"},
+				},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+	account := &models.ExchangeAccount{
+		ID:                uuid.New().String(),
+		AccountIdentifier: "0x1234567890abcdef1234567890abcdef12345678",
+	}
+
+	balances, err := c.FetchBalances(context.Background(), account)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(balances) != 3 {
+		t.Fatalf("expected 3 rows (spot USDC, perp USDC, perp HYPE), got %d", len(balances))
+	}
+
+	var spotUSDC, perpUSDC, perpHYPE *models.BalanceSnapshot
+	for _, b := range balances {
+		switch {
+		case b.Asset == "USDC" && b.WalletType == "spot":
+			spotUSDC = b
+		case b.Asset == "USDC" && b.WalletType == "perp":
+			perpUSDC = b
+		case b.Asset == "HYPE" && b.WalletType == "perp":
+			perpHYPE = b
+		}
+	}
+
+	if spotUSDC == nil || spotUSDC.Balance != "100" {
+		t.Errorf("spot USDC row missing or wrong balance: %+v", spotUSDC)
+	}
+	if perpUSDC == nil || perpUSDC.Balance != "500" {
+		t.Errorf("perp USDC row missing or wrong balance: %+v", perpUSDC)
+	}
+	if perpHYPE == nil {
+		t.Fatal("expected perp HYPE position row")
+	}
+	if perpHYPE.Balance != "10" {
+		t.Errorf("perp HYPE balance = %q, want 10", perpHYPE.Balance)
+	}
+	if perpHYPE.WalletType != "perp" {
+		t.Errorf("perp HYPE wallet_type = %q, want perp", perpHYPE.WalletType)
+	}
+}
+
+// TestFetchBalancesEmitsShortPosition verifies that signed szi (negative for
+// shorts) is preserved in the emitted BalanceSnapshot.
+func TestFetchBalancesEmitsShortPosition(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+
+		switch body["type"].(string) {
+		case "clearinghouseState":
+			json.NewEncoder(w).Encode(hlClearinghouseState{
+				AssetPositions: []struct {
+					Position struct {
+						Coin          string `json:"coin"`
+						Szi           string `json:"szi"`
+						EntryPx       string `json:"entryPx"`
+						PositionValue string `json:"positionValue"`
+						UnrealizedPnl string `json:"unrealizedPnl"`
+					} `json:"position"`
+				}{
+					{Position: struct {
+						Coin          string `json:"coin"`
+						Szi           string `json:"szi"`
+						EntryPx       string `json:"entryPx"`
+						PositionValue string `json:"positionValue"`
+						UnrealizedPnl string `json:"unrealizedPnl"`
+					}{Coin: "BTC", Szi: "-0.5", EntryPx: "60000", PositionValue: "30000", UnrealizedPnl: "0"}},
+				},
+				MarginSummary: struct {
+					AccountValue string `json:"accountValue"`
+					TotalRawUsd  string `json:"totalRawUsd"`
+				}{AccountValue: "1000", TotalRawUsd: "1000"},
+			})
+		case "spotClearinghouseState":
+			json.NewEncoder(w).Encode(hlSpotClearinghouseState{Balances: nil})
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{apiURL: server.URL, httpClient: &http.Client{Timeout: 5 * time.Second}}
+	account := &models.ExchangeAccount{
+		ID:                uuid.New().String(),
+		AccountIdentifier: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+	}
+	balances, err := c.FetchBalances(context.Background(), account)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var perpBTC *models.BalanceSnapshot
+	for _, b := range balances {
+		if b.Asset == "BTC" && b.WalletType == "perp" {
+			perpBTC = b
+		}
+	}
+	if perpBTC == nil {
+		t.Fatal("expected perp BTC position row")
+	}
+	if perpBTC.Balance != "-0.5" {
+		t.Errorf("short BTC balance = %q, want -0.5 (signed)", perpBTC.Balance)
 	}
 }
 
