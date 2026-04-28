@@ -15,10 +15,6 @@ type SpotBalanceSnapshot struct {
 	Asset             string    `json:"asset"`
 	Balance           string    `json:"balance"`
 	Timestamp         time.Time `json:"timestamp"`
-	// WalletType: "spot" (default) or "perp". Migration 1831000000 added
-	// this column with default "spot"; rows written before the migration
-	// retain the default.
-	WalletType string `json:"wallet_type"`
 }
 
 // UnmarshalJSON handles Hasura returning BIGINT timestamp as number and NUMERIC as numbers.
@@ -56,7 +52,4 @@ type SpotBalanceSnapshotInput struct {
 	Asset             string    `json:"asset"`
 	Balance           string    `json:"balance"`
 	Timestamp         time.Time `json:"timestamp"`
-	// WalletType: "spot" or "perp". Empty string is treated as "spot" by the
-	// DB write path so legacy callers keep working unchanged.
-	WalletType string `json:"wallet_type,omitempty"`
 }

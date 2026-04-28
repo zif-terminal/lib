@@ -33,7 +33,6 @@ func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.U
 				asset
 				balance
 				timestamp
-				wallet_type
 			}
 		}
 	`
@@ -56,7 +55,6 @@ func (c *Client) GetLatestBalanceSnapshots(ctx context.Context, accountID uuid.U
 			Asset:       s.Asset,
 			Balance:     s.Balance,
 			TimestampMs: s.Timestamp.UnixMilli(),
-			WalletType:  s.WalletType,
 		})
 	}
 
@@ -81,7 +79,6 @@ func (c *Client) GetAllBalanceSnapshots(ctx context.Context, accountID uuid.UUID
 				asset
 				balance
 				timestamp
-				wallet_type
 			}
 		}
 	`
@@ -105,7 +102,6 @@ func (c *Client) GetAllBalanceSnapshots(ctx context.Context, accountID uuid.UUID
 			Asset:       s.Asset,
 			Balance:     s.Balance,
 			TimestampMs: s.Timestamp.UnixMilli(),
-			WalletType:  s.WalletType,
 		})
 	}
 
@@ -124,20 +120,11 @@ func (c *Client) AddSpotBalanceSnapshots(ctx context.Context, inputs []*SpotBala
 
 	objects := make([]map[string]interface{}, len(inputs))
 	for i, input := range inputs {
-		// Default empty wallet_type to "spot" for backward compatibility —
-		// callers that pre-date the wallet_type field still produce valid
-		// rows. The DB column also has a "spot" default but we set it
-		// explicitly here so the value is visible in the request payload.
-		walletType := input.WalletType
-		if walletType == "" {
-			walletType = "spot"
-		}
 		obj := map[string]interface{}{
 			"exchange_account_id": input.ExchangeAccountID.String(),
 			"asset":               input.Asset,
 			"balance":             input.Balance,
 			"timestamp":           input.Timestamp.UnixMilli(),
-			"wallet_type":         walletType,
 		}
 		objects[i] = obj
 	}
@@ -151,7 +138,6 @@ func (c *Client) AddSpotBalanceSnapshots(ctx context.Context, inputs []*SpotBala
 					asset
 					balance
 					timestamp
-					wallet_type
 				}
 			}
 		}
@@ -191,7 +177,6 @@ func (c *Client) GetLatestSpotBalanceSnapshot(ctx context.Context, accountID uui
 				asset
 				balance
 				timestamp
-				wallet_type
 			}
 		}
 	`
@@ -234,7 +219,6 @@ func (c *Client) GetSpotBalanceSnapshotsBefore(ctx context.Context, accountID uu
 				asset
 				balance
 				timestamp
-				wallet_type
 			}
 		}
 	`
@@ -278,7 +262,6 @@ func (c *Client) ListSpotBalanceSnapshots(ctx context.Context, accountID uuid.UU
 				asset
 				balance
 				timestamp
-				wallet_type
 			}
 		}
 	`

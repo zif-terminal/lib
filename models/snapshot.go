@@ -8,11 +8,6 @@ type BalanceSnapshot struct {
 	Asset       string `json:"asset"`
 	Balance     string `json:"balance"`
 	TimestampMs int64  `json:"timestamp_ms"` // Unix milliseconds of the snapshot
-	// WalletType identifies which sub-wallet on the exchange the balance is
-	// held in: "spot" (default) for spot balances, "perp" for perpetual
-	// margin balances and per-coin perp positions. Empty string is treated
-	// as "spot" by the DB write path for backward compatibility.
-	WalletType string `json:"wallet_type,omitempty"`
 }
 
 // HistoricalBalanceSnapshots represents a set of balance snapshots at a single timestamp.
