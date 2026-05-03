@@ -440,13 +440,35 @@ func (c *Client) FetchBalances(
 	nowMs := time.Now().UnixMilli()
 	var balances []*models.BalanceSnapshot
 
-	// Combine perp USDC (totalRawUsd) and spot USDC into a single snapshot.
-	// Use totalRawUsd (NOT accountValue) — accountValue includes unrealized PnL
-	// from open positions, which would cause phantom balance changes every time
-	// the market moves.
-	perpUSDC, err := strconv.ParseFloat(perpState.MarginSummary.TotalRawUsd, 64)
+	// Combine perp USDC and spot USDC into a single snapshot.
+	//
+	// We can't simply use totalRawUsd: under cross-margin, HL's totalRawUsd
+	// includes the mark-to-market notional of spot tokens supplied as
+	// collateral (e.g. HYPE pledged against perp positions). Those same spot
+	// tokens are ALSO reported as separate spot balances, which would
+	// double-count their value into USDC.
+	//
+	// Instead: derive realized perp cash as
+	//     accountValue − Σ(unrealizedPnl across assetPositions)
+	// accountValue = total perp wallet equity (cash + unrealized PnL on
+	// positions, in USD terms). Subtracting unrealized PnL leaves only the
+	// realized USDC cash sitting in the perp wallet, with no contribution
+	// from open-position MTM. We do NOT use totalRawUsd because for
+	// cross-margin accounts it is inflated by supplied-collateral notional.
+	accountValue, err := strconv.ParseFloat(perpState.MarginSummary.AccountValue, 64)
 	if err != nil {
-		return nil, fmt.Errorf("hyperliquid: failed to parse perp totalRawUsd %q: %w", perpState.MarginSummary.TotalRawUsd, err)
+		return nil, fmt.Errorf("hyperliquid: failed to parse perp accountValue %q: %w", perpState.MarginSummary.AccountValue, err)
+	}
+	perpUSDC := accountValue
+	for _, ap := range perpState.AssetPositions {
+		if ap.Position.UnrealizedPnl == "" {
+			continue
+		}
+		unr, err := strconv.ParseFloat(ap.Position.UnrealizedPnl, 64)
+		if err != nil {
+			return nil, fmt.Errorf("hyperliquid: failed to parse unrealizedPnl %q for coin %s: %w", ap.Position.UnrealizedPnl, ap.Position.Coin, err)
+		}
+		perpUSDC -= unr
 	}
 
 	spotUSDC := 0.0

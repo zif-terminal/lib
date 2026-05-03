@@ -1683,13 +1683,14 @@ func TestFetchBalancesWithMockServer(t *testing.T) {
 		reqType := body["type"].(string)
 		switch reqType {
 		case "clearinghouseState":
+			// No open positions, so realized perp USDC == accountValue.
 			json.NewEncoder(w).Encode(hlClearinghouseState{
 				MarginSummary: struct {
 					AccountValue string `json:"accountValue"`
 					TotalRawUsd  string `json:"totalRawUsd"`
 				}{
-					AccountValue: "5500.50", // includes unrealized PnL — should NOT be used
-					TotalRawUsd:  "5000.50", // raw USDC margin — this is what we want
+					AccountValue: "5000.50", // realized cash in perp wallet
+					TotalRawUsd:  "5000.50",
 				},
 			})
 		case "spotClearinghouseState":
@@ -1741,7 +1742,7 @@ func TestFetchBalancesWithMockServer(t *testing.T) {
 	if usdcBalance == nil {
 		t.Fatal("expected USDC balance")
 	}
-	// Combined: perp totalRawUsd (5000.50) + spot USDC (200.25) = 5200.75
+	// Combined: perp realized USDC (5000.50, no open positions) + spot USDC (200.25) = 5200.75
 	if usdcBalance.Balance != "5200.75" {
 		t.Errorf("USDC balance = %s, want 5200.75 (perp 5000.50 + spot 200.25)", usdcBalance.Balance)
 	}
@@ -1751,6 +1752,120 @@ func TestFetchBalancesWithMockServer(t *testing.T) {
 	}
 	if ethBalance.Balance != "1.5" {
 		t.Errorf("ETH balance = %s, want 1.5", ethBalance.Balance)
+	}
+}
+
+// TestFetchBalances_CrossMarginAdjustsForSupplied verifies that when a wallet
+// uses cross-margin (spot tokens supplied as collateral, e.g. HYPE), the
+// combined USDC snapshot does NOT double-count those tokens.
+//
+// Scenario derived from a real production account:
+//   - HYPE 349.96 supplied as collateral (~$14k notional)
+//   - perp totalRawUsd = $15,798 (inflated by supplied-collateral notional)
+//   - perp accountValue = $1,448
+//   - one open HYPE short with unrealizedPnl = $376.25
+//
+// Expected combinedUsdc = (1448 - 376.25) + spotUSDC = 1071.75 + spotUSDC.
+// MUST NOT be totalRawUsd (15798) + spotUSDC.
+func TestFetchBalances_CrossMarginAdjustsForSupplied(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+
+		reqType := body["type"].(string)
+		switch reqType {
+		case "clearinghouseState":
+			json.NewEncoder(w).Encode(hlClearinghouseState{
+				AssetPositions: []struct {
+					Position struct {
+						Coin          string `json:"coin"`
+						Szi           string `json:"szi"`
+						EntryPx       string `json:"entryPx"`
+						PositionValue string `json:"positionValue"`
+						UnrealizedPnl string `json:"unrealizedPnl"`
+					} `json:"position"`
+				}{
+					{
+						Position: struct {
+							Coin          string `json:"coin"`
+							Szi           string `json:"szi"`
+							EntryPx       string `json:"entryPx"`
+							PositionValue string `json:"positionValue"`
+							UnrealizedPnl string `json:"unrealizedPnl"`
+						}{
+							Coin:          "HYPE",
+							Szi:           "-349.96",
+							EntryPx:       "41.00",
+							PositionValue: "14000.00",
+							UnrealizedPnl: "376.25",
+						},
+					},
+				},
+				MarginSummary: struct {
+					AccountValue string `json:"accountValue"`
+					TotalRawUsd  string `json:"totalRawUsd"`
+				}{
+					AccountValue: "1448.00", // realized cash + unrealized PnL
+					TotalRawUsd:  "15798.00", // INFLATED by supplied HYPE collateral
+				},
+			})
+		case "spotClearinghouseState":
+			json.NewEncoder(w).Encode(hlSpotClearinghouseState{
+				Balances: []struct {
+					Coin  string `json:"coin"`
+					Total string `json:"total"`
+					Hold  string `json:"hold"`
+				}{
+					{Coin: "USDC", Total: "10.00", Hold: "0"},
+					{Coin: "HYPE", Total: "349.96", Hold: "0"}, // same tokens supplied as collateral
+				},
+			})
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	account := &models.ExchangeAccount{
+		ID:                uuid.New().String(),
+		AccountIdentifier: "0x1234567890abcdef1234567890abcdef12345678",
+	}
+
+	balances, err := c.FetchBalances(context.Background(), account)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var usdcBalance, hypeBalance *models.BalanceSnapshot
+	for _, b := range balances {
+		switch b.Asset {
+		case "USDC":
+			usdcBalance = b
+		case "HYPE":
+			hypeBalance = b
+		}
+	}
+
+	if usdcBalance == nil {
+		t.Fatal("expected USDC balance")
+	}
+	// Expected: (accountValue 1448 - unrealizedPnl 376.25) + spotUSDC 10 = 1081.75
+	// NOT: totalRawUsd 15798 + 10 = 15808
+	if usdcBalance.Balance != "1081.75" {
+		t.Errorf("USDC balance = %s, want 1081.75 ((accountValue - unrealizedPnl) + spotUSDC); "+
+			"if you see ~15808 the bug has regressed (using totalRawUsd which double-counts cross-margin collateral)",
+			usdcBalance.Balance)
+	}
+
+	if hypeBalance == nil {
+		t.Fatal("expected HYPE spot balance")
+	}
+	if hypeBalance.Balance != "349.96" {
+		t.Errorf("HYPE balance = %s, want 349.96", hypeBalance.Balance)
 	}
 }
 
