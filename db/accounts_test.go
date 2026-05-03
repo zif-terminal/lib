@@ -880,6 +880,18 @@ func TestClient_DeleteSyncedData(t *testing.T) {
 				respData = map[string]interface{}{
 					"delete_spot_balance_snapshots": map[string]interface{}{"affected_rows": 10},
 				}
+			case 5:
+				// DeletePositionsForAccount (cascades to position_events + position_pnl)
+				respData = map[string]interface{}{
+					"delete_positions": map[string]interface{}{"affected_rows": 4},
+				}
+			case 6:
+				// DeleteCheckpoint
+				respData = map[string]interface{}{
+					"delete_processor_checkpoints_by_pk": map[string]interface{}{
+						"exchange_account_id": accountID.String(),
+					},
+				}
 			}
 			data, _ := json.Marshal(respData)
 			return json.Unmarshal(data, resp)
@@ -895,8 +907,8 @@ func TestClient_DeleteSyncedData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeleteSyncedData failed: %v", err)
 	}
-	if callCount != 4 {
-		t.Errorf("Expected 4 GraphQL calls, got %d", callCount)
+	if callCount != 6 {
+		t.Errorf("Expected 6 GraphQL calls, got %d", callCount)
 	}
 }
 

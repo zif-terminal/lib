@@ -628,7 +628,15 @@ func (c *Client) ClearProcessorReset(ctx context.Context, accountID string) erro
 }
 
 // DeleteSyncedData deletes all synced data for an account: trades, transfers,
-// settlements, and spot balance snapshots.
+// settlements, and spot balance snapshots. It ALSO wipes derived position data
+// (positions, position_events via cascade, and processor_checkpoints) because
+// position_events.event_id references trades/transfers/settlements without an
+// FK; leaving derived rows in place after a sync wipe creates orphans that
+// poison the cross-account missing_position_pnl walk and stall the processor.
+//
+// Sync reset thus becomes "wipe ingested + derived together" — mirroring what
+// processor_reset_requested does, except this path is triggered by
+// sync_reset_requested.
 func (c *Client) DeleteSyncedData(ctx context.Context, accountID uuid.UUID) error {
 	id := accountID.String()
 
@@ -702,6 +710,19 @@ func (c *Client) DeleteSyncedData(ctx context.Context, accountID uuid.UUID) erro
 	}
 	if err := c.execute(ctx, req, &snapshotsResp); err != nil {
 		return fmt.Errorf("failed to delete spot balance snapshots: %w", err)
+	}
+
+	// Wipe derived position data so position_events do not become orphans
+	// pointing at deleted trades/transfers/settlements. Deleting positions
+	// cascades to position_events and position_pnl via DB FK.
+	if _, err := c.DeletePositionsForAccount(ctx, accountID); err != nil {
+		return fmt.Errorf("failed to delete positions: %w", err)
+	}
+
+	// Drop the processor checkpoint so the next processor pass restarts cleanly
+	// from the (now-empty) ingested data.
+	if err := c.DeleteCheckpoint(ctx, accountID); err != nil {
+		return fmt.Errorf("failed to delete checkpoint: %w", err)
 	}
 
 	return nil
