@@ -174,6 +174,9 @@ type DBClient interface {
 	DeleteSyncedData(ctx context.Context, accountID uuid.UUID) error
 	DeleteProcessedData(ctx context.Context, accountID uuid.UUID) error
 
+	// Data completeness flag (set by account_sync R1/R2/R3 heuristics).
+	UpdateAccountDataComplete(ctx context.Context, accountID string, complete bool, notes string) error
+
 	// Event value methods
 	ListSupportedDenominations(ctx context.Context) ([]string, error)
 	ListMissingEventValues(ctx context.Context, limit int) ([]*MissingEventValue, error)

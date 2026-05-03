@@ -49,6 +49,9 @@ func (c *Client) GetAccount(ctx context.Context, id string) (*ExchangeAccount, e
 				processing_enabled
 				sync_reset_requested
 				processor_reset_requested
+				data_complete
+				data_complete_notes
+				data_complete_checked_at
 				exchange {
 					id
 					name
@@ -126,6 +129,9 @@ func (c *Client) ListAccounts(ctx context.Context, f AccountListFilter) ([]*Exch
 				processing_enabled
 				sync_reset_requested
 				processor_reset_requested
+				data_complete
+				data_complete_notes
+				data_complete_checked_at
 				exchange {
 					id
 					name
@@ -526,6 +532,59 @@ func (c *Client) ClearSyncReset(ctx context.Context, accountID string) error {
 
 	if err := c.execute(ctx, req, &resp); err != nil {
 		return fmt.Errorf("failed to clear sync reset: %w", err)
+	}
+
+	if resp.UpdateExchangeAccountsByPk == nil {
+		return notFoundError("account", accountID)
+	}
+
+	return nil
+}
+
+// UpdateAccountDataComplete records the result of the data-complete heuristic
+// check (R1/R2/R3 in account_sync). complete=false signals that some history
+// is missing; the processor uses this flag to refuse processing until a human
+// fixes the data. Notes describes which rule fired.
+//
+// Always updates data_complete_checked_at to now() so the dashboard can show
+// "last verified at <ts>" even when the result is unchanged.
+func (c *Client) UpdateAccountDataComplete(ctx context.Context, accountID string, complete bool, notes string) error {
+	// Use null for notes when complete=true, so the UI doesn't show stale
+	// rule text after an account recovers (e.g. user uploads missing data).
+	var notesArg interface{}
+	if complete {
+		notesArg = nil
+	} else {
+		notesArg = notes
+	}
+
+	query := `
+		mutation UpdateAccountDataComplete($id: uuid!, $complete: Boolean!, $notes: String, $checked_at: timestamptz!) {
+			update_exchange_accounts_by_pk(pk_columns: {id: $id}, _set: {
+				data_complete: $complete
+				data_complete_notes: $notes
+				data_complete_checked_at: $checked_at
+			}) {
+				id
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id":         accountID,
+		"complete":   complete,
+		"notes":      notesArg,
+		"checked_at": "now()",
+	})
+
+	var resp struct {
+		UpdateExchangeAccountsByPk *struct {
+			ID string `json:"id"`
+		} `json:"update_exchange_accounts_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to update account data_complete: %w", err)
 	}
 
 	if resp.UpdateExchangeAccountsByPk == nil {

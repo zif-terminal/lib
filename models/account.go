@@ -29,6 +29,20 @@ type ExchangeAccount struct {
 	DetectedAt          *string         `json:"detected_at,omitempty" db:"detected_at"`           // When account was detected
 	LastSyncedAt        *string         `json:"last_synced_at,omitempty" db:"last_synced_at"`     // When account was last synced
 	Tags                []string        `json:"tags" db:"tags"`
+
+	// DataComplete indicates whether the synced event history for this account
+	// is believed to be complete. account_sync runs cheap heuristic checks at
+	// the end of each cycle (R1: trade fill before any inflow; R2: funding
+	// payment before any perp fill; R3: zero inflows but balance was ever > 0)
+	// and sets this flag accordingly. The activity_processor refuses to process
+	// accounts with DataComplete=false because incomplete event history yields
+	// silently-wrong cost basis / pnl values.
+	//
+	// Default in DB is TRUE so existing accounts continue to be processed
+	// until the next sync re-evaluates them.
+	DataComplete           bool    `json:"data_complete" db:"data_complete"`
+	DataCompleteNotes      *string `json:"data_complete_notes,omitempty" db:"data_complete_notes"`
+	DataCompleteCheckedAt  *string `json:"data_complete_checked_at,omitempty" db:"data_complete_checked_at"`
 }
 
 // ExchangeAccountInput is used for GraphQL mutations
