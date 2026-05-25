@@ -57,18 +57,61 @@ func TestGetOrCreateAsset(t *testing.T) {
 	if asset == nil {
 		t.Fatal("Expected non-nil asset state")
 	}
-	if asset.Balance != "0" {
-		t.Errorf("Expected Balance 0, got %s", asset.Balance)
-	}
 	if asset.CumulativeDeposits != "0" {
 		t.Errorf("Expected CumulativeDeposits 0, got %s", asset.CumulativeDeposits)
 	}
 
-	// Modify and re-fetch
-	asset.Balance = "500"
+	// Modify and re-fetch — re-fetch must return the same instance, not a fresh one
+	asset.CumulativeDeposits = "500"
 	asset2 := state.GetOrCreateAsset("SOL")
-	if asset2.Balance != "500" {
-		t.Errorf("Expected Balance 500, got %s", asset2.Balance)
+	if asset2.CumulativeDeposits != "500" {
+		t.Errorf("Expected CumulativeDeposits 500 on re-fetch (same instance), got %s", asset2.CumulativeDeposits)
+	}
+}
+
+// TestBalance_DerivedFromPositions verifies the computed Balance() method:
+// long positions contribute +Quantity, short positions contribute -Quantity,
+// closed positions contribute 0, and per-asset / per-market filtering works.
+func TestBalance_DerivedFromPositions(t *testing.T) {
+	state := NewAccountState()
+
+	// No positions → balance 0
+	if got := state.Balance("SOL"); got != "0.0" && got != "0" {
+		t.Errorf("Empty state Balance(SOL) = %q, want 0", got)
+	}
+
+	// Open long spot:SOL 100 → balance +100
+	state.Positions["spot:SOL"] = &PositionState{
+		Market: "SOL", MarketType: "spot", Side: "long", Quantity: "100",
+	}
+	if got := state.Balance("SOL"); got != "100.0" {
+		t.Errorf("After long 100 Balance(SOL) = %q, want 100.0", got)
+	}
+
+	// Open short spot:USDC 50 → balance -50
+	state.Positions["spot:USDC"] = &PositionState{
+		Market: "USDC", MarketType: "spot", Side: "short", Quantity: "50",
+	}
+	if got := state.Balance("USDC"); got != "-50.0" {
+		t.Errorf("After short 50 Balance(USDC) = %q, want -50.0", got)
+	}
+
+	// Perp positions are ignored (only spot contributes to spot balance)
+	state.Positions["perp:SOL"] = &PositionState{
+		Market: "SOL-PERP", MarketType: "perp", Side: "long", Quantity: "5",
+	}
+	if got := state.Balance("SOL"); got != "100.0" {
+		t.Errorf("Perp position must not affect spot balance, got %q want 100.0", got)
+	}
+
+	// Closed positions ignored (they live in ClosedPositions and shouldn't
+	// be in the live map by construction, but explicitly check by emptying)
+	delete(state.Positions, "spot:SOL")
+	state.ClosedPositions = append(state.ClosedPositions, &PositionState{
+		Market: "SOL", MarketType: "spot", Side: "long", Quantity: "0", EndTime: 1,
+	})
+	if got := state.Balance("SOL"); got != "0.0" && got != "0" {
+		t.Errorf("Closed positions must not contribute, got %q want 0", got)
 	}
 }
 

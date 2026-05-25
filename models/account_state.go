@@ -1,6 +1,9 @@
 package models
 
 import (
+	"math/big"
+	"strings"
+
 	"github.com/google/uuid"
 )
 
@@ -42,15 +45,19 @@ type AccountState struct {
 	ClosedPositions []*PositionState          `json:"closed_positions"`
 	Trading         map[string]*TradingState  `json:"trading"`           // Keyed by quote asset (e.g., "USDC", "SOL")
 	HasSeenSnapshot bool                      `json:"has_seen_snapshot"` // True after first snapshot baseline applied
-	// PendingFunding is an in-memory buffer for funding events whose matching perp position
-	// has not yet been opened. Flushed when the matching position opens. Not JSON-serialized —
-	// the processor fails loudly at the end of the run if this buffer is non-empty.
+	// PendingFunding is an in-memory buffer for funding events whose matching perp
+	// position has not yet been opened. Flushed when the matching position opens.
+	// Not JSON-serialized — the processor fails loudly at the end of the run if
+	// this buffer is non-empty.
 	PendingFunding []PendingFundingEntry `json:"-"`
 }
 
-// AssetState tracks the state of a single asset (USDC, SOL, etc.)
+// AssetState tracks the cumulative bookkeeping fields for a single asset
+// (USDC, SOL, etc.). The asset's current Balance is NOT stored here — it is a
+// derived view over the spot positions in AccountState, computed by
+// AccountState.Balance(symbol). Positions are the single source of truth so
+// the balance can never diverge from the position history.
 type AssetState struct {
-	Balance             string `json:"balance"`              // Current balance
 	CumulativeDeposits  string `json:"cumulative_deposits"`  // Sum of deposits
 	CumulativeWithdraws string `json:"cumulative_withdraws"` // Sum of withdrawals
 	CumulativeInterest  string `json:"cumulative_interest"`  // All interest (explicit transfers + snapshot-derived)
@@ -115,11 +122,12 @@ func (s *AccountState) GetOrCreateTrading(quoteAsset string) *TradingState {
 	return s.Trading[quoteAsset]
 }
 
-// GetOrCreateAsset returns the asset state, creating it if it doesn't exist
+// GetOrCreateAsset returns the asset state, creating it if it doesn't exist.
+// Note: the per-asset Balance is NOT stored here — it is computed by
+// AccountState.Balance(symbol) from the open spot positions for the asset.
 func (s *AccountState) GetOrCreateAsset(symbol string) *AssetState {
 	if s.Assets[symbol] == nil {
 		s.Assets[symbol] = &AssetState{
-			Balance:             "0",
 			CumulativeDeposits:  "0",
 			CumulativeWithdraws: "0",
 			CumulativeInterest:  "0",
@@ -127,4 +135,56 @@ func (s *AccountState) GetOrCreateAsset(symbol string) *AssetState {
 		}
 	}
 	return s.Assets[symbol]
+}
+
+// Balance returns the derived cumulative balance of the named asset by summing
+// the signed quantities of the open spot positions for that asset:
+//
+//	long  contributes +Quantity
+//	short contributes -Quantity
+//
+// Closed positions contribute zero by FIFO construction (EventEntries == ExitEntries
+// at the moment of close) and so are not iterated.
+//
+// Positions are the single source of truth — there is no separately-maintained
+// Balance field, so the derived balance and the position history can never
+// diverge from one another.
+//
+// The returned string uses the same 18-decimal fixed-point format as the rest
+// of the processor (parseNumeric / formatNumeric round-trip).
+func (s *AccountState) Balance(symbol string) string {
+	sum := new(big.Rat)
+	for _, pos := range s.Positions {
+		if pos == nil || pos.MarketType != "spot" || pos.Market != symbol {
+			continue
+		}
+		q, ok := new(big.Rat).SetString(pos.Quantity)
+		if !ok || q == nil {
+			continue
+		}
+		if pos.Side == "long" {
+			sum.Add(sum, q)
+		} else {
+			sum.Sub(sum, q)
+		}
+	}
+	return formatBalance(sum)
+}
+
+// formatBalance renders a big.Rat as an 18-decimal fixed-point string with
+// trailing zeros after the decimal point trimmed (keeping at least ".0"). This
+// matches the processor's formatNumeric helper so balance strings produced by
+// AccountState.Balance() round-trip cleanly through parseNumeric.
+func formatBalance(r *big.Rat) string {
+	if r == nil {
+		return "0"
+	}
+	s := r.FloatString(18)
+	if idx := strings.IndexByte(s, '.'); idx >= 0 {
+		s = strings.TrimRight(s, "0")
+		if s[len(s)-1] == '.' {
+			s += "0"
+		}
+	}
+	return s
 }

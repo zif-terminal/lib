@@ -80,7 +80,7 @@ func TestClient_LoadCheckpoint(t *testing.T) {
 			respData := map[string]interface{}{
 				"processor_checkpoints_by_pk": map[string]interface{}{
 					"exchange_account_id":       accountID.String(),
-					"state":                     `{"assets":{"SOL":{"balance":"100"}},"positions":{},"closed_positions":[],"trading":{"SOL":{"cumulative_funding":"0","cumulative_fee_paid":"0","cumulative_settled_pnl":"0"}}}`,
+					"state":                     `{"assets":{"SOL":{"cumulative_deposits":"100","balance":"legacy-ignored"}},"positions":{},"closed_positions":[],"trading":{"SOL":{"cumulative_funding":"0","cumulative_fee_paid":"0","cumulative_settled_pnl":"0"}}}`,
 					"schema_version":            float64(7),
 					"last_trade_timestamp":      float64(1700000000000),
 					"last_transfer_timestamp":   float64(1700000001000),
@@ -122,8 +122,16 @@ func TestClient_LoadCheckpoint(t *testing.T) {
 
 	if checkpoint.State.Assets["SOL"] == nil {
 		t.Error("Expected SOL asset in state")
-	} else if checkpoint.State.Assets["SOL"].Balance != "100" {
-		t.Errorf("Expected SOL balance '100', got %q", checkpoint.State.Assets["SOL"].Balance)
+	} else if checkpoint.State.Assets["SOL"].CumulativeDeposits != "100" {
+		// Balance is no longer a stored field — it's computed from spot
+		// positions. The legacy "balance" JSON key on the wire is silently
+		// dropped on load. CumulativeDeposits acts as the round-trip pin.
+		t.Errorf("Expected SOL CumulativeDeposits '100', got %q", checkpoint.State.Assets["SOL"].CumulativeDeposits)
+	}
+	// Derived balance is zero on an empty Positions map regardless of the
+	// legacy "balance" JSON key being present in the persisted state.
+	if got := checkpoint.State.Balance("SOL"); got != "0.0" && got != "0" {
+		t.Errorf("Expected derived Balance(SOL) = 0 on empty positions, got %q", got)
 	}
 
 	if checkpoint.State.Trading["SOL"] == nil {
