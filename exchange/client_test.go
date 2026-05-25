@@ -126,8 +126,8 @@ func TestGetClientWithDB_NotFound(t *testing.T) {
 func TestListAvailableExchanges(t *testing.T) {
 	exchanges := ListAvailableExchanges()
 
-	if len(exchanges) != 4 {
-		t.Fatalf("Expected 4 exchanges, got %d", len(exchanges))
+	if len(exchanges) != 5 {
+		t.Fatalf("Expected 5 exchanges, got %d", len(exchanges))
 	}
 
 	found := map[string]bool{}
@@ -143,6 +143,9 @@ func TestListAvailableExchanges(t *testing.T) {
 	}
 	if !found["lighter"] {
 		t.Error("Expected 'lighter' in exchanges list")
+	}
+	if !found["solana_dex"] {
+		t.Error("Expected 'solana_dex' in exchanges list")
 	}
 	if !found["variational"] {
 		t.Error("Expected 'variational' in exchanges list")

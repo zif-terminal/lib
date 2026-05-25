@@ -3,6 +3,7 @@ package hyperliquid
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"net/http"
 	"net/http/httptest"
@@ -184,6 +185,77 @@ func TestTransformFunding(t *testing.T) {
 	}
 	if payment.Amount != "-0.5" {
 		t.Errorf("Amount = %q, want -0.5 (cleanDecimal applied)", payment.Amount)
+	}
+	// HL userFunding.time is the START of the accrual period;
+	// transformFunding shifts by n_samples * window_length so the event
+	// lands at the end-of-accrual moment. With n_samples=1, that is +1h.
+	wantTs := time.UnixMilli(1700000000000).UTC().Add(time.Hour)
+	if !payment.Timestamp.Equal(wantTs) {
+		t.Errorf("Timestamp = %s, want %s (window-start + 1h for n_samples=1)", payment.Timestamp, wantTs)
+	}
+	if payment.Metadata["window_start_ms"] != "1700000000000" {
+		t.Errorf("window_start_ms metadata = %q, want 1700000000000", payment.Metadata["window_start_ms"])
+	}
+	if payment.Metadata["window_length_sec"] != "3600" {
+		t.Errorf("window_length_sec metadata = %q, want 3600", payment.Metadata["window_length_sec"])
+	}
+}
+
+// TestTransformFunding_EndOfAccrual exercises the n_samples-driven
+// end-of-accrual shift introduced by the funding-stamp model fix.
+// HL buckets vary: hourly buckets carry n_samples=1, daily-rollup buckets
+// carry n_samples=24, and we also see partial counts (e.g. n_samples=2).
+// The stored timestamp must equal window_start + n_samples * window_length.
+// External ID and window_start_ms metadata remain keyed off the raw time
+// for replay stability.
+func TestTransformFunding_EndOfAccrual(t *testing.T) {
+	accountUUID := uuid.New()
+	windowStartMs := int64(1700000000000)
+
+	tests := []struct {
+		name       string
+		nSamples   int
+		wantShift  time.Duration
+	}{
+		{name: "hourly_bucket", nSamples: 1, wantShift: time.Hour},
+		{name: "two_hour_bucket", nSamples: 2, wantShift: 2 * time.Hour},
+		{name: "daily_rollup", nSamples: 24, wantShift: 24 * time.Hour},
+		// n_samples=0 (missing/malformed) falls back to legacy +1h.
+		{name: "missing_nsamples_defaults_to_1h", nSamples: 0, wantShift: time.Hour},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := hlFundingEntry{
+				Time: windowStartMs,
+				Hash: "0xeoa",
+				Delta: hlFundingDelta{
+					Coin:        "BTC",
+					FundingRate: "-0.00002",
+					NSamples:    tc.nSamples,
+					Usdc:        "-1.23",
+				},
+			}
+			payment := transformFunding(entry, accountUUID)
+			if payment == nil {
+				t.Fatal("expected non-nil payment")
+			}
+
+			wantTs := time.UnixMilli(windowStartMs).UTC().Add(tc.wantShift)
+			if !payment.Timestamp.Equal(wantTs) {
+				t.Fatalf("n_samples=%d: Timestamp = %s, want %s (window_start + %s)",
+					tc.nSamples, payment.Timestamp, wantTs, tc.wantShift)
+			}
+			// External ID and window_start_ms must stay keyed off the RAW
+			// window-start so rows are stable across replays.
+			if payment.ExternalID != "1700000000000_BTC" {
+				t.Errorf("ExternalID = %q, want 1700000000000_BTC", payment.ExternalID)
+			}
+			if payment.Metadata["window_start_ms"] != "1700000000000" {
+				t.Errorf("window_start_ms metadata = %q, want 1700000000000",
+					payment.Metadata["window_start_ms"])
+			}
+		})
 	}
 }
 
@@ -713,12 +785,15 @@ func TestTransformLedgerEntry(t *testing.T) {
 	})
 
 	t.Run("rewardsClaim", func(t *testing.T) {
+		// HL's rewardsClaim delta puts the amount in the `amount` field, not
+		// `usdc`. The struct field is hlLedgerDelta.Amount.
 		entry := hlLedgerEntry{
 			Time: 1700000000000,
 			Hash: "0xrc",
 			Delta: hlLedgerDelta{
-				Type: "rewardsClaim",
-				Usdc: "50.0",
+				Type:   "rewardsClaim",
+				Amount: "50.0",
+				Token:  "USDC",
 			},
 		}
 		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
@@ -736,6 +811,39 @@ func TestTransformLedgerEntry(t *testing.T) {
 		}
 		if transfer.Amount != "50" {
 			t.Errorf("Amount = %q, want 50", transfer.Amount)
+		}
+	})
+
+	t.Run("rewardsClaim amount field used (regression: was reading Usdc)", func(t *testing.T) {
+		// Real-world payload shape from HL info API:
+		//   {"type":"rewardsClaim","amount":"237.09788511","token":"USDC"}
+		// Previously the code read Delta.Usdc which left amount=0 and produced
+		// reconciliation residuals (e.g. Hype OG -$286.82 USDC).
+		entry := hlLedgerEntry{
+			Time: 1760289306373,
+			Hash: "0xd98fbfc6fe1a7e63db09042d588dfa0213ff00ac991d9d357d586b19bd1e584e",
+			Delta: hlLedgerDelta{
+				Type:   "rewardsClaim",
+				Amount: "237.10",
+				Token:  "USDC",
+				// Usdc intentionally empty — the actual API does not set it
+			},
+		}
+		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer")
+		}
+		if transfer.Amount != "237.1" {
+			t.Errorf("Amount = %q, want 237.1 (parsed from Delta.Amount)", transfer.Amount)
+		}
+		if transfer.Asset != "USDC" {
+			t.Errorf("Asset = %q, want USDC", transfer.Asset)
+		}
+		if transfer.Type != models.TypeReward {
+			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeReward)
 		}
 	})
 
@@ -1156,6 +1264,356 @@ func TestTransformLedgerEntry_SendNoFee(t *testing.T) {
 	}
 }
 
+// TestFoldLedgerFee_FeeTokenDiffersFromToken covers Fix 1 (agent a93e537):
+// when an outgoing `send` moves a non-USDC token (e.g. HYPE), the HL ledger
+// reports the bridge fee in USDC, not in the moved token. Folding the USDC
+// fee into the token amount produces a phantom position in that token
+// (eeb650d7's 1 HYPE residual). The main transfer's amount must be left
+// alone; the USDC fee is emitted as a separate withdraw row by
+// extraLedgerFeeTransfer.
+func TestFoldLedgerFee_FeeTokenDiffersFromToken(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xhypesendwithfee",
+		Delta: hlLedgerDelta{
+			Type:        "send",
+			Token:       "HYPE",
+			Amount:      "5.0",
+			Fee:         "1.0", // 1 USDC bridge fee — NOT 1 HYPE
+			User:        wallet,
+			Destination: "0xOtherAddress",
+		},
+	}
+
+	// Main transfer must remain in HYPE, amount unchanged.
+	transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer == nil {
+		t.Fatal("expected non-nil transfer")
+	}
+	if transfer.Type != models.TypeWithdraw {
+		t.Errorf("Type = %q, want %q", transfer.Type, models.TypeWithdraw)
+	}
+	if transfer.Asset != "HYPE" {
+		t.Errorf("Asset = %q, want HYPE", transfer.Asset)
+	}
+	if transfer.Amount != "5" {
+		t.Errorf("Amount = %q, want 5 (USDC fee MUST NOT fold into HYPE)", transfer.Amount)
+	}
+
+	// And a separate USDC withdraw fee row must be emitted.
+	feeTransfer := extraLedgerFeeTransfer(entry, accountUUID, wallet)
+	if feeTransfer == nil {
+		t.Fatal("expected separate USDC fee transfer for non-USDC send with fee>0")
+	}
+	if feeTransfer.Asset != "USDC" {
+		t.Errorf("fee Asset = %q, want USDC", feeTransfer.Asset)
+	}
+	if feeTransfer.Amount != "1" {
+		t.Errorf("fee Amount = %q, want 1", feeTransfer.Amount)
+	}
+	if feeTransfer.Type != models.TypeWithdraw {
+		t.Errorf("fee Type = %q, want %q", feeTransfer.Type, models.TypeWithdraw)
+	}
+	if feeTransfer.ExternalID != "0xhypesendwithfee_fee" {
+		t.Errorf("fee ExternalID = %q, want 0xhypesendwithfee_fee", feeTransfer.ExternalID)
+	}
+}
+
+// TestFoldLedgerFee_USDCSendStillFolds is a regression guard ensuring Fix 1
+// did not break the existing USDC-send fold path. When token IS USDC the fee
+// is in the same denomination, so folding remains correct and no extra row
+// should be emitted.
+func TestFoldLedgerFee_USDCSendStillFolds(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xusdcsendfold",
+		Delta: hlLedgerDelta{
+			Type:        "send",
+			Token:       "USDC",
+			Amount:      "100",
+			Fee:         "1.0",
+			User:        wallet,
+			Destination: "0xOtherAddress",
+		},
+	}
+	transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer.Amount != "101" {
+		t.Errorf("Amount = %q, want 101 (USDC fee folded as before)", transfer.Amount)
+	}
+	if extra := extraLedgerFeeTransfer(entry, accountUUID, wallet); extra != nil {
+		t.Errorf("expected no extra fee row for USDC send (fee already folded), got %+v", extra)
+	}
+}
+
+// TestSpotTransfer_OutgoingFee covers Fix 2 (agent a93e537): outgoing
+// `spotTransfer` of a non-USDC token previously dropped the `fee` field
+// entirely. HL charges this fee in USDC; we emit it as a separate USDC
+// withdraw row so the account's USDC balance reconciles. Caused 2 events
+// × 1 USDC = $2 of 0c05e3a5's $14.50 residual.
+func TestSpotTransfer_OutgoingFee(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xspotxferoutfee",
+		Delta: hlLedgerDelta{
+			Type:        "spotTransfer",
+			Token:       "USDE",
+			Amount:      "100.0",
+			Fee:         "1.0", // 1 USDC fee dropped pre-fix
+			User:        wallet,
+			Destination: "0xOtherAddress",
+			UsdcValue:   "100.0",
+		},
+	}
+
+	// Main transfer must remain USDE, amount unchanged (no silent USDC fold).
+	transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer == nil {
+		t.Fatal("expected non-nil transfer")
+	}
+	if transfer.Asset != "USDE" {
+		t.Errorf("Asset = %q, want USDE", transfer.Asset)
+	}
+	if transfer.Amount != "100" {
+		t.Errorf("Amount = %q, want 100 (fee must not fold into non-USDC asset)", transfer.Amount)
+	}
+
+	// Separate USDC fee row must be emitted.
+	feeTransfer := extraLedgerFeeTransfer(entry, accountUUID, wallet)
+	if feeTransfer == nil {
+		t.Fatal("expected separate USDC fee withdraw for outgoing spotTransfer with fee>0")
+	}
+	if feeTransfer.Asset != "USDC" {
+		t.Errorf("fee Asset = %q, want USDC", feeTransfer.Asset)
+	}
+	if feeTransfer.Amount != "1" {
+		t.Errorf("fee Amount = %q, want 1", feeTransfer.Amount)
+	}
+	if feeTransfer.Type != models.TypeWithdraw {
+		t.Errorf("fee Type = %q, want %q", feeTransfer.Type, models.TypeWithdraw)
+	}
+}
+
+// TestSpotTransfer_IncomingNoFeeRow: an INCOMING non-USDC spotTransfer with
+// a fee field is the sender's problem — we must NOT emit a phantom USDC
+// withdraw on the recipient side.
+func TestSpotTransfer_IncomingNoFeeRow(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xspotxferinfee",
+		Delta: hlLedgerDelta{
+			Type:        "spotTransfer",
+			Token:       "USDE",
+			Amount:      "50.0",
+			Fee:         "1.0",
+			User:        "0xOtherAddress",
+			Destination: wallet,
+			UsdcValue:   "50.0",
+		},
+	}
+	if extra := extraLedgerFeeTransfer(entry, accountUUID, wallet); extra != nil {
+		t.Errorf("expected nil fee row for INCOMING spotTransfer, got %+v", extra)
+	}
+}
+
+// TestSpotTransfer_OutgoingUSDCNoFeeRow: when an outgoing spotTransfer moves
+// USDC itself, we don't emit a separate fee row (the main path would fold
+// it in if foldLedgerFee were applied; today spotTransfer's main path
+// doesn't fold, but neither does HL charge a separate USDC fee on USDC
+// spot moves — feeRow must be nil so we don't double-debit).
+func TestSpotTransfer_OutgoingUSDCNoFeeRow(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xspotxferusdc",
+		Delta: hlLedgerDelta{
+			Type:        "spotTransfer",
+			Token:       "USDC",
+			Amount:      "10.0",
+			Fee:         "1.0",
+			User:        wallet,
+			Destination: "0xOtherAddress",
+			UsdcValue:   "10.0",
+		},
+	}
+	if extra := extraLedgerFeeTransfer(entry, accountUUID, wallet); extra != nil {
+		t.Errorf("expected nil fee row for USDC spotTransfer, got %+v", extra)
+	}
+}
+
+// TestSpotTransfer_OutgoingZeroFeeNoRow: zero fee must produce no row.
+func TestSpotTransfer_OutgoingZeroFeeNoRow(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0x4C5feD7BDDA8023f3133e3A8F7C615395AD673c8"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xspotxferzerofee",
+		Delta: hlLedgerDelta{
+			Type:        "spotTransfer",
+			Token:       "USDE",
+			Amount:      "50.0",
+			Fee:         "0",
+			User:        wallet,
+			Destination: "0xOtherAddress",
+			UsdcValue:   "50.0",
+		},
+	}
+	if extra := extraLedgerFeeTransfer(entry, accountUUID, wallet); extra != nil {
+		t.Errorf("expected nil fee row when fee=0, got %+v", extra)
+	}
+}
+
+// TestInternalTransfer_IncomingFeeDeducted covers the symmetric +$1 residual
+// observed on accounts eeb650d7 (Hype-Spot-OLD) and 42c49379 (Zif-US). HL's
+// internalTransfer charges a $1 USDC fee that — empirically — is debited from
+// the RECIPIENT, not the sender. Both accounts were the recipient of exactly
+// one fee=1.0 internalTransfer and each carried a +$1 phantom USDC residual
+// vs the HL snapshot until extraLedgerFeeTransfer started emitting a
+// recipient-side fee row.
+func TestInternalTransfer_IncomingFeeDeducted(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0xAdA33bED919dD71c3449989f58F0815923D6dfA3"
+
+	entry := hlLedgerEntry{
+		Time: 1738951830474,
+		Hash: "0xinternalin_with_fee",
+		Delta: hlLedgerDelta{
+			Type:        "internalTransfer",
+			Usdc:        "5.0",
+			Fee:         "1.0", // recipient-side $1 HL fee
+			User:        "0xOtherSender",
+			Destination: wallet,
+		},
+	}
+
+	// Main transfer: still a $5 deposit row (we don't mutate the entry
+	// amount; the fee shows up as a separate USDC withdraw).
+	transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer == nil {
+		t.Fatal("expected non-nil transfer")
+	}
+	if transfer.Type != models.TypeDeposit {
+		t.Errorf("Type = %q, want %q", transfer.Type, models.TypeDeposit)
+	}
+	if transfer.Amount != "5" {
+		t.Errorf("Amount = %q, want 5", transfer.Amount)
+	}
+
+	// Recipient-side $1 USDC fee row.
+	feeTransfer := extraLedgerFeeTransfer(entry, accountUUID, wallet)
+	if feeTransfer == nil {
+		t.Fatal("expected separate USDC fee withdraw for incoming internalTransfer with fee>0")
+	}
+	if feeTransfer.Type != models.TypeWithdraw {
+		t.Errorf("fee Type = %q, want %q", feeTransfer.Type, models.TypeWithdraw)
+	}
+	if feeTransfer.Asset != "USDC" {
+		t.Errorf("fee Asset = %q, want USDC", feeTransfer.Asset)
+	}
+	if feeTransfer.Amount != "1" {
+		t.Errorf("fee Amount = %q, want 1", feeTransfer.Amount)
+	}
+	if feeTransfer.ExternalID != "0xinternalin_with_fee_fee" {
+		t.Errorf("fee ExternalID = %q, want 0xinternalin_with_fee_fee", feeTransfer.ExternalID)
+	}
+	if feeTransfer.Metadata["source_type"] != "internaltransfer_fee" {
+		t.Errorf("fee source_type = %q, want internaltransfer_fee", feeTransfer.Metadata["source_type"])
+	}
+	// Fee row must be ordered AFTER the main deposit (offset by 1ms) so
+	// the processor's inventory guard doesn't see the fee withdraw before
+	// the deposit and trip "exceeds short inventory" on a fresh account.
+	if got, want := feeTransfer.Timestamp.UnixMilli(), entry.Time+1; got != want {
+		t.Errorf("fee timestamp = %d, want %d (entry.Time+1, so fee lands after main deposit)", got, want)
+	}
+}
+
+// TestInternalTransfer_OutgoingNoFeeRow: the sender of an internalTransfer is
+// NOT debited the fee — only the recipient is. The sender's main withdraw
+// equals their wallet outflow; emitting a fee row on the sender side would
+// double-debit them.
+func TestInternalTransfer_OutgoingNoFeeRow(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0xAdA33bED919dD71c3449989f58F0815923D6dfA3"
+
+	entry := hlLedgerEntry{
+		Time: 1738957408689,
+		Hash: "0xinternalout_with_fee",
+		Delta: hlLedgerDelta{
+			Type:        "internalTransfer",
+			Usdc:        "5.0",
+			Fee:         "1.0",
+			User:        wallet,
+			Destination: "0xRecipientAddress",
+		},
+	}
+
+	// Main transfer: $5 withdraw row, amount unchanged.
+	transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if transfer.Type != models.TypeWithdraw {
+		t.Errorf("Type = %q, want %q", transfer.Type, models.TypeWithdraw)
+	}
+	if transfer.Amount != "5" {
+		t.Errorf("Amount = %q, want 5 (sender is not charged the recipient-side fee)", transfer.Amount)
+	}
+
+	// No extra fee row on the sender side.
+	if extra := extraLedgerFeeTransfer(entry, accountUUID, wallet); extra != nil {
+		t.Errorf("expected nil fee row for OUTGOING internalTransfer, got %+v", extra)
+	}
+}
+
+// TestInternalTransfer_IncomingZeroFeeNoRow: an internalTransfer with fee=0
+// must not produce a phantom fee row (most internalTransfers between the
+// user's own wallets cost 0 USDC).
+func TestInternalTransfer_IncomingZeroFeeNoRow(t *testing.T) {
+	accountUUID := uuid.New()
+	wallet := "0xAdA33bED919dD71c3449989f58F0815923D6dfA3"
+
+	entry := hlLedgerEntry{
+		Time: 1700000000000,
+		Hash: "0xinternalin_zerofee",
+		Delta: hlLedgerDelta{
+			Type:        "internalTransfer",
+			Usdc:        "1000.0",
+			Fee:         "0.0",
+			User:        "0xOtherSender",
+			Destination: wallet,
+		},
+	}
+	if extra := extraLedgerFeeTransfer(entry, accountUUID, wallet); extra != nil {
+		t.Errorf("expected nil fee row when fee=0, got %+v", extra)
+	}
+}
+
 // TestTransformLedgerEntry_SelfSendIsNoOp verifies that a wallet sending to
 // itself (delta.user == delta.destination) is silently skipped. On chain this
 // is a no-op, but without the guard our direction logic (which keys off
@@ -1328,6 +1786,10 @@ func TestFetchTradesWithMockServer(t *testing.T) {
 }
 
 func TestFetchFundingPaymentsWithMockServer(t *testing.T) {
+	// Entry[0] uses n_samples=4 (4h shift); entry[1] uses n_samples=1 (1h
+	// shift). To keep entry[0] sorted FIRST after the end-of-accrual shift,
+	// entry[1].Time must be later than entry[0].Time + 3h (the shift
+	// differential). We use entry[1].Time = entry[0].Time + 4h.
 	entries := []hlFundingEntry{
 		{
 			Time: 1700000000000,
@@ -1341,7 +1803,7 @@ func TestFetchFundingPaymentsWithMockServer(t *testing.T) {
 			},
 		},
 		{
-			Time: 1700000001000,
+			Time: 1700000000000 + int64(4*time.Hour/time.Millisecond),
 			Hash: "0xdef",
 			Delta: hlFundingDelta{
 				Coin:        "BTC",
@@ -1704,6 +2166,14 @@ func TestFetchBalancesWithMockServer(t *testing.T) {
 					{Coin: "ETH", Total: "1.5", Hold: "0"},
 				},
 			})
+		case "spotMetaAndAssetCtxs":
+			// Minimum viable shape: tokens[USDC=0, ETH=1], one market ETH/USDC,
+			// and a single ctx pricing it.
+			fmt.Fprint(w, `[`+
+				`{"tokens":[{"name":"USDC","index":0},{"name":"ETH","index":1}],`+
+				`"universe":[{"name":"ETH/USDC","tokens":[1,0],"index":50}]},`+
+				`[{"coin":"ETH/USDC","markPx":"3000","midPx":"3000.5"}]`+
+				`]`)
 		}
 		requestCount++
 	}))
@@ -1718,6 +2188,9 @@ func TestFetchBalancesWithMockServer(t *testing.T) {
 		ID:                uuid.New().String(),
 		AccountIdentifier: "0x1234567890abcdef1234567890abcdef12345678",
 	}
+
+	// Reset the global spot meta cache so prior tests don't bleed in.
+	resetSpotMetaCache()
 
 	balances, err := c.FetchBalances(context.Background(), account)
 	if err != nil {
@@ -1752,6 +2225,20 @@ func TestFetchBalancesWithMockServer(t *testing.T) {
 	}
 	if ethBalance.Balance != "1.5" {
 		t.Errorf("ETH balance = %s, want 1.5", ethBalance.Balance)
+	}
+	// Oracle price and usd_value must be populated for the row that
+	// actually gets written to spot_balance_snapshots.
+	if ethBalance.OraclePrice == nil || *ethBalance.OraclePrice != "3000" {
+		t.Errorf("ETH OraclePrice = %v, want \"3000\"", ethBalance.OraclePrice)
+	}
+	if ethBalance.UsdValue == nil || *ethBalance.UsdValue != "4500" {
+		t.Errorf("ETH UsdValue = %v, want \"4500\" (1.5 * 3000)", ethBalance.UsdValue)
+	}
+	if usdcBalance.OraclePrice == nil || *usdcBalance.OraclePrice != "1" {
+		t.Errorf("USDC OraclePrice = %v, want \"1\"", usdcBalance.OraclePrice)
+	}
+	if usdcBalance.UsdValue == nil || *usdcBalance.UsdValue != "5200.75" {
+		t.Errorf("USDC UsdValue = %v, want \"5200.75\"", usdcBalance.UsdValue)
 	}
 }
 
@@ -1821,6 +2308,12 @@ func TestFetchBalances_CrossMarginAdjustsForSupplied(t *testing.T) {
 					{Coin: "HYPE", Total: "349.96", Hold: "0"}, // same tokens supplied as collateral
 				},
 			})
+		case "spotMetaAndAssetCtxs":
+			fmt.Fprint(w, `[`+
+				`{"tokens":[{"name":"USDC","index":0},{"name":"HYPE","index":150}],`+
+				`"universe":[{"name":"@107","tokens":[150,0],"index":107}]},`+
+				`[{"coin":"@107","markPx":"40","midPx":"40.1"}]`+
+				`]`)
 		}
 	}))
 	defer server.Close()
@@ -1834,6 +2327,9 @@ func TestFetchBalances_CrossMarginAdjustsForSupplied(t *testing.T) {
 		ID:                uuid.New().String(),
 		AccountIdentifier: "0x1234567890abcdef1234567890abcdef12345678",
 	}
+
+	// Reset shared spot-meta cache between tests
+	resetSpotMetaCache()
 
 	balances, err := c.FetchBalances(context.Background(), account)
 	if err != nil {
@@ -2678,9 +3174,28 @@ func TestTransformBorrowLendInterest(t *testing.T) {
 		if transfer.Asset != "HYPE" {
 			t.Errorf("Asset = %q, want HYPE", transfer.Asset)
 		}
-		// Amount should be positive (0.4), direction is from Type
-		if transfer.Amount != "0.4" {
-			t.Errorf("Amount = %q, want 0.4", transfer.Amount)
+		// Sign is load-bearing: borrow > supply means interest was PAID
+		// (money lost) so the stored Amount must be negative — the processor
+		// reads the sign of Amount directly for TypeInterest.
+		if transfer.Amount != "-0.4" {
+			t.Errorf("Amount = %q, want -0.4 (negative = interest paid)", transfer.Amount)
+		}
+	})
+
+	t.Run("net negative borrow exceeds supply dust", func(t *testing.T) {
+		// borrow=0.5, supply=0 → net=-0.5 must be stored as "-0.5".
+		entry := hlBorrowLendInterest{
+			Time:   1700000000000,
+			Token:  "USDC",
+			Borrow: "0.5",
+			Supply: "0",
+		}
+		transfer := transformBorrowLendInterest(entry, accountUUID)
+		if transfer == nil {
+			t.Fatal("expected non-nil transfer (interest charged)")
+		}
+		if transfer.Amount != "-0.5" {
+			t.Errorf("Amount = %q, want -0.5", transfer.Amount)
 		}
 	})
 
@@ -3352,19 +3867,17 @@ func TestFetchTradesPropagatesMalformedFillError(t *testing.T) {
 // — without this synthesis we'd miss the HYPE outflow into staking and end up
 // with a phantom long position equal to the staked amount.
 func TestFetchDeposits_IncludesCDepositFromDelegatorHistory(t *testing.T) {
+	// Only test the cDeposit path here. The "ignore unknown variants" assertion
+	// previously bundled into this test now lives in
+	// TestFetchDeposits_UnknownDelegatorVariantErrors — policy changed from
+	// silent-skip to crash-loud after the Lighter USDC phantoms revealed
+	// silent skips as a hidden source of accounting drift.
 	dhEntries := []hlDelegatorHistoryEntry{
 		{
 			Time: 1747323884335,
 			Hash: "0xd6e8514d683106a95806042383be9302080f005d4b2d6af83f1cc6cbaef52478",
 			Delta: hlDelegatorHistoryDelta{
 				CDeposit: &hlCDepositDelta{Amount: "1000.0"},
-			},
-		},
-		{
-			Time: 1747323900169,
-			Hash: "0x016dd7758acad490d482042383bf5c0202c5005b70862c4d4f3a86dcde4e7393",
-			Delta: hlDelegatorHistoryDelta{
-				// delegate event — should be ignored, no trading balance impact
 			},
 		},
 	}
@@ -3482,6 +3995,145 @@ func TestFetchDeposits_CDepositMissingAmount(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cDeposit") {
 		t.Errorf("error = %q, want substring 'cDeposit'", err.Error())
+	}
+}
+
+// TestFetchDeposits_UnknownDelegatorVariantErrors asserts that a GENUINELY
+// unrecognised delegatorHistory delta variant (one with no explicit case)
+// still crashes loud with the raw JSON in the error. Silent skipping here used
+// to mask accounting bugs — see the project memory note "Throw on unknown enum
+// values". Note: delegate/undelegate and the withdrawal lifecycle are now
+// explicitly handled no-ops, so this test uses a fabricated unknown key.
+func TestFetchDeposits_UnknownDelegatorVariantErrors(t *testing.T) {
+	// Hand-crafted raw JSON for a fabricated `{"bogusXYZ": {...}}` variant
+	// that is NOT modelled in hlDelegatorHistoryDelta and has no explicit
+	// case — must still crash-loud.
+	rawDelegatorJSON := `[{"time":1747323884335,"hash":"0xbogus","delta":{"bogusXYZ":{"amount":"500.0"}}}]`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+
+		reqType := body["type"].(string)
+		switch reqType {
+		case "userNonFundingLedgerUpdates":
+			json.NewEncoder(w).Encode([]hlLedgerEntry{})
+		case "userBorrowLendInterest":
+			json.NewEncoder(w).Encode([]hlBorrowLendInterest{})
+		case "delegatorHistory":
+			w.Write([]byte(rawDelegatorJSON))
+		default:
+			json.NewEncoder(w).Encode([]interface{}{})
+		}
+	}))
+	defer server.Close()
+
+	c := &Client{
+		apiURL:     server.URL,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	account := &models.ExchangeAccount{
+		ID:                uuid.New().String(),
+		AccountIdentifier: "0x1234567890abcdef1234567890abcdef12345678",
+	}
+
+	_, _, err := c.FetchDeposits(context.Background(), account, time.UnixMilli(0))
+	if err == nil {
+		t.Fatal("expected error for unknown delegator history variant, got nil")
+	}
+	if !strings.Contains(err.Error(), "unhandled delegator history variant") {
+		t.Errorf("error = %q, want substring 'unhandled delegator history variant'", err.Error())
+	}
+	if !strings.Contains(err.Error(), "bogusXYZ") {
+		t.Errorf("error must include the raw_delta payload so the variant is identifiable; got %q", err.Error())
+	}
+}
+
+// TestFetchDeposits_GenuinelyUnknownVariant_StillCrashLoud is a direct
+// transformDelegatorHistoryEntry-level assertion (no HTTP) that a fabricated
+// unknown delta variant still errors out — the no-silent-unknowns policy must
+// survive the addition of the explicit delegate/withdrawal no-ops.
+func TestFetchDeposits_GenuinelyUnknownVariant_StillCrashLoud(t *testing.T) {
+	var entry hlDelegatorHistoryEntry
+	raw := []byte(`{"time":1747323884335,"hash":"0xbogus2","delta":{"cValidatorActivationFake":{"amount":"1.0"}}}`)
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	_, err := transformDelegatorHistoryEntry(entry, uuid.New())
+	if err == nil {
+		t.Fatal("expected crash-loud error for genuinely unknown variant, got nil")
+	}
+	if !strings.Contains(err.Error(), "unhandled delegator history variant") {
+		t.Errorf("error = %q, want substring 'unhandled delegator history variant'", err.Error())
+	}
+	if !strings.Contains(err.Error(), "cValidatorActivationFake") {
+		t.Errorf("error must include raw_delta payload; got %q", err.Error())
+	}
+}
+
+// TestDelegator_WithdrawalLifecycle_Finalized_NoTransfer pins the exact
+// payload that crash-louded in prod: a finalized unstaking-queue marker.
+// The real spot credit arrives via cWithdraw/cStakingTransfer separately, so
+// this must produce NO transfer and NO error (explicit no-op, not a skip).
+func TestDelegator_WithdrawalLifecycle_Finalized_NoTransfer(t *testing.T) {
+	var entry hlDelegatorHistoryEntry
+	raw := []byte(`{"time":1747323884335,"hash":"0xwfin","delta":{"withdrawal":{"amount":"1016.0888764","phase":"finalized"}}}`)
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	transfer, err := transformDelegatorHistoryEntry(entry, uuid.New())
+	if err != nil {
+		t.Fatalf("unexpected error for withdrawal-finalized lifecycle: %v", err)
+	}
+	if transfer != nil {
+		t.Fatalf("withdrawal lifecycle must NOT emit a transfer (would double-count vs cWithdraw); got %+v", transfer)
+	}
+}
+
+// TestDelegator_WithdrawalLifecycle_Initiated_NoTransfer covers the other
+// phase of the unstaking queue. Same reasoning — no transfer, no error.
+func TestDelegator_WithdrawalLifecycle_Initiated_NoTransfer(t *testing.T) {
+	var entry hlDelegatorHistoryEntry
+	raw := []byte(`{"time":1747323884335,"hash":"0xwini","delta":{"withdrawal":{"amount":"42.5","phase":"initiated"}}}`)
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	transfer, err := transformDelegatorHistoryEntry(entry, uuid.New())
+	if err != nil {
+		t.Fatalf("unexpected error for withdrawal-initiated lifecycle: %v", err)
+	}
+	if transfer != nil {
+		t.Fatalf("withdrawal-initiated must NOT emit a transfer; got %+v", transfer)
+	}
+}
+
+// TestDelegator_DelegateUndelegate_NoTransfer asserts that delegate and
+// undelegate (validator-internal staking moves) emit no transfer and no
+// error — they never touch the spot/trading balance.
+func TestDelegator_DelegateUndelegate_NoTransfer(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"delegate", `{"time":1,"hash":"0xd","delta":{"delegate":{"validator":"0xabc","amount":"500.0","isUndelegate":false}}}`},
+		{"undelegate", `{"time":2,"hash":"0xu","delta":{"delegate":{"validator":"0xabc","amount":"500.0","isUndelegate":true}}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var entry hlDelegatorHistoryEntry
+			if err := json.Unmarshal([]byte(tc.raw), &entry); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			transfer, err := transformDelegatorHistoryEntry(entry, uuid.New())
+			if err != nil {
+				t.Fatalf("unexpected error for %s: %v", tc.name, err)
+			}
+			if transfer != nil {
+				t.Fatalf("%s must NOT emit a transfer (staking-internal); got %+v", tc.name, transfer)
+			}
+		})
 	}
 }
 
@@ -3708,5 +4360,793 @@ func TestFetchDeposits_DeduplicatesCWithdrawInBothEndpoints(t *testing.T) {
 	}
 	if tr.ExternalID != sharedHash {
 		t.Errorf("ExternalID = %q, want %q (ledger-path bare hash)", tr.ExternalID, sharedHash)
+	}
+}
+
+// makeFundingEntries builds n funding entries with sequential timestamps
+// starting at startMs (1ms apart), realistic delta payload, unique hash.
+func makeFundingEntries(startMs int64, n int) []hlFundingEntry {
+	entries := make([]hlFundingEntry, n)
+	for i := 0; i < n; i++ {
+		ms := startMs + int64(i)
+		entries[i] = hlFundingEntry{
+			Time: ms,
+			Hash: fmt.Sprintf("0xfund%d", ms),
+			Delta: hlFundingDelta{
+				Coin:        "ETH",
+				FundingRate: "0.0001",
+				NSamples:    1,
+				Usdc:        "-0.10",
+				Type:        "funding",
+			},
+		}
+	}
+	return entries
+}
+
+func newFundingClient(url string) *Client {
+	return &Client{
+		apiURL:     url,
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+func TestFetchAllFunding_PaginatesBeyond500(t *testing.T) {
+	page1 := makeFundingEntries(1, 500)         // times 1..500
+	page2 := makeFundingEntries(501, 88)        // times 501..588
+	var calls int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		startTime := int64(body["startTime"].(float64))
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case startTime <= 1:
+			json.NewEncoder(w).Encode(page1)
+		case startTime == 500:
+			// advanced to lastTime (not +1); page2 follows
+			json.NewEncoder(w).Encode(page2)
+		default:
+			json.NewEncoder(w).Encode([]hlFundingEntry{})
+		}
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllFunding(context.Background(), "0xabc", time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 588 {
+		t.Fatalf("expected 588 entries, got %d", len(got))
+	}
+	for i := 0; i < len(got); i++ {
+		wantTime := int64(i + 1)
+		if got[i].Time != wantTime {
+			t.Fatalf("entry %d: Time = %d, want %d (order/dupe violation)", i, got[i].Time, wantTime)
+		}
+	}
+	// page2 returns 88 (< 500) so the loop terminates without a 3rd call,
+	// matching fetchAllLedgerUpdates' short-page termination.
+	if c := atomic.LoadInt32(&calls); c != 2 {
+		t.Errorf("expected 2 HL calls (500, then short 88), got %d", c)
+	}
+}
+
+func TestFetchAllFunding_SinglePageUnder500(t *testing.T) {
+	page := makeFundingEntries(1, 300)
+	var calls int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(page)
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllFunding(context.Background(), "0xabc", time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 300 {
+		t.Fatalf("expected 300 entries, got %d", len(got))
+	}
+	if c := atomic.LoadInt32(&calls); c != 1 {
+		t.Errorf("expected exactly 1 HL call, got %d", c)
+	}
+}
+
+func TestFetchAllFunding_SameMillisecondBoundary(t *testing.T) {
+	// 500 rows where rows 499 and 500 (0-indexed 498,499) share time 499,
+	// and the first row of page2 ALSO shares time 499. The boundary row
+	// must not be dropped (advance to lastTime, not +1) nor duplicated
+	// (dedup by hash+coin+time).
+	page1 := makeFundingEntries(1, 500) // times 1..500
+	page1[499].Time = 499               // row 500 shares time with row 499
+	page1[499].Hash = "0xboundaryA"
+
+	// page2 begins at startTime==499 (lastTime). It re-includes the two
+	// time==499 rows from page1 plus a distinct third row at time==499.
+	page2 := []hlFundingEntry{
+		{Time: 499, Hash: "0xfund499", Delta: hlFundingDelta{Coin: "ETH", Usdc: "-0.10", Type: "funding"}},   // dup of page1[498]
+		{Time: 499, Hash: "0xboundaryA", Delta: hlFundingDelta{Coin: "ETH", Usdc: "-0.10", Type: "funding"}}, // dup of page1[499]
+		{Time: 499, Hash: "0xboundaryB", Delta: hlFundingDelta{Coin: "BTC", Usdc: "-0.20", Type: "funding"}}, // NEW, would be lost with +1
+		{Time: 600, Hash: "0xfund600", Delta: hlFundingDelta{Coin: "ETH", Usdc: "-0.10", Type: "funding"}},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		startTime := int64(body["startTime"].(float64))
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case startTime <= 1:
+			json.NewEncoder(w).Encode(page1)
+		case startTime == 499:
+			json.NewEncoder(w).Encode(page2)
+		default:
+			json.NewEncoder(w).Encode([]hlFundingEntry{})
+		}
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllFunding(context.Background(), "0xabc", time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Distinct entries: page1 has 500 rows but two share time 499 with
+	// distinct hashes (0xfund499, 0xboundaryA) -> all 500 distinct.
+	// page2 adds only 0xboundaryB and 0xfund600 (other two are dups).
+	if len(got) != 502 {
+		t.Fatalf("expected 502 distinct entries, got %d", len(got))
+	}
+
+	type key struct {
+		h string
+		c string
+		t int64
+	}
+	counts := map[key]int{}
+	var sawBoundaryB, sawFund600 bool
+	for _, e := range got {
+		counts[key{e.Hash, e.Delta.Coin, e.Time}]++
+		if e.Hash == "0xboundaryB" {
+			sawBoundaryB = true
+		}
+		if e.Hash == "0xfund600" {
+			sawFund600 = true
+		}
+	}
+	for k, n := range counts {
+		if n != 1 {
+			t.Errorf("entry %+v appeared %d times, want 1 (dedup failure)", k, n)
+		}
+	}
+	if !sawBoundaryB {
+		t.Error("0xboundaryB (same-ms boundary row) was dropped — +1 advance hazard not guarded")
+	}
+	if !sawFund600 {
+		t.Error("0xfund600 was dropped")
+	}
+}
+
+func TestFetchAllFunding_RespectsSinceStartTime(t *testing.T) {
+	const since = int64(1700000000000)
+	var firstStart int64 = -1
+	var calls int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		st := int64(body["startTime"].(float64))
+		if n == 1 {
+			atomic.StoreInt64(&firstStart, st)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if n == 1 {
+			json.NewEncoder(w).Encode(makeFundingEntries(since, 500))
+		} else {
+			// pagination must proceed forward only (>= since)
+			if st < since {
+				t.Errorf("paginated backwards: startTime %d < since %d", st, since)
+			}
+			json.NewEncoder(w).Encode([]hlFundingEntry{})
+		}
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllFunding(context.Background(), "0xabc", time.UnixMilli(since))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fs := atomic.LoadInt64(&firstStart); fs != since {
+		t.Fatalf("first HL request startTime = %d, want %d (since not honored)", fs, since)
+	}
+	if len(got) != 500 {
+		t.Fatalf("expected 500 entries, got %d", len(got))
+	}
+}
+
+// --- fetchAllLedgerUpdates pagination tests ---
+
+// makeLedgerEntries builds n ledger entries with consecutive ms timestamps
+// starting at startMs (1ms apart), a unique hash, and a deposit delta.
+func makeLedgerEntries(startMs int64, n int) []hlLedgerEntry {
+	entries := make([]hlLedgerEntry, n)
+	for i := 0; i < n; i++ {
+		ms := startMs + int64(i)
+		entries[i] = hlLedgerEntry{
+			Time: ms,
+			Hash: fmt.Sprintf("0xledger%d", ms),
+			Delta: hlLedgerDelta{
+				Type: "deposit",
+				Usdc: "10.0",
+			},
+		}
+	}
+	return entries
+}
+
+func TestFetchAllLedgerUpdates_PaginatesBeyond500(t *testing.T) {
+	page1 := makeLedgerEntries(1, 500)   // times 1..500
+	page2 := makeLedgerEntries(501, 88)  // times 501..588
+	var calls int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		startTime := int64(body["startTime"].(float64))
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case startTime <= 1:
+			json.NewEncoder(w).Encode(page1)
+		case startTime == 500:
+			json.NewEncoder(w).Encode(page2)
+		default:
+			json.NewEncoder(w).Encode([]hlLedgerEntry{})
+		}
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllLedgerUpdates(context.Background(), "0xabc", time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 588 {
+		t.Fatalf("expected 588 entries, got %d", len(got))
+	}
+	for i := 0; i < len(got); i++ {
+		wantTime := int64(i + 1)
+		if got[i].Time != wantTime {
+			t.Fatalf("entry %d: Time = %d, want %d (order/dupe violation)", i, got[i].Time, wantTime)
+		}
+	}
+	if c := atomic.LoadInt32(&calls); c != 2 {
+		t.Errorf("expected 2 HL calls (500, then short 88), got %d", c)
+	}
+}
+
+func TestFetchAllLedgerUpdates_SinglePageUnder500(t *testing.T) {
+	page := makeLedgerEntries(1, 300)
+	var calls int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(page)
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllLedgerUpdates(context.Background(), "0xabc", time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 300 {
+		t.Fatalf("expected 300 entries, got %d", len(got))
+	}
+	if c := atomic.LoadInt32(&calls); c != 1 {
+		t.Errorf("expected exactly 1 HL call, got %d", c)
+	}
+}
+
+func TestFetchAllLedgerUpdates_SameMillisecondBoundary(t *testing.T) {
+	// 500 rows where rows 499 and 500 share time 499, and the first rows of
+	// page2 ALSO share time 499. The boundary row must not be dropped
+	// (advance to lastTime, not +1) nor duplicated (dedup by hash+time+type).
+	page1 := makeLedgerEntries(1, 500) // times 1..500
+	page1[499].Time = 499              // row 500 shares time with row 499
+	page1[499].Hash = "0xboundaryA"
+
+	page2 := []hlLedgerEntry{
+		{Time: 499, Hash: "0xledger499", Delta: hlLedgerDelta{Type: "deposit", Usdc: "10.0"}},  // dup of page1[498]
+		{Time: 499, Hash: "0xboundaryA", Delta: hlLedgerDelta{Type: "deposit", Usdc: "10.0"}},  // dup of page1[499]
+		{Time: 499, Hash: "0xboundaryB", Delta: hlLedgerDelta{Type: "withdraw", Usdc: "20.0"}}, // NEW, would be lost with +1
+		{Time: 600, Hash: "0xledger600", Delta: hlLedgerDelta{Type: "deposit", Usdc: "10.0"}},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		startTime := int64(body["startTime"].(float64))
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case startTime <= 1:
+			json.NewEncoder(w).Encode(page1)
+		case startTime == 499:
+			json.NewEncoder(w).Encode(page2)
+		default:
+			json.NewEncoder(w).Encode([]hlLedgerEntry{})
+		}
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllLedgerUpdates(context.Background(), "0xabc", time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// page1: 500 distinct rows. page2 adds only 0xboundaryB and 0xledger600.
+	if len(got) != 502 {
+		t.Fatalf("expected 502 distinct entries, got %d", len(got))
+	}
+
+	type key struct {
+		h string
+		t int64
+		y string
+	}
+	counts := map[key]int{}
+	var sawBoundaryB, sawLedger600 bool
+	for _, e := range got {
+		counts[key{e.Hash, e.Time, e.Delta.Type}]++
+		if e.Hash == "0xboundaryB" {
+			sawBoundaryB = true
+		}
+		if e.Hash == "0xledger600" {
+			sawLedger600 = true
+		}
+	}
+	for k, n := range counts {
+		if n != 1 {
+			t.Errorf("entry %+v appeared %d times, want 1 (dedup failure)", k, n)
+		}
+	}
+	if !sawBoundaryB {
+		t.Error("0xboundaryB (same-ms boundary row) was dropped — +1 advance hazard not guarded")
+	}
+	if !sawLedger600 {
+		t.Error("0xledger600 was dropped")
+	}
+}
+
+func TestFetchAllLedgerUpdates_RespectsSinceStartTime(t *testing.T) {
+	const since = int64(1700000000000)
+	var firstStart int64 = -1
+	var calls int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		st := int64(body["startTime"].(float64))
+		if n == 1 {
+			atomic.StoreInt64(&firstStart, st)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if n == 1 {
+			json.NewEncoder(w).Encode(makeLedgerEntries(since, 500))
+		} else {
+			if st < since {
+				t.Errorf("paginated backwards: startTime %d < since %d", st, since)
+			}
+			json.NewEncoder(w).Encode([]hlLedgerEntry{})
+		}
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllLedgerUpdates(context.Background(), "0xabc", time.UnixMilli(since))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fs := atomic.LoadInt64(&firstStart); fs != since {
+		t.Fatalf("first HL request startTime = %d, want %d (since not honored)", fs, since)
+	}
+	if len(got) != 500 {
+		t.Fatalf("expected 500 entries, got %d", len(got))
+	}
+}
+
+// --- fetchAllBorrowLendInterest pagination tests ---
+
+// makeBorrowLendEntries builds n entries with consecutive ms timestamps
+// starting at startMs (1ms apart), a fixed token.
+func makeBorrowLendEntries(startMs int64, n int) []hlBorrowLendInterest {
+	entries := make([]hlBorrowLendInterest, n)
+	for i := 0; i < n; i++ {
+		ms := startMs + int64(i)
+		entries[i] = hlBorrowLendInterest{
+			Time:   ms,
+			Token:  "USDC",
+			Borrow: "0.01",
+			Supply: "0",
+		}
+	}
+	return entries
+}
+
+func TestFetchAllBorrowLendInterest_PaginatesBeyond500(t *testing.T) {
+	page1 := makeBorrowLendEntries(1, 500)   // times 1..500
+	page2 := makeBorrowLendEntries(501, 88)  // times 501..588
+	var calls int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		startTime := int64(body["startTime"].(float64))
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case startTime <= 1:
+			json.NewEncoder(w).Encode(page1)
+		case startTime == 500:
+			json.NewEncoder(w).Encode(page2)
+		default:
+			json.NewEncoder(w).Encode([]hlBorrowLendInterest{})
+		}
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllBorrowLendInterest(context.Background(), "0xabc", time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 588 {
+		t.Fatalf("expected 588 entries, got %d", len(got))
+	}
+	for i := 0; i < len(got); i++ {
+		wantTime := int64(i + 1)
+		if got[i].Time != wantTime {
+			t.Fatalf("entry %d: Time = %d, want %d (order/dupe violation)", i, got[i].Time, wantTime)
+		}
+	}
+	if c := atomic.LoadInt32(&calls); c != 2 {
+		t.Errorf("expected 2 HL calls (500, then short 88), got %d", c)
+	}
+}
+
+func TestFetchAllBorrowLendInterest_SinglePageUnder500(t *testing.T) {
+	page := makeBorrowLendEntries(1, 300)
+	var calls int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(page)
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllBorrowLendInterest(context.Background(), "0xabc", time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 300 {
+		t.Fatalf("expected 300 entries, got %d", len(got))
+	}
+	if c := atomic.LoadInt32(&calls); c != 1 {
+		t.Errorf("expected exactly 1 HL call, got %d", c)
+	}
+}
+
+func TestFetchAllBorrowLendInterest_SameMillisecondBoundary(t *testing.T) {
+	// 500 rows where rows 499 and 500 share time 499 (distinct tokens), and
+	// page2 also has rows at time 499. The boundary row must not be dropped
+	// (advance to lastTime, not +1) nor duplicated (dedup by token+time).
+	page1 := makeBorrowLendEntries(1, 500) // times 1..500, all USDC
+	page1[499].Time = 499                  // row 500 shares time with row 499
+	page1[499].Token = "HYPE"              // distinct token at same ms
+
+	page2 := []hlBorrowLendInterest{
+		{Time: 499, Token: "USDC", Borrow: "0.01", Supply: "0"}, // dup of page1[498]
+		{Time: 499, Token: "HYPE", Borrow: "0.01", Supply: "0"}, // dup of page1[499]
+		{Time: 499, Token: "BTC", Borrow: "0.02", Supply: "0"},  // NEW, would be lost with +1
+		{Time: 600, Token: "USDC", Borrow: "0.01", Supply: "0"},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		startTime := int64(body["startTime"].(float64))
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case startTime <= 1:
+			json.NewEncoder(w).Encode(page1)
+		case startTime == 499:
+			json.NewEncoder(w).Encode(page2)
+		default:
+			json.NewEncoder(w).Encode([]hlBorrowLendInterest{})
+		}
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllBorrowLendInterest(context.Background(), "0xabc", time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// page1: 500 distinct (token,time). page2 adds only BTC@499 and USDC@600.
+	if len(got) != 502 {
+		t.Fatalf("expected 502 distinct entries, got %d", len(got))
+	}
+
+	type key struct {
+		tok string
+		t   int64
+	}
+	counts := map[key]int{}
+	var sawBTC499, sawUSDC600 bool
+	for _, e := range got {
+		counts[key{e.Token, e.Time}]++
+		if e.Token == "BTC" && e.Time == 499 {
+			sawBTC499 = true
+		}
+		if e.Token == "USDC" && e.Time == 600 {
+			sawUSDC600 = true
+		}
+	}
+	for k, n := range counts {
+		if n != 1 {
+			t.Errorf("entry %+v appeared %d times, want 1 (dedup failure)", k, n)
+		}
+	}
+	if !sawBTC499 {
+		t.Error("BTC@499 (same-ms boundary row) was dropped — +1 advance hazard not guarded")
+	}
+	if !sawUSDC600 {
+		t.Error("USDC@600 was dropped")
+	}
+}
+
+func TestFetchAllBorrowLendInterest_RespectsSinceStartTime(t *testing.T) {
+	const since = int64(1700000000000)
+	var firstStart int64 = -1
+	var calls int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		st := int64(body["startTime"].(float64))
+		if n == 1 {
+			atomic.StoreInt64(&firstStart, st)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if n == 1 {
+			json.NewEncoder(w).Encode(makeBorrowLendEntries(since, 500))
+		} else {
+			if st < since {
+				t.Errorf("paginated backwards: startTime %d < since %d", st, since)
+			}
+			json.NewEncoder(w).Encode([]hlBorrowLendInterest{})
+		}
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllBorrowLendInterest(context.Background(), "0xabc", time.UnixMilli(since))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fs := atomic.LoadInt64(&firstStart); fs != since {
+		t.Fatalf("first HL request startTime = %d, want %d (since not honored)", fs, since)
+	}
+	if len(got) != 500 {
+		t.Fatalf("expected 500 entries, got %d", len(got))
+	}
+}
+
+// --- fetchAllDelegatorHistory pagination tests ---
+
+// makeDelegatorEntries builds n cDeposit entries with consecutive ms
+// timestamps starting at startMs (1ms apart), a unique hash.
+func makeDelegatorEntries(startMs int64, n int) []hlDelegatorHistoryEntry {
+	entries := make([]hlDelegatorHistoryEntry, n)
+	for i := 0; i < n; i++ {
+		ms := startMs + int64(i)
+		entries[i] = hlDelegatorHistoryEntry{
+			Time: ms,
+			Hash: fmt.Sprintf("0xdeleg%d", ms),
+			Delta: hlDelegatorHistoryDelta{
+				CDeposit: &hlCDepositDelta{Amount: "1.0"},
+			},
+		}
+	}
+	return entries
+}
+
+func TestFetchAllDelegatorHistory_PaginatesBeyond500(t *testing.T) {
+	page1 := makeDelegatorEntries(1, 500)   // times 1..500
+	page2 := makeDelegatorEntries(501, 88)  // times 501..588
+	var calls int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		startTime := int64(body["startTime"].(float64))
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case startTime <= 1:
+			json.NewEncoder(w).Encode(page1)
+		case startTime == 500:
+			json.NewEncoder(w).Encode(page2)
+		default:
+			json.NewEncoder(w).Encode([]hlDelegatorHistoryEntry{})
+		}
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllDelegatorHistory(context.Background(), "0xabc", time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 588 {
+		t.Fatalf("expected 588 entries, got %d", len(got))
+	}
+	for i := 0; i < len(got); i++ {
+		wantTime := int64(i + 1)
+		if got[i].Time != wantTime {
+			t.Fatalf("entry %d: Time = %d, want %d (order/dupe violation)", i, got[i].Time, wantTime)
+		}
+	}
+	if c := atomic.LoadInt32(&calls); c != 2 {
+		t.Errorf("expected 2 HL calls (500, then short 88), got %d", c)
+	}
+}
+
+func TestFetchAllDelegatorHistory_SinglePageUnder500(t *testing.T) {
+	page := makeDelegatorEntries(1, 300)
+	var calls int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(page)
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllDelegatorHistory(context.Background(), "0xabc", time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 300 {
+		t.Fatalf("expected 300 entries, got %d", len(got))
+	}
+	if c := atomic.LoadInt32(&calls); c != 1 {
+		t.Errorf("expected exactly 1 HL call, got %d", c)
+	}
+}
+
+func TestFetchAllDelegatorHistory_SameMillisecondBoundary(t *testing.T) {
+	// 500 rows where rows 499 and 500 share time 499, and page2 also has
+	// rows at time 499. The boundary row must not be dropped (advance to
+	// lastTime, not +1) nor duplicated (dedup by hash+time+variant).
+	page1 := makeDelegatorEntries(1, 500) // times 1..500
+	page1[499].Time = 499                 // row 500 shares time with row 499
+	page1[499].Hash = "0xboundaryA"
+
+	page2 := []hlDelegatorHistoryEntry{
+		{Time: 499, Hash: "0xdeleg499", Delta: hlDelegatorHistoryDelta{CDeposit: &hlCDepositDelta{Amount: "1.0"}}},  // dup of page1[498]
+		{Time: 499, Hash: "0xboundaryA", Delta: hlDelegatorHistoryDelta{CDeposit: &hlCDepositDelta{Amount: "1.0"}}}, // dup of page1[499]
+		{Time: 499, Hash: "0xboundaryB", Delta: hlDelegatorHistoryDelta{CWithdraw: &hlCWithdrawDelta{Amount: "2.0"}}}, // NEW, would be lost with +1
+		{Time: 600, Hash: "0xdeleg600", Delta: hlDelegatorHistoryDelta{CDeposit: &hlCDepositDelta{Amount: "1.0"}}},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		startTime := int64(body["startTime"].(float64))
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case startTime <= 1:
+			json.NewEncoder(w).Encode(page1)
+		case startTime == 499:
+			json.NewEncoder(w).Encode(page2)
+		default:
+			json.NewEncoder(w).Encode([]hlDelegatorHistoryEntry{})
+		}
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllDelegatorHistory(context.Background(), "0xabc", time.UnixMilli(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// page1: 500 distinct rows. page2 adds only 0xboundaryB and 0xdeleg600.
+	if len(got) != 502 {
+		t.Fatalf("expected 502 distinct entries, got %d", len(got))
+	}
+
+	type key struct {
+		h string
+		t int64
+	}
+	counts := map[key]int{}
+	var sawBoundaryB, sawDeleg600 bool
+	for _, e := range got {
+		counts[key{e.Hash, e.Time}]++
+		if e.Hash == "0xboundaryB" {
+			sawBoundaryB = true
+		}
+		if e.Hash == "0xdeleg600" {
+			sawDeleg600 = true
+		}
+	}
+	for k, n := range counts {
+		if n != 1 {
+			t.Errorf("entry %+v appeared %d times, want 1 (dedup failure)", k, n)
+		}
+	}
+	if !sawBoundaryB {
+		t.Error("0xboundaryB (same-ms boundary row) was dropped — +1 advance hazard not guarded")
+	}
+	if !sawDeleg600 {
+		t.Error("0xdeleg600 was dropped")
+	}
+}
+
+func TestFetchAllDelegatorHistory_RespectsSinceStartTime(t *testing.T) {
+	const since = int64(1700000000000)
+	var firstStart int64 = -1
+	var calls int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		st := int64(body["startTime"].(float64))
+		if n == 1 {
+			atomic.StoreInt64(&firstStart, st)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if n == 1 {
+			json.NewEncoder(w).Encode(makeDelegatorEntries(since, 500))
+		} else {
+			if st < since {
+				t.Errorf("paginated backwards: startTime %d < since %d", st, since)
+			}
+			json.NewEncoder(w).Encode([]hlDelegatorHistoryEntry{})
+		}
+	}))
+	defer server.Close()
+
+	c := newFundingClient(server.URL)
+	got, err := c.fetchAllDelegatorHistory(context.Background(), "0xabc", time.UnixMilli(since))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fs := atomic.LoadInt64(&firstStart); fs != since {
+		t.Fatalf("first HL request startTime = %d, want %d (since not honored)", fs, since)
+	}
+	if len(got) != 500 {
+		t.Fatalf("expected 500 entries, got %d", len(got))
 	}
 }

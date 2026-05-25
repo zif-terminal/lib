@@ -11,6 +11,7 @@ type PositionPnLInput struct {
 	FundingPnL   string    `json:"funding_pnl"`    // NUMERIC(36,18) as string
 	FeePnL       string    `json:"fee_pnl"`        // NUMERIC(36,18) as string
 	InterestPnL  string    `json:"interest_pnl"`   // NUMERIC(36,18) as string
+	RewardPnL    string    `json:"reward_pnl"`     // NUMERIC(36,18) as string — separate from interest
 }
 
 // MissingPositionPnL represents a closed position that does not yet have

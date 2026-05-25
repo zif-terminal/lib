@@ -92,6 +92,7 @@ func (c *Client) ListTrades(ctx context.Context, filter TradeFilter) ([]*Trade, 
 					trade_id
 					exchange_account_id
 					market_type
+					tx_signature
 				}
 			}
 		`
@@ -126,6 +127,7 @@ func (c *Client) ListTrades(ctx context.Context, filter TradeFilter) ([]*Trade, 
 					trade_id
 					exchange_account_id
 					market_type
+					tx_signature
 				}
 			}
 		`
@@ -159,6 +161,7 @@ func (c *Client) ListTrades(ctx context.Context, filter TradeFilter) ([]*Trade, 
 					trade_id
 					exchange_account_id
 					market_type
+					tx_signature
 				}
 			}
 		`
@@ -185,6 +188,7 @@ func (c *Client) ListTrades(ctx context.Context, filter TradeFilter) ([]*Trade, 
 					trade_id
 					exchange_account_id
 					market_type
+					tx_signature
 				}
 			}
 		`

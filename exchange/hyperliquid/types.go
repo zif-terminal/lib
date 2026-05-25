@@ -1,5 +1,7 @@
 package hyperliquid
 
+import "encoding/json"
+
 // Hyperliquid API request/response types
 // Base URL: https://api.hyperliquid.xyz/info (POST with JSON body)
 
@@ -139,15 +141,43 @@ type hlVaultDetails struct {
 //
 //	[{"time":1747323884335,"hash":"0xd6e8514d...","delta":{"cDeposit":{"amount":"1000.0"}}}]
 type hlDelegatorHistoryEntry struct {
-	Time  int64                   `json:"time"` // Unix milliseconds
-	Hash  string                  `json:"hash"` // Transaction hash
-	Delta hlDelegatorHistoryDelta `json:"delta"`
+	Time     int64                   `json:"time"`  // Unix milliseconds
+	Hash     string                  `json:"hash"`  // Transaction hash
+	Delta    hlDelegatorHistoryDelta `json:"delta"` // Encode/decode driven by struct tag for tests; decode is overridden by UnmarshalJSON below to also capture RawDelta.
+	RawDelta json.RawMessage         `json:"-"`     // Captured by UnmarshalJSON; preserves raw bytes so unknown variants surface in errors.
 }
 
-// hlDelegatorHistoryDelta wraps the various delta payloads. Only one field is
-// set per entry. Other event types (delegate, undelegate, withdrawal-initiated,
-// withdrawal-finalized) don't affect trading balance — they're left unmodelled
-// and silently ignored.
+// UnmarshalJSON captures both the typed delta variants AND the raw delta JSON
+// so that unhandled variants can crash-loud with the original payload visible.
+// Without RawDelta, the silent-skip on `default:` would discard the only signal
+// of which new HL event type appeared.
+func (e *hlDelegatorHistoryEntry) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Time  int64           `json:"time"`
+		Hash  string          `json:"hash"`
+		Delta json.RawMessage `json:"delta"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	e.Time = raw.Time
+	e.Hash = raw.Hash
+	e.RawDelta = raw.Delta
+	if len(raw.Delta) > 0 {
+		if err := json.Unmarshal(raw.Delta, &e.Delta); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// hlDelegatorHistoryDelta wraps the various delta payloads. Exactly one field
+// is set per entry. Every known HL delegatorHistory variant is modelled
+// explicitly so transformDelegatorHistoryEntry can give each a named case
+// (no-silent-unknowns policy). Only cDeposit/cWithdraw move the trading
+// balance; the staking-internal lifecycle variants (delegate/undelegate,
+// the unstaking-queue withdrawal phases) are modelled solely so they can be
+// explicitly no-op'd rather than crash-loud or silently dropped.
 type hlDelegatorHistoryDelta struct {
 	// CDeposit: HYPE leaving trading balance into consensus staking.
 	// Some wallets see this event ONLY in delegatorHistory; others see it
@@ -162,6 +192,22 @@ type hlDelegatorHistoryDelta struct {
 	// {isDeposit:false} in non-funding ledger, but some wallets also see
 	// it here. Dedup happens in FetchDeposits.
 	CWithdraw *hlCWithdrawDelta `json:"cWithdraw,omitempty"`
+
+	// Delegate: HYPE delegated to / undelegated from a validator
+	// (isUndelegate distinguishes the direction). This moves HYPE between
+	// the staking account and a validator — entirely INSIDE the staking
+	// account. It never touches the spot/trading balance, so it is
+	// explicitly no-op'd in transformDelegatorHistoryEntry.
+	Delegate *hlDelegateDelta `json:"delegate,omitempty"`
+
+	// Withdrawal: a marker for the 7-day unstaking queue lifecycle.
+	// phase=="initiated" when a staking->spot withdrawal enters the queue,
+	// phase=="finalized" 7 days later when it clears. Neither phase moves
+	// the trading balance HERE — the actual spot credit arrives via the
+	// separate cWithdraw / cStakingTransfer{isDeposit:false} path, which
+	// is the only thing we may emit a transfer for. Counting withdrawal
+	// here too would double-count. Explicitly no-op'd (both phases).
+	Withdrawal *hlWithdrawalDelta `json:"withdrawal,omitempty"`
 }
 
 type hlCDepositDelta struct {
@@ -170,4 +216,15 @@ type hlCDepositDelta struct {
 
 type hlCWithdrawDelta struct {
 	Amount string `json:"amount"`
+}
+
+type hlDelegateDelta struct {
+	Validator    string `json:"validator"`
+	Amount       string `json:"amount"`
+	IsUndelegate bool   `json:"isUndelegate"`
+}
+
+type hlWithdrawalDelta struct {
+	Amount string `json:"amount"`
+	Phase  string `json:"phase"` // "initiated" | "finalized"
 }

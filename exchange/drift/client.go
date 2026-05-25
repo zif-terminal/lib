@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"math/big"
 	"net/http"
 	"sort"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zif-terminal/lib/exchange/httpcache"
 	"github.com/zif-terminal/lib/exchange/iface"
 	"github.com/zif-terminal/lib/models"
 )
@@ -33,19 +36,63 @@ type Client struct {
 	baseURL     string
 	httpClient  *http.Client
 	marketCache *marketCache
+	transport   httpcache.Transport
+	// principal scopes the httpcache key per-account. Set at the top of
+	// every Fetch* method, cleared on return.
+	principal string
 }
 
 // NewClient creates a new Drift client
 func NewClient() *Client {
+	tr, err := httpcache.NewFromEnv()
+	if err != nil {
+		log.Printf("drift: httpcache disabled (%v) — falling back to passthrough", err)
+		tr = httpcache.Passthrough()
+	}
 	return &Client{
 		baseURL:     "https://data.api.drift.trade",
 		httpClient:  &http.Client{Timeout: 30 * time.Second},
 		marketCache: newMarketCache(1 * time.Hour),
+		transport:   tr,
 	}
 }
 
-// doRequestWithRetry executes an HTTP request with exponential backoff for rate limits
+// doRequestWithRetry executes an HTTP request with exponential backoff for
+// rate limits. When the httpcache transport is enabled and a principal is
+// set, hits return a synthetic *http.Response built from cached bytes; on
+// miss the live HTTP call runs and its body is read+cached before being
+// re-wrapped in a NopCloser so the existing decoder code is unchanged.
 func (c *Client) doRequestWithRetry(ctx context.Context, url string) (*http.Response, error) {
+	if c.transport != nil && c.transport.IsEnabled() && c.principal != "" {
+		body, err := c.transport.Get(ctx, "drift", url, c.principal, func(ctx context.Context) ([]byte, error) {
+			resp, err := c.liveRequestWithRetry(ctx, url)
+			if err != nil {
+				return nil, err
+			}
+			defer resp.Body.Close()
+			b, readErr := io.ReadAll(resp.Body)
+			if readErr != nil {
+				return nil, fmt.Errorf("failed to read response: %w", readErr)
+			}
+			if resp.StatusCode != http.StatusOK {
+				return nil, &HTTPStatusError{StatusCode: resp.StatusCode, Status: resp.Status}
+			}
+			return b, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Body:       io.NopCloser(strings.NewReader(string(body))),
+		}, nil
+	}
+	return c.liveRequestWithRetry(ctx, url)
+}
+
+// liveRequestWithRetry is the original live-HTTP path with rate-limit + retry.
+func (c *Client) liveRequestWithRetry(ctx context.Context, url string) (*http.Response, error) {
 	backoff := initialBackoff
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -132,6 +179,8 @@ func (c *Client) FetchTrades(
 	if accountID == "" {
 		return nil, nil, fmt.Errorf("account identifier (subaccount public key) is required")
 	}
+	c.principal = accountID
+	defer func() { c.principal = "" }()
 
 	// Fetch trades using generic pagination
 	tradeResults, err := fetchWithHistory(
@@ -215,6 +264,8 @@ func (c *Client) FetchFundingPayments(
 	if accountID == "" {
 		return nil, fmt.Errorf("account identifier (subaccount public key) is required")
 	}
+	c.principal = accountID
+	defer func() { c.principal = "" }()
 
 	payments, err := fetchWithHistory(
 		ctx,
@@ -277,6 +328,8 @@ func (c *Client) FetchDeposits(
 	if accountID == "" {
 		return nil, nil, fmt.Errorf("account identifier (subaccount public key) is required")
 	}
+	c.principal = accountID
+	defer func() { c.principal = "" }()
 
 	results, err := fetchWithHistory(
 		ctx,
@@ -531,6 +584,10 @@ func (c *Client) FetchSettlements(
 	accountUUID, err := uuid.Parse(account.ID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid account ID: %w", err)
+	}
+	if account != nil {
+		c.principal = account.AccountIdentifier
+		defer func() { c.principal = "" }()
 	}
 
 	records, err := c.fetchSettlePnl(ctx, account, since)

@@ -9,6 +9,7 @@ import (
 	"github.com/zif-terminal/lib/exchange/hyperliquid"
 	"github.com/zif-terminal/lib/exchange/iface"
 	"github.com/zif-terminal/lib/exchange/lighter"
+	"github.com/zif-terminal/lib/exchange/solana_dex"
 	"github.com/zif-terminal/lib/exchange/variational"
 )
 
@@ -34,6 +35,12 @@ func GetClient(name string) (iface.ExchangeClient, error) {
 		return hyperliquid.NewClient(), nil
 	case "lighter":
 		return lighter.NewClient(), nil
+	case "solana_dex":
+		// solana_dex works without a DBClient (Drift sibling-lookup is a
+		// defence-in-depth check; the program-id rule already covers
+		// Drift txs). Callers that have a DBClient should prefer
+		// GetClientWithDB to enable the sibling check.
+		return solana_dex.NewClient(), nil
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrExchangeNotFound, name)
 	}
@@ -41,12 +48,24 @@ func GetClient(name string) (iface.ExchangeClient, error) {
 
 // GetClientWithDB returns an ExchangeClient for the given exchange name,
 // using the provided DB client for exchanges that read from staging tables
-// (e.g., variational reads from omni_raw_events).
+// (e.g., variational reads from omni_raw_events) or look up sibling
+// accounts (e.g., solana_dex resolves Drift sub-account addresses for
+// dedup).
 // Falls back to GetClient for exchanges that don't need a DB client.
+//
+// As of Phase A (manual_adjustments mechanism), hyperliquid also takes a
+// DB client so it can read manual_adjustments rows at the start of each
+// sync cycle and merge them with real-data fetches before transformers run.
+// Solana / Lighter / Drift clients are intentionally NOT wired through this
+// path — Phase A scope is HL-only.
 func GetClientWithDB(name string, dbClient db.DBClient) (iface.ExchangeClient, error) {
 	switch name {
 	case "variational":
 		return variational.NewClient(dbClient), nil
+	case "solana_dex":
+		return solana_dex.NewClientWithDB(dbClient), nil
+	case "hyperliquid":
+		return hyperliquid.NewClientWithDB(dbClient), nil
 	default:
 		return GetClient(name)
 	}
@@ -58,6 +77,7 @@ func ListAvailableExchanges() []string {
 		"drift",
 		"hyperliquid",
 		"lighter",
+		"solana_dex",
 		"variational",
 	}
 }

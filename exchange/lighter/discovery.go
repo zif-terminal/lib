@@ -42,6 +42,9 @@ func (c *Client) FetchAccountName(ctx context.Context, account *models.ExchangeA
 		return "", fmt.Errorf("invalid account_index %q: %w", account.AccountIdentifier, err)
 	}
 
+	c.principal = principalFor(account)
+	defer func() { c.principal = "" }()
+
 	url := fmt.Sprintf("%s/account?by=index&value=%s", c.baseURL, account.AccountIdentifier)
 	body, err := c.doGet(ctx, url)
 	if err != nil {
@@ -75,6 +78,9 @@ func (c *Client) DiscoverAccounts(ctx context.Context, userIdentifier string) ([
 	if userIdentifier == "" {
 		return nil, fmt.Errorf("user identifier (Ethereum L1 address) is required")
 	}
+
+	c.principal = userIdentifier
+	defer func() { c.principal = "" }()
 
 	url := fmt.Sprintf("%s/account?by=l1_address&value=%s", c.baseURL, userIdentifier)
 	body, err := c.doGet(ctx, url)

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zif-terminal/lib/exchange/httpcache"
 	"github.com/zif-terminal/lib/exchange/iface"
 	"github.com/zif-terminal/lib/models"
 )
@@ -35,14 +36,44 @@ const baseURL = "https://api.hyperliquid.xyz/info"
 type Client struct {
 	apiURL     string
 	httpClient *http.Client
+	transport  httpcache.Transport
+	// principal scopes the httpcache key per-wallet. Hyperliquid POSTs are
+	// never cached (per package spec); routing through the transport is
+	// still useful so future read-only GETs can opt in uniformly.
+	principal string
+	// dbClient is optional. When non-nil the fetch methods read
+	// manual_adjustments rows for the account and fold them into the
+	// real-data feed before transformers run. The legacy NewClient() path
+	// leaves it nil so unit tests that don't need adjustments don't have to
+	// spin up a fake DB. See lib/exchange/hyperliquid/manual_adjustments.go.
+	dbClient adjustmentsReader
 }
 
-// NewClient creates a new Hyperliquid client
+// NewClient creates a new Hyperliquid client without database access.
+// Callers that want to fold manual_adjustments into the sync feed should
+// use NewClientWithDB.
 func NewClient() *Client {
+	tr, err := httpcache.NewFromEnv()
+	if err != nil {
+		log.Printf("hyperliquid: httpcache disabled (%v) — falling back to passthrough", err)
+		tr = httpcache.Passthrough()
+	}
 	return &Client{
 		apiURL:     baseURL,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
+		transport:  tr,
 	}
+}
+
+// NewClientWithDB creates a Hyperliquid client that reads from
+// manual_adjustments for each account at fetch time. Each adjustment is
+// merged with the real-data feed before per-event-type transformers run,
+// so adjustments and real events share the exact same code path and the
+// resulting Transfer rows are tagged with metadata.manual_adjustment_id.
+func NewClientWithDB(dbClient adjustmentsReader) *Client {
+	c := NewClient()
+	c.dbClient = dbClient
+	return c
 }
 
 // Name returns the exchange identifier
@@ -51,31 +82,61 @@ func (c *Client) Name() string {
 }
 
 // doPost sends a POST request to the Hyperliquid info API and decodes the response.
+// Hyperliquid's read API is POST-only, so by current spec these calls are never
+// cached — the transport always delegates to the live HTTP path. Routing through
+// the transport here keeps the per-exchange wiring uniform.
 func (c *Client) doPost(ctx context.Context, body interface{}, result interface{}) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	if c.transport != nil && c.transport.IsEnabled() && c.principal != "" {
+		respBody, err := c.transport.Post(ctx, "hyperliquid", c.apiURL, c.principal, data, func(ctx context.Context) ([]byte, error) {
+			return c.livePost(ctx, data)
+		})
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(respBody, result); err != nil {
+			return fmt.Errorf("failed to decode response: %w", err)
+		}
+		return nil
+	}
+
+	respBody, err := c.livePost(ctx, data)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(respBody, result); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+	return nil
+}
+
+// livePost performs the live POST with rate-limit + retry, returning the raw
+// body bytes. Separate from doPost so the cache transport can use it as its
+// upstream Fetcher without re-entering the cache.
+func (c *Client) livePost(ctx context.Context, data []byte) ([]byte, error) {
 	backoff := initialBackoff
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 
 		if err := globalLimiter.Wait(ctx); err != nil {
-			return err
+			return nil, err
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "POST", c.apiURL, bytes.NewReader(data))
 		if err != nil {
-			return fmt.Errorf("failed to create request: %w", err)
+			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			return fmt.Errorf("request failed: %w", err)
+			return nil, fmt.Errorf("request failed: %w", err)
 		}
 
 		// Check for rate limiting (429)
@@ -83,7 +144,7 @@ func (c *Client) doPost(ctx context.Context, body interface{}, result interface{
 			resp.Body.Close()
 
 			if attempt == maxRetries {
-				return &iface.RateLimitError{
+				return nil, &iface.RateLimitError{
 					Exchange:   "hyperliquid",
 					Message:    fmt.Sprintf("rate limit exceeded after %d retries", maxRetries),
 					RetryAfter: backoff,
@@ -97,7 +158,7 @@ func (c *Client) doPost(ctx context.Context, body interface{}, result interface{
 
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return nil, ctx.Err()
 			case <-time.After(backoff):
 			}
 
@@ -111,21 +172,17 @@ func (c *Client) doPost(ctx context.Context, body interface{}, result interface{
 		respBody, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			return fmt.Errorf("failed to read response: %w", err)
+			return nil, fmt.Errorf("failed to read response: %w", err)
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
+			return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBody))
 		}
 
-		if err := json.Unmarshal(respBody, result); err != nil {
-			return fmt.Errorf("failed to decode response: %w", err)
-		}
-
-		return nil
+		return respBody, nil
 	}
 
-	return fmt.Errorf("max retries exceeded")
+	return nil, fmt.Errorf("max retries exceeded")
 }
 
 // FetchTrades fetches trades from the Hyperliquid userFills API.
@@ -152,6 +209,23 @@ func (c *Client) FetchTrades(
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to fetch fills: %w", err)
 	}
+
+	// Merge active manual_adjustments of event_type=userFills into the fill
+	// stream. Adjustment-sourced fills pass through transformFill identically
+	// to real ones — the only audit trail downstream is the Tid (Trade ID)
+	// the operator put in the payload (TradeInput has no metadata column, so
+	// metadata.manual_adjustment_id is NOT carried on trade rows). For Phase A
+	// only HL funding is exercised end-to-end; the userFills code path is
+	// wired but unverified.
+	adjByType, err := c.fetchAdjustmentsByType(ctx, accountUUID)
+	if err != nil {
+		return nil, nil, err
+	}
+	fillAdj, _, err := decodeFillsAdjustments(adjByType["userFills"])
+	if err != nil {
+		return nil, nil, err
+	}
+	fills = append(fills, fillAdj...)
 
 	// Synthesize opening fills for pre-launch perp positions.
 	// Pre-launch perps (e.g., @107) may only have closing fills in the API —
@@ -219,9 +293,41 @@ func (c *Client) FetchFundingPayments(
 		return nil, fmt.Errorf("failed to fetch funding: %w", err)
 	}
 
+	// Merge active manual_adjustments of event_type=userFunding into the
+	// entry stream BEFORE running transformFunding. Each adjustment's
+	// payload decodes as an hlFundingEntry so it flows through the same
+	// transformer as the real entries.
+	adjByType, err := c.fetchAdjustmentsByType(ctx, accountUUID)
+	if err != nil {
+		return nil, err
+	}
+	fundingAdj, adjSourceIDs, err := decodeFundingAdjustments(adjByType["userFunding"])
+	if err != nil {
+		return nil, err
+	}
+	// Track the adjustment_id for each merged entry by its external_id so
+	// we can tag the resulting Transfer row after transformation. We use
+	// external_id as the join key because transformFunding's externalID
+	// derivation is deterministic from entry fields (time + coin).
+	adjExtIDToSource := make(map[string]uuid.UUID, len(fundingAdj))
+	for i := range fundingAdj {
+		extID := fundingExternalID(fundingAdj[i])
+		adjExtIDToSource[extID] = adjSourceIDs[i]
+		entries = append(entries, fundingAdj[i])
+	}
+
 	payments := make([]*models.TransferInput, 0, len(entries))
 	for _, entry := range entries {
 		payment := transformFunding(entry, accountUUID)
+		// If this entry came from a manual_adjustment, tag the resulting
+		// Transfer so the audit trail survives into the DB.
+		if adjID, ok := adjExtIDToSource[payment.ExternalID]; ok {
+			if payment.Metadata == nil {
+				payment.Metadata = make(map[string]string)
+			}
+			payment.Metadata["manual_adjustment_id"] = adjID.String()
+			payment.Metadata["source"] = "manual_adjustment"
+		}
 		payments = append(payments, payment)
 	}
 
@@ -231,6 +337,13 @@ func (c *Client) FetchFundingPayments(
 	})
 
 	return payments, nil
+}
+
+// fundingExternalID rebuilds the externalID that transformFunding will
+// stamp on the resulting TransferInput. Defined here so the merge code
+// can pre-compute the join key without calling the transformer twice.
+func fundingExternalID(entry hlFundingEntry) string {
+	return fmt.Sprintf("%d_%s", entry.Time, entry.Delta.Coin)
 }
 
 // FetchDeposits fetches deposits and withdrawals from the Hyperliquid ledger API.
@@ -258,6 +371,28 @@ func (c *Client) FetchDeposits(
 		return nil, nil, fmt.Errorf("failed to fetch ledger updates: %w", err)
 	}
 
+	// Merge active manual_adjustments of event_type=userNonFundingLedgerUpdates
+	// into the entry stream BEFORE running transformLedgerEntry. Adjustment
+	// payloads decode as hlLedgerEntry so they flow through the same
+	// transformer as real entries. Tag the resulting Transfer rows with
+	// metadata.manual_adjustment_id via a hash→adjustment_id map.
+	adjByType, err := c.fetchAdjustmentsByType(ctx, accountUUID)
+	if err != nil {
+		return nil, nil, err
+	}
+	ledgerAdj, ledgerAdjSources, err := decodeLedgerAdjustments(adjByType["userNonFundingLedgerUpdates"])
+	if err != nil {
+		return nil, nil, err
+	}
+	hashToAdjID := make(map[string]uuid.UUID, len(ledgerAdj))
+	for i := range ledgerAdj {
+		if ledgerAdj[i].Hash == "" {
+			return nil, nil, fmt.Errorf("manual_adjustment %s of type userNonFundingLedgerUpdates has empty hash (must be a unique synthetic hash, e.g. 0x_manual_<reason>)", ledgerAdjSources[i])
+		}
+		hashToAdjID[ledgerAdj[i].Hash] = ledgerAdjSources[i]
+		entries = append(entries, ledgerAdj[i])
+	}
+
 	// Track hashes of cStakingTransfer entries observed in the non-funding
 	// ledger. For some HL wallets the same on-chain consensus staking event
 	// surfaces in BOTH userNonFundingLedgerUpdates (as cStakingTransfer) AND
@@ -276,10 +411,19 @@ func (c *Client) FetchDeposits(
 			return nil, nil, err
 		}
 		if transfer != nil {
+			tagWithAdjustment(transfer, entry.Hash, hashToAdjID)
 			transfers = append(transfers, transfer)
 		}
 		if price != nil {
 			prices = append(prices, price)
+		}
+		// Emit a separate USDC fee withdraw for entry types that charge a
+		// USDC-denominated bridge fee on a non-USDC asset move (send /
+		// spotTransfer of a non-USDC token). Folding the USDC fee into the
+		// token amount produces a phantom position in that token.
+		if feeTransfer := extraLedgerFeeTransfer(entry, accountUUID, user); feeTransfer != nil {
+			tagWithAdjustment(feeTransfer, entry.Hash, hashToAdjID)
+			transfers = append(transfers, feeTransfer)
 		}
 	}
 
@@ -311,8 +455,10 @@ func (c *Client) FetchDeposits(
 
 	for _, entry := range dhEntries {
 		// Only cDeposit/cWithdraw deltas could collide with the ledger
-		// path; other delegatorHistory event types (delegate, undelegate,
-		// withdrawal lifecycle) are dropped inside transformDelegatorHistoryEntry.
+		// path; the staking-internal lifecycle variants (delegate,
+		// undelegate, withdrawal-queue phases) are explicitly no-op'd
+		// inside transformDelegatorHistoryEntry, and anything genuinely
+		// unknown still crash-louds there.
 		if (entry.Delta.CDeposit != nil || entry.Delta.CWithdraw != nil) &&
 			stakingHashesFromLedger[entry.Hash] {
 			continue
@@ -396,10 +542,30 @@ func transformDelegatorHistoryEntry(entry hlDelegatorHistoryEntry, accountUUID u
 			},
 		}, nil
 
-	default:
-		// delegate, undelegate, withdrawal-initiated, withdrawal-finalized,
-		// etc. — these don't affect trading balance, ignore.
+	case entry.Delta.Delegate != nil:
+		// delegate/undelegate: HYPE moving between the staking account and a
+		// validator. Entirely staking-internal — never touches the
+		// spot/trading balance. Explicit no-op (no transfer, no error) per
+		// no-silent-unknowns policy.
 		return nil, nil
+
+	case entry.Delta.Withdrawal != nil:
+		// Unstaking-queue lifecycle marker (phase initiated|finalized). The
+		// real spot credit arrives via the separate cWithdraw /
+		// cStakingTransfer{isDeposit:false} path; emitting here too would
+		// double-count. Neither phase moves the trading balance — explicit
+		// no-op for both.
+		return nil, nil
+
+	default:
+		// Genuinely unknown delegator-history variant. The raw JSON's
+		// top-level key names the type (e.g. {"cValidatorActivation":{...}}).
+		// Crash-loud so the new type gets an explicit case rather than being
+		// silently dropped — silent skips were the root-cause class for the
+		// Lighter USDC phantoms we spent hours chasing. RawDelta is captured
+		// by hlDelegatorHistoryEntry.UnmarshalJSON.
+		return nil, fmt.Errorf("hyperliquid: unhandled delegator history variant | time=%d | hash=%s | raw_delta=%s",
+			entry.Time, entry.Hash, string(entry.RawDelta))
 	}
 }
 
@@ -435,6 +601,16 @@ func (c *Client) FetchBalances(
 	}, &spotState)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch spot clearinghouse state: %w", err)
+	}
+
+	// Fetch per-asset spot mark prices once. Used to attach oracle_price +
+	// usd_value to every non-USDC balance row below. This call is what closes
+	// the spot_balance_snapshots usd_value=NULL bug — without it dashboard
+	// summed-USD reconciliations under-count any account holding HYPE/UBTC/
+	// HAR/etc as collateral.
+	spotPrices, err := c.fetchSpotMarkPrices(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch spot mark prices: %w", err)
 	}
 
 	nowMs := time.Now().UnixMilli()
@@ -484,9 +660,15 @@ func (c *Client) FetchBalances(
 
 	totalUSDC := perpUSDC + spotUSDC
 	if math.Abs(totalUSDC) > 0.000001 {
+		usdcBalance := cleanDecimal(strconv.FormatFloat(totalUSDC, 'f', -1, 64))
+		one := "1"
+		// USDC's USD value is its balance (price = 1.0 by definition).
+		usdcVal := usdcBalance
 		balances = append(balances, &models.BalanceSnapshot{
 			Asset:       "USDC",
-			Balance:     cleanDecimal(strconv.FormatFloat(totalUSDC, 'f', -1, 64)),
+			Balance:     usdcBalance,
+			OraclePrice: &one,
+			UsdValue:    &usdcVal,
 			TimestampMs: nowMs,
 		})
 	}
@@ -512,9 +694,34 @@ func (c *Client) FetchBalances(
 			}
 			asset = base
 		}
+
+		// Look up mark price (keyed by base-token name). If HL doesn't quote
+		// the asset (e.g. delisted/edge tokens like HPL), emit the snapshot
+		// with no oracle/usd — the dashboard will treat it as 0 USD, which
+		// is correct for assets we can't price. Skipping the asset entirely
+		// would lose the balance fact; failing the whole account would
+		// poison every other account in the cycle.
+		px, ok := spotPrices[asset]
+		if !ok {
+			balances = append(balances, &models.BalanceSnapshot{
+				Asset:       asset,
+				Balance:     b.Total,
+				TimestampMs: nowMs,
+			})
+			continue
+		}
+		pxF, err := strconv.ParseFloat(px, 64)
+		if err != nil {
+			return nil, fmt.Errorf("hyperliquid: failed to parse mark price %q for asset %s: %w", px, asset, err)
+		}
+		usd := total * pxF
+		usdStr := cleanDecimal(strconv.FormatFloat(usd, 'f', -1, 64))
+		pxCopy := px
 		balances = append(balances, &models.BalanceSnapshot{
 			Asset:       asset,
 			Balance:     b.Total,
+			OraclePrice: &pxCopy,
+			UsdValue:    &usdStr,
 			TimestampMs: nowMs,
 		})
 	}
@@ -661,21 +868,59 @@ func deriveFeeAsset(fill hlFill) (string, error) {
 	return token, nil
 }
 
+// hlFundingWindow is the length of a single Hyperliquid funding settlement
+// window for perps. HL's userFunding.time marks the START of the window
+// (hour-aligned). The funding payment is accrued across n_samples windows
+// of this length and actually settles at the END of the accrual period.
+const hlFundingWindow = time.Hour
+
 // transformFunding converts a Hyperliquid funding entry to a TransferInput.
+//
+// The HL API's `userFunding.time` field is the START of the funding
+// accrual period; the payment actually settles at the END of the period.
+// HL's bucket cadence varies — hourly buckets carry n_samples=1 while
+// daily-rollup buckets carry n_samples=24 — so we shift the stored
+// timestamp by `n_samples * window_length_sec * 1000ms` to land it at
+// end-of-accrual. The external ID and metadata window_start_ms are both
+// keyed off the RAW `time` so rows stay stable across replays and so
+// downstream consumers (R2 detector) can recover the raw start.
+//
+// If n_samples is missing or zero (very early HL data or malformed
+// responses), we fall back to the legacy +1h shift to preserve
+// backwards-compatible behavior.
+//
+// Edge case: positions opened in the final hour of a daily-rollup bucket
+// can still have end_of_accrual < first_fill_ts. We accept this rare
+// case — the activity_processor sees funding-before-fill and halts, which
+// is the correct conservative behavior; a follow-up post-processor could
+// nudge funding to the first matching fill if needed.
 func transformFunding(entry hlFundingEntry, accountUUID uuid.UUID) *models.TransferInput {
-	externalID := fmt.Sprintf("%d_%s", entry.Time, entry.Delta.Coin)
+	externalID := fundingExternalID(entry)
+
+	nSamples := entry.Delta.NSamples
+	var shift time.Duration
+	if nSamples > 0 {
+		shift = time.Duration(nSamples) * hlFundingWindow
+	} else {
+		// Backwards-compat: missing/zero n_samples → assume one hourly bucket.
+		shift = hlFundingWindow
+	}
+	endOfAccrualTs := time.UnixMilli(entry.Time).UTC().Add(shift)
+
 	return &models.TransferInput{
 		ExchangeAccountID: accountUUID,
 		Type:              models.TypeFunding,
 		Asset:             "USDC",
 		Amount:            cleanDecimal(entry.Delta.Usdc), // Keep signed — Drift also stores signed funding amounts
-		Timestamp:         time.UnixMilli(entry.Time).UTC(),
+		Timestamp:         endOfAccrualTs,
 		ExternalID:        externalID,
 		Metadata: map[string]string{
-			"market":      entry.Delta.Coin + "-PERP",
-			"funding_rate": entry.Delta.FundingRate,
-			"n_samples":   strconv.Itoa(entry.Delta.NSamples),
-			"payment_id":  externalID,
+			"market":            entry.Delta.Coin + "-PERP",
+			"funding_rate":      entry.Delta.FundingRate,
+			"n_samples":         strconv.Itoa(entry.Delta.NSamples),
+			"payment_id":        externalID,
+			"window_start_ms":   strconv.FormatInt(entry.Time, 10),
+			"window_length_sec": strconv.FormatInt(int64(hlFundingWindow/time.Second), 10),
 		},
 	}
 }
@@ -830,9 +1075,11 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		amountStr = entry.Delta.Usdc
 
 	case "rewardsclaim":
+		// HL's rewardsClaim delta places the claim size in `amount` (not `usdc`).
+		// Using Delta.Usdc here stores 0 and leaves a residual at reconciliation.
 		transferType = models.TypeReward
 		asset = "USDC"
-		amountStr = entry.Delta.Usdc
+		amountStr = entry.Delta.Amount
 
 	case "send":
 		// Skip self-sends — when user == destination the event is a no-op on
@@ -876,7 +1123,15 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		// other party). For outgoing sends the user is out (amount + fee);
 		// without this fold we'd under-record the debit and leave a phantom
 		// fee-sized residual on the account.
-		if !incoming {
+		//
+		// IMPORTANT: HL ledger `send` entries report the transfer fee in USDC,
+		// not in the token being sent. When the user sends a non-USDC token
+		// (e.g. HYPE), folding a USDC fee directly into the HYPE amount
+		// produces a phantom HYPE position equal to the fee. To avoid this
+		// unit confusion, we only fold the fee when the asset being sent is
+		// USDC. For non-USDC sends the USDC fee is emitted separately by
+		// extraLedgerFeeTransfer (called from FetchDeposits).
+		if !incoming && isUSDCOrEmpty(asset) {
 			amountStr = foldLedgerFee(amountStr, entry.Delta.Fee, deltaType, entry.Hash)
 		}
 
@@ -927,8 +1182,21 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 }
 
 // transformBorrowLendInterest converts a Hyperliquid borrow/lend interest entry to a TransferInput.
-// Net interest = supply - borrow. Positive = earned, negative = paid. Zero net is skipped.
+// Net interest = supply - borrow. Positive = earned (credit to USDC pile),
+// negative = paid (debit from USDC pile). Zero net is skipped.
 // Uses math/big.Rat for exact decimal arithmetic.
+//
+// The SIGN of Amount is load-bearing: Type=interest has no direction field,
+// so the processor's ApplyInterest reads the sign of Amount directly
+// (positive → credit pile, negative → debit pile / short side). A prior
+// version of this function stripped the negative sign before storage with
+// the comment "direction is determined by type", but that's wrong for
+// TypeInterest — there is no direction field. The result was that every
+// event where borrow > supply (interest CHARGED, money lost) got stored
+// as a positive USDC credit, inflating USDC piles by 2x the cumulative
+// charged interest on every HL account with BLI history (verified on
+// b8a094d2: 196 events, +$0.40 stored vs reality -$0.40, $0.80 mismatch
+// matching the dashboard's observed gap).
 func transformBorrowLendInterest(entry hlBorrowLendInterest, accountUUID uuid.UUID) *models.TransferInput {
 	supply := new(big.Rat)
 	if _, ok := supply.SetString(entry.Supply); !ok {
@@ -940,23 +1208,18 @@ func transformBorrowLendInterest(entry hlBorrowLendInterest, accountUUID uuid.UU
 		borrow.SetInt64(0)
 	}
 
-	// net = supply - borrow
+	// net = supply - borrow. Signed: positive = earned, negative = paid.
 	net := new(big.Rat).Sub(supply, borrow)
 
 	if net.Sign() == 0 {
 		return nil
 	}
 
-	// Format the net amount as a decimal string
+	// Format the net amount as a decimal string, preserving sign.
 	amount := net.FloatString(18)
 	amount = cleanDecimal(amount)
 
-	// Make amount positive — direction is determined by type
-	if strings.HasPrefix(amount, "-") {
-		amount = amount[1:]
-	}
-
-	// If after cleaning the amount is zero or dust, skip
+	// If after cleaning the amount is zero or dust, skip.
 	if amount == "0" {
 		return nil
 	}
@@ -975,6 +1238,123 @@ func transformBorrowLendInterest(entry hlBorrowLendInterest, accountUUID uuid.UU
 			"borrow":      entry.Borrow,
 			"supply":      entry.Supply,
 		},
+	}
+}
+
+// isUSDCOrEmpty returns true if asset is empty, "USDC", or any case-variant
+// thereof. HL ledger entries that move USDC sometimes report Token="" (the
+// USDC field is set instead) and sometimes Token="USDC".
+func isUSDCOrEmpty(asset string) bool {
+	a := strings.ToUpper(strings.TrimSpace(asset))
+	return a == "" || a == "USDC"
+}
+
+// extraLedgerFeeTransfer returns a SEPARATE USDC withdraw transfer for ledger
+// entries that charge a USDC-denominated fee that can't be folded into the
+// main entry's amount field. Two patterns are covered:
+//
+//  1. `send` / `spotTransfer` of a non-USDC token (e.g. HYPE) with a
+//     USDC-denominated fee. Folding the USDC fee into the token amount would
+//     produce a phantom position in that token (the original eeb650d7 /
+//     0c05e3a5 halt cause). Sender-side only — incoming senders eat the fee
+//     on their own ledger.
+//
+//  2. `internalTransfer` (USDC L1 transfer between HL users): HL charges
+//     the recipient ~$1 USDC. The entry appears on both ledgers with
+//     fee=1.0, but the debit is the recipient's — not the sender's. Without
+//     this row, the recipient's account derives +$1 USDC vs the HL snapshot.
+//     Recipient-side only.
+//
+// Returns nil when:
+//   - the entry type is not one of the covered patterns above,
+//   - the directional rule for that type doesn't match this wallet,
+//   - for sends/spotTransfers, the asset is USDC/empty (the main path's
+//     foldLedgerFee already applies — emitting a second row would double-count),
+//   - the fee field is empty or zero.
+//
+// External ID is derived from the source hash plus a "_fee" suffix so the
+// fee row does not collide with the main transfer's unique constraint.
+func extraLedgerFeeTransfer(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddress string) *models.TransferInput {
+	deltaType := strings.ToLower(entry.Delta.Type)
+	switch deltaType {
+	case "send", "spottransfer":
+		// Only outgoing — incoming senders eat the fee on their own ledger.
+		if !strings.EqualFold(entry.Delta.User, walletAddress) {
+			return nil
+		}
+		if strings.EqualFold(entry.Delta.User, entry.Delta.Destination) {
+			// Self-send — main transformer already returns nil. Don't emit a fee row either.
+			return nil
+		}
+		// Only when the asset moved is non-USDC. USDC sends fold the fee directly.
+		if isUSDCOrEmpty(entry.Delta.Token) {
+			return nil
+		}
+	case "internaltransfer":
+		// HL charges the $1 internalTransfer fee to the RECIPIENT, not the
+		// sender. Empirically verified against accounts eeb650d7 and 42c49379
+		// where the only fee=1.0 events on each were internalTransfers in
+		// which the account was the recipient, and each carried a +$1 phantom
+		// USDC residual vs the HL snapshot.
+		//
+		// Only emit on the recipient side (incoming). The sender's main
+		// withdraw row already equals their actual debit (= usdc, no fee).
+		if !strings.EqualFold(entry.Delta.Destination, walletAddress) {
+			return nil
+		}
+		if strings.EqualFold(entry.Delta.User, entry.Delta.Destination) {
+			// Self-transfer — no real movement; skip.
+			return nil
+		}
+	default:
+		return nil
+	}
+
+	feeRat := new(big.Rat)
+	if entry.Delta.Fee == "" {
+		return nil
+	}
+	if _, ok := feeRat.SetString(entry.Delta.Fee); !ok {
+		return nil
+	}
+	if feeRat.Sign() == 0 {
+		return nil
+	}
+	absFee := new(big.Rat).Abs(feeRat)
+	feeAmount := cleanDecimal(absFee.FloatString(18))
+
+	metadata := map[string]string{
+		"payment_id":  entry.Hash,
+		"source_type": deltaType + "_fee",
+		"fee_token":   "USDC",
+	}
+	// fee_asset records the asset whose movement triggered the fee. For
+	// send/spotTransfer this is the moved token (HYPE etc); for
+	// internalTransfer the moved asset is USDC itself.
+	if deltaType == "internaltransfer" {
+		metadata["fee_asset"] = "USDC"
+	} else {
+		metadata["fee_asset"] = entry.Delta.Token
+	}
+
+	// Place the fee row 1ms after the main transfer so the processor sees
+	// the main movement before the fee. Critical for incoming
+	// `internalTransfer`: the fee withdraw must NOT execute before the
+	// corresponding deposit lands, otherwise FIFO would open a short USDC
+	// position for the fee and the subsequent deposit would trip the
+	// "exceeds short inventory" guard (eeb650d7 hit this on a fresh
+	// account whose first USDC event was a 5-USDC internalTransfer in with
+	// a 1-USDC fee). For send/spotTransfer (sender-side outflow) the offset
+	// is harmless — fee and main are both withdraws against an established
+	// USDC balance.
+	return &models.TransferInput{
+		ExchangeAccountID: accountUUID,
+		Type:              models.TypeWithdraw,
+		Asset:             "USDC",
+		Amount:            feeAmount,
+		Timestamp:         time.UnixMilli(entry.Time + 1).UTC(),
+		ExternalID:        entry.Hash + "_fee",
+		Metadata:          metadata,
 	}
 }
 

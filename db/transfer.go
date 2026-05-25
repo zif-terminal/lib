@@ -107,13 +107,24 @@ func (c *Client) GetTransfersByIDs(ctx context.Context, ids []uuid.UUID) ([]*Tra
 // the real external_id when the base columns (exchange_account_id, type, asset,
 // timestamp) match. This prevents duplicates when the same transfer was
 // originally synced without an external_id and later re-synced with one.
+//
+// Returns an error (rather than an empty slice) if Hasura responds with an
+// unexpectedly empty `returning` while inputs were non-empty and no upgrade
+// path absorbed them — historically (incident: solana_dex 2026-05-07) such a
+// silent zero-row insert can occur if a unique-constraint violation gets
+// reported in `errors[]` but the response is otherwise shaped like success.
+// We fail loudly here so the caller's sync cycle reports the failure rather
+// than logging "deposits_fetched=N" while writing nothing.
 func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*Transfer, error) {
 	if len(inputs) == 0 {
 		return []*Transfer{}, nil
 	}
 
-	// Upgrade empty external_ids on existing rows before inserting.
-	if err := c.upgradeTransferExternalIDs(ctx, inputs); err != nil {
+	// Upgrade empty external_ids on existing rows before inserting. The number
+	// of rows upgraded is returned so we can validate the subsequent insert
+	// count (upgrade-then-insert is supposed to net to len(inputs) writes).
+	upgraded, err := c.upgradeTransferExternalIDs(ctx, inputs)
+	if err != nil {
 		return nil, fmt.Errorf("failed to upgrade transfer external IDs: %w", err)
 	}
 
@@ -163,7 +174,31 @@ func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*
 	}
 
 	if err := c.execute(ctx, req, &resp); err != nil {
-		return nil, fmt.Errorf("failed to add transfers: %w", err)
+		// Surface the first input's identifying info so log readers can find
+		// the offending row in Hasura logs / postgres.
+		first := inputs[0]
+		return nil, fmt.Errorf("failed to add transfers (count=%d, first=%s/%s/%s/%d/%s): %w",
+			len(inputs), first.ExchangeAccountID.String(), first.Type, first.Asset,
+			first.Timestamp.UnixMilli(), first.ExternalID, err)
+	}
+
+	inserted := len(resp.InsertTransfers.Returning)
+	expected := len(inputs) - upgraded
+	if expected < 0 {
+		// upgrade affected more rows than we asked for — the upgrade query
+		// matches by (account, type, asset, ts) so a single new input can
+		// cover multiple legacy empty-external_id rows. Treat this as
+		// inserted==0 acceptable (we cannot tell which input matched what),
+		// but require at least one row was either upgraded or inserted.
+		expected = 0
+	}
+	if inserted != expected {
+		first := inputs[0]
+		return nil, fmt.Errorf(
+			"AddTransfers silent-write detected: inputs=%d upgraded=%d expected_insert=%d actual_insert=%d (first_input=%s/%s/%s/%d/%s) — Hasura returned success but the insert did not commit the expected rows (likely a duplicate/permission/JSON-shape issue swallowed by the GraphQL transport)",
+			len(inputs), upgraded, expected, inserted,
+			first.ExchangeAccountID.String(), first.Type, first.Asset,
+			first.Timestamp.UnixMilli(), first.ExternalID)
 	}
 
 	return resp.InsertTransfers.Returning, nil
@@ -172,8 +207,11 @@ func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*
 // upgradeTransferExternalIDs updates existing transfers that have external_id = ''
 // to the real external_id when all base columns match. This is done one at a time
 // since each transfer has a unique external_id value. Only inputs with non-empty
-// ExternalID are processed.
-func (c *Client) upgradeTransferExternalIDs(ctx context.Context, inputs []*TransferInput) error {
+// ExternalID are processed. Returns the total number of rows upgraded so the
+// caller can validate the subsequent insert (upgrade-then-insert should net to
+// len(inputs) total writes).
+func (c *Client) upgradeTransferExternalIDs(ctx context.Context, inputs []*TransferInput) (int, error) {
+	upgraded := 0
 	for _, input := range inputs {
 		if input.ExternalID == "" {
 			continue
@@ -217,12 +255,13 @@ func (c *Client) upgradeTransferExternalIDs(ctx context.Context, inputs []*Trans
 		}
 
 		if err := c.execute(ctx, req, &resp); err != nil {
-			return fmt.Errorf("failed to upgrade external_id for transfer %s/%s/%s: %w",
+			return upgraded, fmt.Errorf("failed to upgrade external_id for transfer %s/%s/%s: %w",
 				input.Type, input.Asset, input.ExternalID, err)
 		}
+		upgraded += resp.UpdateTransfers.AffectedRows
 	}
 
-	return nil
+	return upgraded, nil
 }
 
 // DeleteTransfersByAccountAndType deletes transfer records matching account ID and type.
@@ -329,4 +368,47 @@ func (c *Client) GetLatestTransferByType(ctx context.Context, accountID uuid.UUI
 	}
 
 	return resp.Transfers[0], nil
+}
+
+// UpdateTransferTimestamp updates the timestamp column on a single transfer row.
+//
+// Used by the post-fetch phantom-funding clamp (Fix B): when a funding payment
+// or borrow/lend interest event is dated before the position it funds was
+// actually opened (HL's daily-rollup bucketing can stamp funding at D 00:00 UTC
+// even when the position opened at D 13:21 UTC), the clamp shifts the timestamp
+// forward to the first-trade timestamp so downstream processors don't see a
+// phantom short.
+//
+// Updates ONLY the timestamp column; all other columns (amount, asset, type,
+// metadata) are untouched — the raw HL window_start_ms in metadata is preserved
+// so R2 can still detect genuine multi-day funding-before-fill gaps.
+func (c *Client) UpdateTransferTimestamp(ctx context.Context, transferID uuid.UUID, timestamp int64) error {
+	query := `
+		mutation UpdateTransferTimestamp($id: uuid!, $ts: bigint!) {
+			update_transfers_by_pk(pk_columns: {id: $id}, _set: {timestamp: $ts}) {
+				id
+			}
+		}
+	`
+
+	req := c.graphqlRequestWithVars(query, map[string]interface{}{
+		"id": transferID.String(),
+		"ts": timestamp,
+	})
+
+	var resp struct {
+		UpdateTransfersByPk *struct {
+			ID string `json:"id"`
+		} `json:"update_transfers_by_pk"`
+	}
+
+	if err := c.execute(ctx, req, &resp); err != nil {
+		return fmt.Errorf("failed to update transfer timestamp: %w", err)
+	}
+
+	if resp.UpdateTransfersByPk == nil {
+		return notFoundError("transfer", transferID.String())
+	}
+
+	return nil
 }

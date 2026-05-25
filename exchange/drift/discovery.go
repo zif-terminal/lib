@@ -8,16 +8,52 @@ import (
 	"github.com/zif-terminal/lib/models"
 )
 
-// FetchAccountName is a no-op stub for Drift.
+// FetchAccountName returns the user-set Drift subaccount name (e.g.
+// "Funding", "Spot", "USDC Savings") by querying the authority's account list.
 //
-// Drift does not expose subaccount names via its public data API — the name
-// field visible in the Drift UI is stored on-chain inside each subaccount's
-// UserAccount struct, which requires RPC access to the Solana program. Pulling
-// it is out of scope for discovery-time label population, so we return "".
-//
-// If/when on-chain name fetching is added, this method is the single place
-// to wire it up without touching the detector.
+// Drift's public `GET /authority/<wallet>/accounts` endpoint returns each
+// subaccount's `name` field. The authority address is stored in
+// `account_type_metadata.authority` at discovery time. Returns "" with no
+// error when authority metadata is missing or the account doesn't appear in
+// the response — caller's guard skips empty labels.
 func (c *Client) FetchAccountName(ctx context.Context, account *models.ExchangeAccount) (string, error) {
+	if account == nil || account.AccountTypeMetadata == nil {
+		return "", nil
+	}
+	var meta map[string]interface{}
+	if err := json.Unmarshal(account.AccountTypeMetadata, &meta); err != nil {
+		return "", nil
+	}
+	authority, _ := meta["authority"].(string)
+	if authority == "" {
+		return "", nil
+	}
+
+	c.principal = authority
+	defer func() { c.principal = "" }()
+
+	url := fmt.Sprintf("%s/authority/%s/accounts", c.baseURL, authority)
+	resp, err := c.doRequestWithRetry(ctx, url)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch authority accounts: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("authority accounts API returned status %d", resp.StatusCode)
+	}
+
+	var response driftAuthorityAccountsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return "", fmt.Errorf("failed to decode authority accounts response: %w", err)
+	}
+	if !response.Success {
+		return "", nil
+	}
+	for _, acc := range response.Accounts {
+		if acc.AccountID == account.AccountIdentifier {
+			return acc.Name, nil
+		}
+	}
 	return "", nil
 }
 
@@ -32,6 +68,9 @@ func (c *Client) DiscoverAccounts(ctx context.Context, userIdentifier string) ([
 	if userIdentifier == "" {
 		return nil, fmt.Errorf("user identifier (Solana wallet address) is required")
 	}
+
+	c.principal = userIdentifier
+	defer func() { c.principal = "" }()
 
 	url := fmt.Sprintf("%s/authority/%s/accounts", c.baseURL, userIdentifier)
 

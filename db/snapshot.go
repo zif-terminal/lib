@@ -126,6 +126,17 @@ func (c *Client) AddSpotBalanceSnapshots(ctx context.Context, inputs []*SpotBala
 			"balance":             input.Balance,
 			"timestamp":           input.Timestamp.UnixMilli(),
 		}
+		// Only include the price columns when actually populated so we don't
+		// overwrite a future migration default by sending JSON null. Hasura
+		// treats absent keys as "use column default", which for these
+		// nullable columns is NULL — same end result without the explicit
+		// null serialization.
+		if input.OraclePrice != nil {
+			obj["oracle_price"] = *input.OraclePrice
+		}
+		if input.UsdValue != nil {
+			obj["usd_value"] = *input.UsdValue
+		}
 		objects[i] = obj
 	}
 
@@ -137,6 +148,8 @@ func (c *Client) AddSpotBalanceSnapshots(ctx context.Context, inputs []*SpotBala
 					exchange_account_id
 					asset
 					balance
+					oracle_price
+					usd_value
 					timestamp
 				}
 			}

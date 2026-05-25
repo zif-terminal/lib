@@ -195,14 +195,18 @@ func (c *Client) LoadCheckpoint(ctx context.Context, accountID uuid.UUID) (*Proc
 }
 
 // SetProcessorCheckpointError records an error message on the checkpoint row for an account.
-// The checkpoint row must already exist (created by a prior SaveCheckpoint). If no row
-// exists yet, this is a no-op — the error will be surfaced via logs only.
+// Upserts so that errors raised before the first successful SaveCheckpoint (e.g. after a
+// force-replay that wipes the checkpoint and then errors during Phase A) still surface in
+// processor_checkpoints.last_error rather than being log-only.
 func (c *Client) SetProcessorCheckpointError(ctx context.Context, accountID uuid.UUID, errorMsg string) error {
 	query := `
-		mutation SetCheckpointError($id: uuid!, $msg: String!) {
-			update_processor_checkpoints_by_pk(
-				pk_columns: {exchange_account_id: $id}
-				_set: {last_error: $msg}
+		mutation SetCheckpointError($object: processor_checkpoints_insert_input!) {
+			insert_processor_checkpoints_one(
+				object: $object
+				on_conflict: {
+					constraint: processor_checkpoints_pkey
+					update_columns: [last_error, updated_at]
+				}
 			) {
 				exchange_account_id
 			}
@@ -210,14 +214,17 @@ func (c *Client) SetProcessorCheckpointError(ctx context.Context, accountID uuid
 	`
 
 	req := c.graphqlRequestWithVars(query, map[string]interface{}{
-		"id":  accountID.String(),
-		"msg": errorMsg,
+		"object": map[string]interface{}{
+			"exchange_account_id": accountID.String(),
+			"last_error":          errorMsg,
+			"updated_at":          "now()",
+		},
 	})
 
 	var resp struct {
-		Update *struct {
+		Insert *struct {
 			ExchangeAccountID string `json:"exchange_account_id"`
-		} `json:"update_processor_checkpoints_by_pk"`
+		} `json:"insert_processor_checkpoints_one"`
 	}
 
 	if err := c.execute(ctx, req, &resp); err != nil {

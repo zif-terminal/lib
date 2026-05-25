@@ -124,6 +124,7 @@ func (c *Client) ListAccounts(ctx context.Context, f AccountListFilter) ([]*Exch
 				account_identifier
 				account_type
 				account_type_metadata
+				wallet_id
 				status
 				sync_enabled
 				processing_enabled

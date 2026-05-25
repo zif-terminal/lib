@@ -87,7 +87,7 @@ func (c *Client) addPositionPnLChunk(ctx context.Context, inputs []*PositionPnLI
 				objects: $objects
 				on_conflict: {
 					constraint: position_pnl_position_id_denomination_key
-					update_columns: [realized_pnl, trade_pnl, funding_pnl, fee_pnl, interest_pnl, created_at]
+					update_columns: [realized_pnl, trade_pnl, funding_pnl, fee_pnl, interest_pnl, reward_pnl, created_at]
 				}
 			) {
 				affected_rows
@@ -106,6 +106,7 @@ func (c *Client) addPositionPnLChunk(ctx context.Context, inputs []*PositionPnLI
 			"funding_pnl":  input.FundingPnL,
 			"fee_pnl":      input.FeePnL,
 			"interest_pnl": input.InterestPnL,
+			"reward_pnl":   input.RewardPnL,
 			"created_at":   now,
 		}
 	}

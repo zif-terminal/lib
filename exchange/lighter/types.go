@@ -42,8 +42,9 @@ type lighterTrade struct {
 	BidAccountID int    `json:"bid_account_id"`
 	Price        string `json:"price"`
 	Size         string `json:"size"`
-	TakerFee     int64  `json:"taker_fee"`  // micro-USDC (divide by 1e6)
-	MakerFee     int64  `json:"maker_fee"`  // micro-USDC (divide by 1e6)
+	UsdAmount    string `json:"usd_amount"` // notional in USDC (size × price); used to compute fee from the rate fields.
+	TakerFee     int64  `json:"taker_fee"`  // rate in micro-percent of notional (200 = 2 bps); fee USDC = rate × usd_amount / 1e6. Null in JSON → 0.
+	MakerFee     int64  `json:"maker_fee"`  // same encoding as TakerFee.
 	IsMakerAsk   bool   `json:"is_maker_ask"`
 	Timestamp    int64  `json:"timestamp"` // Unix milliseconds
 	AskID        int64  `json:"ask_id"`
@@ -165,6 +166,82 @@ type lighterWithdraw struct {
 	Status    string `json:"status"`    // "completed", "pending", etc.
 	Type      string `json:"type"`      // "fast", etc.
 	L1TxHash  string `json:"l1_tx_hash"`
+}
+
+// liquidationsResponse is the response envelope for GET /api/v1/liquidations.
+//
+// Lighter exposes a forced-liquidation feed that complements /trades. Every
+// liquidation event has a corresponding row in /trades (so the position
+// reduction itself is already captured), but /trades reports only the regular
+// taker_fee in micro-USDC. The /liquidations feed exposes a separate
+// liquidation penalty fee (string field, USDC) charged in addition to the
+// underlying fill — that fee is what causes residual snapshot-match gaps when
+// not ingested. The fee is emitted as a TypeFee transfer; the embedded trade
+// is NOT re-emitted (to avoid double-counting against /trades).
+type liquidationsResponse struct {
+	Code          int                 `json:"code"`
+	Message       string              `json:"message"`
+	NextCursor    string              `json:"next_cursor"`
+	Liquidations  []lighterLiquidation `json:"liquidations"`
+}
+
+// lighterLiquidation represents a single liquidation event from
+// GET /api/v1/liquidations. We capture the identification fields, the embedded
+// trade (for the penalty fee), and the `info.risk_info_before` /
+// `info.risk_info_after` pair (for the cross+isolated collateral delta). The
+// remaining fields of `info` (positions, mark_prices, asset_index_prices,
+// assets) are intentionally omitted — they are large and unused by accounting.
+//
+// The collateral delta is required because a Lighter liquidation migrates
+// collateral OUT of the user's account in a way that /trades cannot fully
+// reconstruct: the quote-leg notional of the embedded trade plus the taker_fee
+// is materially smaller than the actual USDC outflow (the difference goes to
+// the insurance fund / counterparty margin). Without the risk_info delta we
+// systematically under-debit USDC by ~$50/event.
+type lighterLiquidation struct {
+	ID         int64                   `json:"id"`
+	MarketID   int                     `json:"market_id"`
+	Type       string                  `json:"type"`         // "partial", "full", etc.
+	ExecutedAt int64                   `json:"executed_at"`  // Unix milliseconds
+	Trade      lighterLiquidationTrade `json:"trade"`
+	Info       lighterLiquidationInfo  `json:"info"`
+}
+
+// lighterLiquidationInfo carries the pre/post risk snapshots from
+// /api/v1/liquidations. Both sides expose `cross_risk_parameters` (a single
+// bucket for the cross-margin account) and `isolated_risk_parameters` (zero or
+// more buckets, one per market with an isolated position). USDC collateral
+// delta is computed as the sum of all buckets after minus the sum before.
+type lighterLiquidationInfo struct {
+	RiskInfoBefore lighterRiskInfo `json:"risk_info_before"`
+	RiskInfoAfter  lighterRiskInfo `json:"risk_info_after"`
+}
+
+// lighterRiskInfo is a single side of the risk snapshot (before or after).
+type lighterRiskInfo struct {
+	CrossRiskParameters    lighterRiskBucket   `json:"cross_risk_parameters"`
+	IsolatedRiskParameters []lighterRiskBucket `json:"isolated_risk_parameters"`
+}
+
+// lighterRiskBucket is a per-margin-context collateral bucket. Collateral is a
+// string decimal denominated in USDC; market_id is 0 for the cross bucket and
+// the relevant perp market for isolated buckets. We ignore market_id during
+// summing — we only need the total USDC across all buckets.
+type lighterRiskBucket struct {
+	MarketID   int    `json:"market_id"`
+	Collateral string `json:"collateral"`
+}
+
+// lighterLiquidationTrade is the embedded trade carrying the liquidation
+// penalty fee. Field names and types match the live API (taker_fee/maker_fee
+// are STRING decimals here, NOT micro-USDC int64s as in the regular /trades
+// endpoint).
+type lighterLiquidationTrade struct {
+	Price           string `json:"price"`
+	Size            string `json:"size"`
+	TakerFee        string `json:"taker_fee"`
+	MakerFee        string `json:"maker_fee"`
+	TransactionTime int64  `json:"transaction_time"`
 }
 
 // lighterOrderBookDetail represents market metadata from the API.

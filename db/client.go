@@ -145,6 +145,7 @@ type DBClient interface {
 	DeleteTransfersByAccountAndType(ctx context.Context, accountID uuid.UUID, transferType string) (int, error)
 	DeleteDerivedTransfers(ctx context.Context, accountID uuid.UUID) (int, error)
 	GetLatestTransferByType(ctx context.Context, accountID uuid.UUID, transferType string) (*Transfer, error)
+	UpdateTransferTimestamp(ctx context.Context, transferID uuid.UUID, timestampMs int64) error
 
 	// Settlement methods
 	AddSettlements(ctx context.Context, inputs []*SettlementInput) (int, error)
@@ -199,6 +200,19 @@ type DBClient interface {
 	ListOmniRawEvents(ctx context.Context, accountID uuid.UUID, eventType string, sinceMs int64) ([]*OmniRawEvent, error)
 	ListOmniRawEventsByTypes(ctx context.Context, accountID uuid.UUID, eventTypes []string, sinceMs int64) ([]*OmniRawEvent, error)
 	AddOmniRawEvents(ctx context.Context, inputs []*OmniRawEventInput) (int, error)
+
+	// Manual adjustments methods.
+	//
+	// Adjustments are operator-authored raw exchange-format payloads that the
+	// per-exchange sync orchestrator merges with real-data fetches before
+	// running transformers. Active rows are read once per sync cycle via
+	// FetchActiveManualAdjustments. See lib/db/manual_adjustment.go and the
+	// no-synthetic-reconciliation memory entry for the design rationale.
+	FetchActiveManualAdjustments(ctx context.Context, exchangeAccountID uuid.UUID, exchange string) ([]*ManualAdjustment, error)
+	InsertManualAdjustment(ctx context.Context, adj *ManualAdjustment) (uuid.UUID, error)
+	DeactivateManualAdjustment(ctx context.Context, id uuid.UUID, reason string) error
+	GetManualAdjustment(ctx context.Context, id uuid.UUID) (*ManualAdjustment, error)
+	ListManualAdjustments(ctx context.Context, filter ListAdjustmentsFilter) ([]*ManualAdjustment, error)
 }
 
 // Ensure Client implements DBClient
