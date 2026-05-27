@@ -183,7 +183,14 @@ func (c *Client) fetchAllFunding(ctx context.Context, user string, since time.Ti
 	}
 	seen := make(map[dedupKey]bool, len(all))
 	deduped := make([]hlFundingEntry, 0, len(all))
+	sinceMs := clampUnixMilli(since)
 	for _, e := range all {
+		// Post-filter: the HL userFunding API occasionally returns entries
+		// with time < startTime. Drop them so callers never see stale rows
+		// that the cursor has already moved past.
+		if e.Time < sinceMs {
+			continue
+		}
 		k := dedupKey{Hash: e.Hash, Coin: e.Delta.Coin, Time: e.Time}
 		if !seen[k] {
 			seen[k] = true
