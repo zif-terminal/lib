@@ -207,13 +207,16 @@ func TestFetchDeposits(t *testing.T) {
 	mock := &mockDBClient{
 		listOmniRawEventsByTypesFunc: func(ctx context.Context, aid uuid.UUID, eventTypes []string, sinceMs int64) ([]*db.OmniRawEvent, error) {
 			// Verify we're querying the right event types
-			if len(eventTypes) != 3 {
-				t.Errorf("expected 3 event types, got %d", len(eventTypes))
+			if len(eventTypes) != 4 {
+				t.Errorf("expected 4 event types, got %d", len(eventTypes))
 			}
+			rewardEv := makeTransferEvent("rwd-1", "reward", "257.516005", "USDC", 1731390000000)
+			rewardEv.TransferType = strPtr("Referral Reward")
 			return []*db.OmniRawEvent{
 				makeTransferEvent("dep-1", "deposit", "40000.00002", "USDC", 1731376912604),
 				makeTransferEvent("fee-1", "fee", "-0.1", "USDC", 1731376912604),
 				makeTransferEvent("wd-1", "withdrawal", "-5000", "USDC", 1731380000000),
+				rewardEv,
 			}, nil
 		},
 	}
@@ -226,8 +229,8 @@ func TestFetchDeposits(t *testing.T) {
 	if prices != nil {
 		t.Error("expected nil prices")
 	}
-	if len(transfers) != 3 {
-		t.Fatalf("expected 3 transfers, got %d", len(transfers))
+	if len(transfers) != 4 {
+		t.Fatalf("expected 4 transfers, got %d", len(transfers))
 	}
 
 	// Deposit
@@ -261,6 +264,21 @@ func TestFetchDeposits(t *testing.T) {
 	}
 	if wd.Amount != "5000" {
 		t.Errorf("expected amount '5000', got %q", wd.Amount)
+	}
+
+	// Reward (positive USDC inflow -> reward_pnl)
+	rwd := transfers[3]
+	if rwd.Type != models.TypeReward {
+		t.Errorf("expected type %q, got %q", models.TypeReward, rwd.Type)
+	}
+	if rwd.Amount != "257.516005" {
+		t.Errorf("expected amount '257.516005', got %q", rwd.Amount)
+	}
+	if rwd.Asset != "USDC" {
+		t.Errorf("expected asset 'USDC', got %q", rwd.Asset)
+	}
+	if rwd.Metadata["reward_type"] != "Referral Reward" {
+		t.Errorf("expected reward_type metadata 'Referral Reward', got %q", rwd.Metadata["reward_type"])
 	}
 }
 

@@ -115,7 +115,7 @@ func (c *Client) FetchDeposits(
 		sinceMs = since.UnixMilli()
 	}
 
-	events, err := c.dbClient.ListOmniRawEventsByTypes(ctx, accountID, []string{"deposit", "withdrawal", "fee"}, sinceMs)
+	events, err := c.dbClient.ListOmniRawEventsByTypes(ctx, accountID, []string{"deposit", "withdrawal", "fee", "reward"}, sinceMs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -141,6 +141,12 @@ func (c *Client) FetchDeposits(
 		case "fee":
 			transferType = models.TypeFee
 			amount = absNumericString(qtyStr)
+		case "reward":
+			// Rewards/refunds (referral rewards, loss refunds) are positive USDC
+			// inflows. The processor books them to reward_pnl as income, so the
+			// amount must flow through positive — strip any stray sign.
+			transferType = models.TypeReward
+			amount = absNumericString(qtyStr)
 		default:
 			return nil, nil, fmt.Errorf("variational: unknown event type %q for event %s", ev.EventType, ev.OmniID)
 		}
@@ -164,6 +170,12 @@ func (c *Client) FetchDeposits(
 			transfer.Metadata = map[string]string{
 				"payment_id": ev.OmniID,
 			}
+		}
+
+		// Preserve the original reward/refund type (e.g. "Referral Reward",
+		// "Loss Refund Deposit") for audit on reward rows.
+		if ev.EventType == "reward" && ev.TransferType != nil {
+			transfer.Metadata["reward_type"] = *ev.TransferType
 		}
 
 		transfers = append(transfers, transfer)

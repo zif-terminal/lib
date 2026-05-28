@@ -15,7 +15,7 @@ type OmniRawEvent struct {
 	ExchangeAccountID     uuid.UUID       `json:"exchange_account_id"`
 	OmniID                string          `json:"omni_id"`
 	CreatedAt             time.Time       `json:"created_at"`
-	TimestampMs           int64           `json:"timestamp_ms"`
+	TimestampMs           int64           `json:"timestamp_ms,string"`
 	EventType             string          `json:"event_type"`
 	Side                  *string         `json:"side,omitempty"`
 	InstrumentType        *string         `json:"instrument_type,omitempty"`
