@@ -87,12 +87,20 @@ type Config struct {
 // match → cache forever. No match → LiveTTL.
 var DefaultCacheableForeverPatterns = map[string][]string{
 	"lighter": {
-		"/trades",
-		"/liquidations",
-		"/positionFunding",
-		"/deposit/history",
-		"/withdraw/history",
-		"/transfer/history",
+		// Lighter's history endpoints (/trades, /liquidations,
+		// /positionFunding, /{deposit,withdraw,transfer}/history) paginate
+		// newest-first with "&cursor=<c>". Only the cursor-anchored pages
+		// are immutable slices safe to cache forever.
+		//
+		// CRITICAL (#266 — same footgun the solana_dex block documents): the
+		// FIRST page of each walk has NO "&cursor=" — it is the newest-data
+		// tail ("/positionFunding?account_index=…&limit=100"). Matching the
+		// bare endpoint substring pinned that first page forever, so
+		// funding/trades booked after the entry was written were never
+		// re-fetched (froze the Lighter Analytics feed). Gate on "&cursor="
+		// so first/tail pages fall to LiveTTL (re-fetched each sync) while
+		// cursor pages stay cached forever.
+		"&cursor=",
 	},
 	"hyperliquid": {
 		`"type":"userFills"`,
