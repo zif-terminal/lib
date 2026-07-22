@@ -47,6 +47,14 @@ type TransferInput struct {
 	Timestamp         time.Time `json:"timestamp"`
 	ExternalID        string    `json:"external_id,omitempty"` // Native exchange ID for dedup
 	Metadata          map[string]string `json:"metadata,omitempty"`
+	// Origin is the #240 provenance marker: gateway (raw exchange fact),
+	// upload (user-provided, no live feed), derived (processor-computed,
+	// reproducible) or manual (hand adjustment — BLOCKED at the DB layer).
+	// Empty means "let the DB default (gateway) apply" — AddTransfers only
+	// sends the column when this is non-empty, so raw-fact writers keep the
+	// default. Derived writers MUST set Origin="derived" so the origin-aware
+	// force-reset purge can regenerate them. See db.DeleteDerivedTransfers.
+	Origin string `json:"origin,omitempty"`
 }
 
 // UnmarshalJSON custom unmarshaler to handle BIGINT timestamp
