@@ -36,7 +36,13 @@ type Client struct {
 	baseURL     string
 	httpClient  *http.Client
 	marketCache *marketCache
-	transport   httpcache.Transport
+	// earnCache memoizes the /authority/{wallet}/snapshots/earn payload so a
+	// wallet with multiple sub-accounts fetches it once per sync cycle instead
+	// of once per sub-account. It defaults to the process-wide globalEarnCache
+	// (required, because the syncer builds a fresh Client per account); tests
+	// may swap in an isolated cache.
+	earnCache *earnResponseCache
+	transport httpcache.Transport
 	// principal scopes the httpcache key per-account. Set at the top of
 	// every Fetch* method, cleared on return.
 	principal string
@@ -53,6 +59,7 @@ func NewClient() *Client {
 		baseURL:     "https://data.api.drift.trade",
 		httpClient:  &http.Client{Timeout: 30 * time.Second},
 		marketCache: newMarketCache(1 * time.Hour),
+		earnCache:   globalEarnCache,
 		transport:   tr,
 	}
 }

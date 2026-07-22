@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased] - Performance
+
+### Drift earn-response caching (lib#50)
+
+- `drift`: memoize the `/authority/{wallet}/snapshots/earn` payload keyed by
+  request URL (embeds baseURL + wallet authority) with a short 60s TTL, in a
+  process-wide cache. The syncer builds a fresh drift client per account, so a
+  wallet with N sub-accounts previously re-fetched the identical wallet-scoped
+  earn payload N times per sync cycle; it now fetches once and each sub-account
+  filters the shared payload to its own `accountID`. Failures are never cached.
+  Only the historical-backfill path (`FetchHistoricalBalanceSnapshots`) uses
+  earn; live current balances (`FetchBalances` → `/user/`) are unchanged, so the
+  cache cannot serve a stale current balance.
+
 ## [Unreleased] - ExchangeAccount Model Refactoring
 
 ### Breaking Changes
