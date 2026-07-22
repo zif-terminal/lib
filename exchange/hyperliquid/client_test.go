@@ -627,81 +627,54 @@ func TestTransformLedgerEntry(t *testing.T) {
 		}
 	})
 
-	t.Run("vaultCreate", func(t *testing.T) {
+	// #184: HL vault movements are internal class-transfers (not external cashflow),
+	// so vaultCreate / vaultDeposit / vaultDistribution / vaultWithdraw are SKIPPED
+	// (nil transfer), exactly like accountClassTransfer. The vault equity is surfaced
+	// as an asset by the exchange-gateway HL adapter instead. Booking these as
+	// withdraw/deposit mis-stated net_deposits (phantom outflow on deposit / phantom
+	// inflow on the return).
+	t.Run("vaultCreate skipped (#184 internal transfer)", func(t *testing.T) {
 		entry := hlLedgerEntry{
-			Time: 1700000000000,
-			Hash: "0xvaultcreate",
-			Delta: hlLedgerDelta{
-				Type: "vaultCreate",
-				Usdc: "-5000.00",
-			},
+			Time:  1700000000000,
+			Hash:  "0xvaultcreate",
+			Delta: hlLedgerDelta{Type: "vaultCreate", Usdc: "-5000.00"},
 		}
 		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if transfer == nil {
-			t.Fatal("expected non-nil transfer")
-		}
-		if transfer.Type != models.TypeWithdraw {
-			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeWithdraw)
-		}
-		if transfer.Asset != "USDC" {
-			t.Errorf("Asset = %q, want USDC", transfer.Asset)
-		}
-		if transfer.Amount != "5000" {
-			t.Errorf("Amount = %q, want 5000", transfer.Amount)
+		if transfer != nil {
+			t.Errorf("expected nil transfer for vaultCreate, got %+v", transfer)
 		}
 	})
 
-	t.Run("vaultDeposit", func(t *testing.T) {
+	t.Run("vaultDeposit skipped (#184 internal transfer)", func(t *testing.T) {
 		entry := hlLedgerEntry{
-			Time: 1700000000000,
-			Hash: "0xvaultdeposit",
-			Delta: hlLedgerDelta{
-				Type: "vaultDeposit",
-				Usdc: "-1000.00",
-			},
+			Time:  1700000000000,
+			Hash:  "0xvaultdeposit",
+			Delta: hlLedgerDelta{Type: "vaultDeposit", Usdc: "-1000.00"},
 		}
 		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if transfer == nil {
-			t.Fatal("expected non-nil transfer")
-		}
-		if transfer.Type != models.TypeWithdraw {
-			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeWithdraw)
-		}
-		if transfer.Amount != "1000" {
-			t.Errorf("Amount = %q, want 1000", transfer.Amount)
+		if transfer != nil {
+			t.Errorf("expected nil transfer for vaultDeposit, got %+v", transfer)
 		}
 	})
 
-	t.Run("vaultDistribution", func(t *testing.T) {
+	t.Run("vaultDistribution skipped (#184 internal transfer)", func(t *testing.T) {
 		entry := hlLedgerEntry{
-			Time: 1700000000000,
-			Hash: "0xvaultdist",
-			Delta: hlLedgerDelta{
-				Type: "vaultDistribution",
-				Usdc: "250.00",
-			},
+			Time:  1700000000000,
+			Hash:  "0xvaultdist",
+			Delta: hlLedgerDelta{Type: "vaultDistribution", Usdc: "250.00"},
 		}
 		transfer, _, err := transformLedgerEntry(entry, accountUUID, wallet)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if transfer == nil {
-			t.Fatal("expected non-nil transfer")
-		}
-		if transfer.Type != models.TypeDeposit {
-			t.Errorf("Type = %q, want %q", transfer.Type, models.TypeDeposit)
-		}
-		if transfer.Asset != "USDC" {
-			t.Errorf("Asset = %q, want USDC", transfer.Asset)
-		}
-		if transfer.Amount != "250" {
-			t.Errorf("Amount = %q, want 250", transfer.Amount)
+		if transfer != nil {
+			t.Errorf("expected nil transfer for vaultDistribution, got %+v", transfer)
 		}
 	})
 
@@ -724,7 +697,7 @@ func TestTransformLedgerEntry(t *testing.T) {
 		}
 	})
 
-	t.Run("vaultWithdraw as deposit", func(t *testing.T) {
+	t.Run("vaultWithdraw skipped (#184 internal transfer)", func(t *testing.T) {
 		entry := hlLedgerEntry{
 			Time: 1700000000000,
 			Hash: "0xvaultwithdraw",
@@ -737,23 +710,8 @@ func TestTransformLedgerEntry(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if transfer == nil {
-			t.Fatal("expected non-nil transfer for vaultWithdraw")
-		}
-		if transfer.Type != models.TypeDeposit {
-			t.Errorf("expected type %q, got %q", models.TypeDeposit, transfer.Type)
-		}
-		if transfer.Asset != "USDC" {
-			t.Errorf("expected asset USDC, got %q", transfer.Asset)
-		}
-		if transfer.Amount != "5229.047513" {
-			t.Errorf("expected amount 5229.047513, got %q", transfer.Amount)
-		}
-		if transfer.Metadata["source_type"] != "vaultwithdraw" {
-			t.Errorf("expected source_type vaultwithdraw, got %q", transfer.Metadata["source_type"])
-		}
-		if transfer.ExternalID != "0xvaultwithdraw_vaultwithdraw" {
-			t.Errorf("expected disambiguated external_id, got %q", transfer.ExternalID)
+		if transfer != nil {
+			t.Errorf("expected nil transfer for vaultWithdraw (#184), got %+v", transfer)
 		}
 	})
 

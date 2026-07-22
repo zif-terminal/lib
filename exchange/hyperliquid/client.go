@@ -1037,15 +1037,34 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		asset = "USDC"
 		amountStr = entry.Delta.Usdc
 
-	case "vaultcreate", "vaultdeposit":
-		transferType = models.TypeWithdraw
-		asset = "USDC"
-		amountStr = entry.Delta.Usdc
-
-	case "vaultdistribution":
-		transferType = models.TypeDeposit
-		asset = "USDC"
-		amountStr = entry.Delta.Usdc
+	case "vaultcreate", "vaultdeposit", "vaultdistribution", "vaultwithdraw":
+		// HL vault movements are INTERNAL to the user's own equity, NOT external
+		// cashflows (#184). A vaultDeposit/vaultCreate moves the user's USDC perp→
+		// vault; it stays their equity (now surfaced as an asset via
+		// userVaultEquities — see the exchange-gateway HL adapter). vaultDistribution
+		// (profit share paid back to the perp balance) and vaultWithdraw (principal +
+		// PnL returned) are the RETURN leg — also internal. Booking any of these as a
+		// TypeWithdraw/TypeDeposit mis-states net_deposits: the old code booked a
+		// vaultDeposit as a phantom OUTFLOW (understating net_deposits by the deposited
+		// principal while the vault equity was ALSO missing from the account value —
+		// the two nearly cancelled in the reconcile gap but the DISPLAYED portfolio was
+		// understated by the full vault equity), and booked the return as a phantom
+		// INFLOW. Treating the whole vault round-trip as an internal class-transfer
+		// (skipped, exactly like accountClassTransfer) keeps net_deposits reflecting
+		// ONLY true external cashflow, so the reconcile identity closes once the vault
+		// equity is counted as an asset AND the deposit is no longer a phantom outflow.
+		//
+		// vaultLeaderCommission (a vault LEADER's earned fee) is genuine income and is
+		// still recorded below as TypeReward — it is NOT a movement of the depositor's
+		// own principal.
+		//
+		// LIMITATION (flagged follow-up): the vault's realized PnL on a completed
+		// round-trip is no longer explicitly booked as realized/reward — the gain/loss
+		// is reflected in the returned USDC (equity) but lands in the reconcile
+		// residual rather than the realized bucket. Attributing vault PnL requires the
+		// processor to track the vault-deposit principal as a cost basis; that is out
+		// of scope here (this change is the net_deposits / phantom-flow fix).
+		return nil, nil, nil
 
 	case "cstakingtransfer":
 		// HyperStake consensus staking. Staking locks tokens out of the trading
@@ -1063,11 +1082,6 @@ func transformLedgerEntry(entry hlLedgerEntry, accountUUID uuid.UUID, walletAddr
 		// This is NOT a cashflow — the wallet's total USDC position is unchanged,
 		// just moved between trading classes. Intentionally skipped.
 		return nil, nil, nil
-
-	case "vaultwithdraw":
-		transferType = models.TypeDeposit
-		asset = "USDC"
-		amountStr = entry.Delta.NetWithdrawnUsd
 
 	case "vaultleadercommission":
 		transferType = models.TypeReward
