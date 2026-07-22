@@ -143,6 +143,13 @@ func (c *Client) AddTransfers(ctx context.Context, inputs []*TransferInput) ([]*
 		if len(input.Metadata) > 0 {
 			obj["metadata"] = input.Metadata
 		}
+		// #240 provenance: only send `origin` when the caller set it, so raw
+		// exchange-fact writers keep the DB default ('gateway'). Derived writers
+		// pass Origin='derived' so the force-reset purge can regenerate them; a
+		// value of 'manual' is rejected loudly by the DB block-trigger.
+		if input.Origin != "" {
+			obj["origin"] = input.Origin
+		}
 		objects[i] = obj
 	}
 
@@ -295,14 +302,45 @@ func (c *Client) DeleteTransfersByAccountAndType(ctx context.Context, accountID 
 	return resp.DeleteTransfers.AffectedRows, nil
 }
 
-// DeleteDerivedTransfers deletes transfer records with metadata source="derived" for an account.
-// Used by the activity processor to clean up previously-derived interest before full replay.
+// DeleteDerivedTransfers purges the regenerable / disallowed transfer rows for an
+// account before a full replay. This is the #240 origin-aware force-reset primitive:
+// it removes exactly the rows a reprocess is allowed to destroy and regenerate, and
+// NEVER an irreplaceable source-of-truth row.
+//
+// PURGES:
+//   - metadata.source = "derived"  → processor-computed interest (the historical
+//     signal; these rows also carry origin='derived' once written by the updated
+//     AddTransfers path, but the metadata predicate is retained so pre-stamp rows
+//     are still caught — belt-and-suspenders for replay determinism).
+//   - origin IN ('derived','manual') → any other processor-computed row, plus any
+//     'manual' row that slipped past the DB block-trigger (e.g. a superuser booking
+//     inserted with the trigger disabled). 'manual' is disallowed and never a source
+//     of truth, so a reprocess purges it.
+//
+// PRESERVES (never deleted here):
+//   - origin IN ('gateway','upload') → raw exchange facts and user uploads. This is
+//     the whole safety point of #204/#240: a reprocess must NEVER wipe source data.
+//   - the Drift-hack casualty anchor (type='hack' or metadata.source in the
+//     drift-dfx-derived / drift-hack-rule reclaimable set). Although that anchor is
+//     origin='derived', the #248 design owns its lifecycle via the atomic
+//     ReplaceDriftHackAnchor swap + in-memory reclaim, NOT via a pre-purge. Blanket-
+//     deleting it here would resurrect the reverted #247 trap (the row vanishes at
+//     replay start, reconcileDriftHack loses its input). The carve-out below MUST
+//     stay in lock-step with processor.driftHackReclaimableSources.
 func (c *Client) DeleteDerivedTransfers(ctx context.Context, accountID uuid.UUID) (int, error) {
 	query := `
 		mutation DeleteDerivedTransfers($exchange_account_id: uuid!) {
 			delete_transfers(where: {
 				exchange_account_id: { _eq: $exchange_account_id }
-				metadata: { _contains: { source: "derived" } }
+				_or: [
+					{ metadata: { _contains: { source: "derived" } } },
+					{ _and: [
+						{ origin: { _in: ["derived", "manual"] } },
+						{ type: { _neq: "hack" } },
+						{ _not: { metadata: { _contains: { source: "drift-dfx-derived" } } } },
+						{ _not: { metadata: { _contains: { source: "drift-hack-rule" } } } }
+					] }
+				]
 			}) {
 				affected_rows
 			}

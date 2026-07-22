@@ -628,23 +628,37 @@ func (c *Client) ClearProcessorReset(ctx context.Context, accountID string) erro
 	return nil
 }
 
-// DeleteSyncedData deletes all synced data for an account: trades, transfers,
-// settlements, and spot balance snapshots. It ALSO wipes derived position data
-// (positions, position_events via cascade, and processor_checkpoints) because
-// position_events.event_id references trades/transfers/settlements without an
-// FK; leaving derived rows in place after a sync wipe creates orphans that
-// poison the cross-account missing_position_pnl walk and stall the processor.
+// DeleteSyncedData deletes the RE-FETCHABLE synced data for an account: gateway/
+// derived trades, transfers, settlements, and spot balance snapshots. It ALSO wipes
+// derived position data (positions, position_events via cascade, and
+// processor_checkpoints) because position_events.event_id references
+// trades/transfers/settlements without an FK; leaving derived rows in place after a
+// sync wipe creates orphans that poison the cross-account missing_position_pnl walk
+// and stall the processor.
 //
 // Sync reset thus becomes "wipe ingested + derived together" — mirroring what
 // processor_reset_requested does, except this path is triggered by
 // sync_reset_requested.
+//
+// #204/#240 SAFETY: this is the one blunt "delete every row for the account" path,
+// and a sync reset is a RE-FETCH — safe for gateway rows (idempotently re-pulled
+// from the live feed) and derived rows (regenerated), but CATASTROPHIC for
+// origin='upload' rows, which have NO live feed (user-provided Variational/Drift
+// data and gap-fill fills). Wiping those would delete irreplaceable source of truth.
+// So the trades/transfers/settlements deletes now EXCLUDE origin IN ('upload','manual')
+// via _nin: a reprocess/re-sync can never destroy source data. (spot_balance_snapshots
+// carries no origin column and is always gateway-captured / re-fetchable, so it is
+// wiped whole.)
 func (c *Client) DeleteSyncedData(ctx context.Context, accountID uuid.UUID) error {
 	id := accountID.String()
 
-	// Delete trades
+	// Delete trades (preserve irreplaceable upload/manual source — #204/#240)
 	tradesQuery := `
 		mutation DeleteTradesForAccount($id: uuid!) {
-			delete_trades(where: { exchange_account_id: { _eq: $id } }) {
+			delete_trades(where: {
+				exchange_account_id: { _eq: $id }
+				origin: { _nin: ["upload", "manual"] }
+			}) {
 				affected_rows
 			}
 		}
@@ -659,10 +673,13 @@ func (c *Client) DeleteSyncedData(ctx context.Context, accountID uuid.UUID) erro
 		return fmt.Errorf("failed to delete trades: %w", err)
 	}
 
-	// Delete transfers
+	// Delete transfers (preserve irreplaceable upload/manual source — #204/#240)
 	transfersQuery := `
 		mutation DeleteTransfersForAccount($id: uuid!) {
-			delete_transfers(where: { exchange_account_id: { _eq: $id } }) {
+			delete_transfers(where: {
+				exchange_account_id: { _eq: $id }
+				origin: { _nin: ["upload", "manual"] }
+			}) {
 				affected_rows
 			}
 		}
@@ -677,10 +694,13 @@ func (c *Client) DeleteSyncedData(ctx context.Context, accountID uuid.UUID) erro
 		return fmt.Errorf("failed to delete transfers: %w", err)
 	}
 
-	// Delete settlements
+	// Delete settlements (preserve irreplaceable upload/manual source — #204/#240)
 	settlementsQuery := `
 		mutation DeleteSettlementsForAccount($id: uuid!) {
-			delete_settlements(where: { exchange_account_id: { _eq: $id } }) {
+			delete_settlements(where: {
+				exchange_account_id: { _eq: $id }
+				origin: { _nin: ["upload", "manual"] }
+			}) {
 				affected_rows
 			}
 		}
