@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/zif-terminal/lib/models"
 )
@@ -334,6 +336,118 @@ func TestSpotAssetToPerpSymbol(t *testing.T) {
 			t.Errorf("spotAssetToPerpSymbol(%q) = %q, want %q", c.asset, got, c.want)
 		}
 	}
+}
+
+// TestEarnResponseCache_GetSetExpiry pins the low-level cache semantics:
+// miss on empty, hit while fresh, and eviction+miss once the TTL elapses.
+func TestEarnResponseCache_GetSetExpiry(t *testing.T) {
+	cache := newEarnResponseCache(40 * time.Millisecond)
+	key := "https://data.api.drift.trade/authority/walletX/snapshots/earn"
+
+	if _, ok := cache.get(key); ok {
+		t.Fatal("expected miss on empty cache")
+	}
+
+	resp := &driftEarnResponse{Success: true}
+	cache.set(key, resp)
+
+	got, ok := cache.get(key)
+	if !ok {
+		t.Fatal("expected hit while fresh")
+	}
+	if got != resp {
+		t.Fatal("expected the exact cached pointer back")
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	if _, ok := cache.get(key); ok {
+		t.Fatal("expected miss after TTL expiry")
+	}
+}
+
+// TestDriftClient_EarnResponseCached_AcrossSubaccounts is the regression test
+// for lib#50. Two DIFFERENT Client instances (mirroring the syncer, which
+// builds a fresh drift client per account via GetClientWithDB → NewClient)
+// share a process-wide earn cache. Each fetches historical snapshots for a
+// DIFFERENT sub-account of the SAME wallet. The wallet-scoped earn endpoint
+// must be hit exactly ONCE, and each sub-account must still receive only its
+// own filtered snapshot data (no cross-account contamination).
+func TestDriftClient_EarnResponseCached_AcrossSubaccounts(t *testing.T) {
+	const wallet = "walletAAA"
+	var earnHits int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/snapshots/earn") {
+			atomic.AddInt32(&earnHits, 1)
+			_ = json.NewEncoder(w).Encode(driftEarnResponse{
+				Success: true,
+				Accounts: []driftEarnAccountSnapshot{
+					{AccountID: "sub-1", Snapshots: []driftEarnSnapshot{
+						{EpochTs: 1700000000, Assets: []driftEarnAsset{
+							{Symbol: "USDC", MarketIndex: 0, Balance: "100"},
+						}},
+					}},
+					{AccountID: "sub-2", Snapshots: []driftEarnSnapshot{
+						{EpochTs: 1700000000, Assets: []driftEarnAsset{
+							{Symbol: "SOL", MarketIndex: 1, Balance: "5"},
+						}},
+					}},
+				},
+			})
+			return
+		}
+		// Any other endpoint (e.g. /stats/markets pre-warm) is irrelevant to
+		// this test since the earn assets already carry explicit symbols.
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	// Isolate from the process-wide globalEarnCache (and from other tests) by
+	// wiring both clients to a dedicated shared cache.
+	shared := newEarnResponseCache(earnCacheTTL)
+	newClient := func() *Client {
+		c := NewClient()
+		c.baseURL = server.URL
+		c.httpClient = server.Client()
+		c.earnCache = shared
+		return c
+	}
+
+	meta := json.RawMessage(`{"authority":"` + wallet + `"}`)
+
+	c1 := newClient()
+	acct1 := &models.ExchangeAccount{ID: "id-1", AccountIdentifier: "sub-1", AccountTypeMetadata: meta}
+	snaps1, err := c1.FetchHistoricalBalanceSnapshots(context.Background(), acct1)
+	if err != nil {
+		t.Fatalf("sub-1 FetchHistoricalBalanceSnapshots failed: %v", err)
+	}
+
+	c2 := newClient()
+	acct2 := &models.ExchangeAccount{ID: "id-2", AccountIdentifier: "sub-2", AccountTypeMetadata: meta}
+	snaps2, err := c2.FetchHistoricalBalanceSnapshots(context.Background(), acct2)
+	if err != nil {
+		t.Fatalf("sub-2 FetchHistoricalBalanceSnapshots failed: %v", err)
+	}
+
+	if got := atomic.LoadInt32(&earnHits); got != 1 {
+		t.Fatalf("expected earn endpoint hit exactly once (cached across sub-accounts), got %d", got)
+	}
+
+	// Each sub-account must still get ONLY its own asset.
+	assertSingleAsset := func(label string, snaps []*models.HistoricalBalanceSnapshots, wantAsset string) {
+		if len(snaps) != 1 {
+			t.Fatalf("%s: expected 1 snapshot, got %d", label, len(snaps))
+		}
+		if len(snaps[0].Balances) != 1 {
+			t.Fatalf("%s: expected 1 balance, got %d", label, len(snaps[0].Balances))
+		}
+		if snaps[0].Balances[0].Asset != wantAsset {
+			t.Fatalf("%s: expected asset %s, got %s (cross-account contamination)", label, wantAsset, snaps[0].Balances[0].Asset)
+		}
+	}
+	assertSingleAsset("sub-1", snaps1, "USDC")
+	assertSingleAsset("sub-2", snaps2, "SOL")
 }
 
 func TestDriftClient_GetWalletFromAccount(t *testing.T) {

@@ -376,6 +376,50 @@ func (c *Client) FetchBalances(
 	return balances, nil
 }
 
+// fetchEarnResponse returns the earn snapshots payload for the given URL,
+// serving a memoized copy when another sub-account of the same wallet fetched
+// it within the TTL. On a cache miss it performs the live fetch and stores the
+// successful result.
+//
+// The earn endpoint is wallet-scoped and returns snapshots for ALL sub-accounts
+// under the wallet, so the payload is identical for every sub-account — the
+// per-account filtering happens in the caller. The returned *driftEarnResponse
+// is treated as read-only by callers (they only range over it), so sharing the
+// pointer across sub-accounts is safe. Failures (transport error, non-200,
+// success=false) are never cached, so a transient error is retried by the next
+// sub-account rather than memoized.
+func (c *Client) fetchEarnResponse(ctx context.Context, url string) (*driftEarnResponse, error) {
+	if c.earnCache != nil {
+		if cached, ok := c.earnCache.get(url); ok {
+			return cached, nil
+		}
+	}
+
+	resp, err := c.doRequestWithRetry(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("earn snapshots returned status %d", resp.StatusCode)
+	}
+
+	var result driftEarnResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode earn response: %w", err)
+	}
+
+	if !result.Success {
+		return nil, fmt.Errorf("earn snapshots returned success=false")
+	}
+
+	if c.earnCache != nil {
+		c.earnCache.set(url, &result)
+	}
+	return &result, nil
+}
+
 // FetchHistoricalBalanceSnapshots returns all historical earn snapshots from Drift.
 // Each entry represents a point-in-time snapshot of all asset balances.
 // Returns snapshots sorted by timestamp ascending (oldest first).
@@ -397,23 +441,9 @@ func (c *Client) FetchHistoricalBalanceSnapshots(
 	defer func() { c.principal = "" }()
 
 	url := fmt.Sprintf("%s/authority/%s/snapshots/earn", c.baseURL, wallet)
-	resp, err := c.doRequestWithRetry(ctx, url)
+	result, err := c.fetchEarnResponse(ctx, url)
 	if err != nil {
 		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("earn snapshots returned status %d", resp.StatusCode)
-	}
-
-	var result driftEarnResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode earn response: %w", err)
-	}
-
-	if !result.Success {
-		return nil, fmt.Errorf("earn snapshots returned success=false")
 	}
 
 	_ = c.fetchMarkets(ctx)
